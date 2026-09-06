@@ -1,0 +1,138 @@
+{
+  "source": "cowrie",
+  "session_id": "2b3c4d5e6f70",
+  "src_ip": "198.51.100.23",
+  "sensor": "hp-usw-02",
+  "events": [
+    {
+      "eventid": "cowrie.session.connect",
+      "timestamp": "2026-09-06T08:41:30.500000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "New connection: 198.51.100.23:52011 (10.0.0.7:22) [session: 2b3c4d5e6f70]",
+      "src_port": 52011,
+      "dst_ip": "10.0.0.7",
+      "dst_port": 22,
+      "protocol": "ssh"
+    },
+    {
+      "eventid": "cowrie.client.version",
+      "timestamp": "2026-09-06T08:41:30.710000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "Remote SSH version: SSH-2.0-libssh2_1.9.0",
+      "version": "SSH-2.0-libssh2_1.9.0"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:32.020000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [root/123456] failed",
+      "username": "root",
+      "password": "123456"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:32.640000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [root/root] failed",
+      "username": "root",
+      "password": "root"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:33.260000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [admin/admin] failed",
+      "username": "admin",
+      "password": "admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:33.880000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [admin/password] failed",
+      "username": "admin",
+      "password": "password"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:34.500000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [root/password] failed",
+      "username": "root",
+      "password": "password"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:35.120000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [user/user] failed",
+      "username": "user",
+      "password": "user"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:35.740000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [test/test] failed",
+      "username": "test",
+      "password": "test"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:36.360000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [root/12345678] failed",
+      "username": "root",
+      "password": "12345678"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:36.980000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [admin/1234] failed",
+      "username": "admin",
+      "password": "1234"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T08:41:37.600000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "login attempt [guest/guest] failed",
+      "username": "guest",
+      "password": "guest"
+    },
+    {
+      "eventid": "cowrie.session.closed",
+      "timestamp": "2026-09-06T08:41:38.100000Z",
+      "session": "2b3c4d5e6f70",
+      "src_ip": "198.51.100.23",
+      "sensor": "hp-usw-02",
+      "message": "Connection lost after 7 seconds",
+      "duration_ms": 7600
+    }
+  ]
+}

@@ -1,0 +1,438 @@
+{
+  "source": "cowrie",
+  "session_id": "3c4d5e6f7081",
+  "src_ip": "203.0.113.77",
+  "sensor": "hp-sgp-01",
+  "events": [
+    {
+      "eventid": "cowrie.session.connect",
+      "timestamp": "2026-09-06T19:05:44.331000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "New connection: 203.0.113.77:41007 (10.0.0.9:22) [session: 3c4d5e6f7081]",
+      "src_port": 41007,
+      "dst_ip": "10.0.0.9",
+      "dst_port": 22,
+      "protocol": "ssh"
+    },
+    {
+      "eventid": "cowrie.client.version",
+      "timestamp": "2026-09-06T19:05:44.571000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "Remote SSH version: SSH-2.0-PUTTY",
+      "version": "SSH-2.0-PUTTY"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:45.541000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hp-sgp-01/hp-sgp-01] failed",
+      "username": "hp-sgp-01",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:45.951000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01admin/Sgp01!2026] failed",
+      "username": "sgp01admin",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:46.361000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [honeypot/changeme] failed",
+      "username": "honeypot",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:46.771000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp-01/P@ssw0rd] failed",
+      "username": "sgp-01",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:47.181000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [admin-sgp01/sgp01admin] failed",
+      "username": "admin-sgp01",
+      "password": "sgp01admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:47.591000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgpadmin/welcome1] failed",
+      "username": "sgpadmin",
+      "password": "welcome1"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:48.001000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hpsgp01/hp-sgp-01] failed",
+      "username": "hpsgp01",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:48.411000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01/Sgp01!2026] failed",
+      "username": "sgp01",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:48.821000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hp-sgp-01/changeme] failed",
+      "username": "hp-sgp-01",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:49.231000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01admin/P@ssw0rd] failed",
+      "username": "sgp01admin",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:49.641000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [honeypot/sgp01admin] failed",
+      "username": "honeypot",
+      "password": "sgp01admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:50.051000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp-01/welcome1] failed",
+      "username": "sgp-01",
+      "password": "welcome1"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:50.461000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [admin-sgp01/hp-sgp-01] failed",
+      "username": "admin-sgp01",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:50.871000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgpadmin/Sgp01!2026] failed",
+      "username": "sgpadmin",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:51.281000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hpsgp01/changeme] failed",
+      "username": "hpsgp01",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:51.691000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01/P@ssw0rd] failed",
+      "username": "sgp01",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:52.101000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hp-sgp-01/sgp01admin] failed",
+      "username": "hp-sgp-01",
+      "password": "sgp01admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:52.511000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01admin/welcome1] failed",
+      "username": "sgp01admin",
+      "password": "welcome1"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:52.921000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [honeypot/hp-sgp-01] failed",
+      "username": "honeypot",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:53.331000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp-01/Sgp01!2026] failed",
+      "username": "sgp-01",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:53.741000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [admin-sgp01/changeme] failed",
+      "username": "admin-sgp01",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:54.151000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgpadmin/P@ssw0rd] failed",
+      "username": "sgpadmin",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:54.561000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hpsgp01/sgp01admin] failed",
+      "username": "hpsgp01",
+      "password": "sgp01admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:54.971000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01/welcome1] failed",
+      "username": "sgp01",
+      "password": "welcome1"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:55.381000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hp-sgp-01/hp-sgp-01] failed",
+      "username": "hp-sgp-01",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:55.791000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01admin/Sgp01!2026] failed",
+      "username": "sgp01admin",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:56.201000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [honeypot/changeme] failed",
+      "username": "honeypot",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:56.611000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp-01/P@ssw0rd] failed",
+      "username": "sgp-01",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:57.021000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [admin-sgp01/sgp01admin] failed",
+      "username": "admin-sgp01",
+      "password": "sgp01admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:57.431000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgpadmin/welcome1] failed",
+      "username": "sgpadmin",
+      "password": "welcome1"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:57.841000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hpsgp01/hp-sgp-01] failed",
+      "username": "hpsgp01",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:58.251000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01/Sgp01!2026] failed",
+      "username": "sgp01",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:58.661000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hp-sgp-01/changeme] failed",
+      "username": "hp-sgp-01",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:59.071000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01admin/P@ssw0rd] failed",
+      "username": "sgp01admin",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:59.481000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [honeypot/sgp01admin] failed",
+      "username": "honeypot",
+      "password": "sgp01admin"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:05:59.891000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp-01/welcome1] failed",
+      "username": "sgp-01",
+      "password": "welcome1"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:06:00.301000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [admin-sgp01/hp-sgp-01] failed",
+      "username": "admin-sgp01",
+      "password": "hp-sgp-01"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:06:00.711000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgpadmin/Sgp01!2026] failed",
+      "username": "sgpadmin",
+      "password": "Sgp01!2026"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:06:01.121000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [hpsgp01/changeme] failed",
+      "username": "hpsgp01",
+      "password": "changeme"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T19:06:01.531000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "login attempt [sgp01/P@ssw0rd] failed",
+      "username": "sgp01",
+      "password": "P@ssw0rd"
+    },
+    {
+      "eventid": "cowrie.session.closed",
+      "timestamp": "2026-09-06T19:06:02.131000Z",
+      "session": "3c4d5e6f7081",
+      "src_ip": "203.0.113.77",
+      "sensor": "hp-sgp-01",
+      "message": "Connection lost after 17 seconds",
+      "duration_ms": 17800
+    }
+  ]
+}

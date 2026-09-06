@@ -1,0 +1,38 @@
+{
+  "source": "cowrie",
+  "session_id": "1a2b3c4d5e6f",
+  "src_ip": "203.0.113.10",
+  "sensor": "hp-use-01",
+  "events": [
+    {
+      "eventid": "cowrie.session.connect",
+      "timestamp": "2026-09-06T03:12:05.102000Z",
+      "session": "1a2b3c4d5e6f",
+      "src_ip": "203.0.113.10",
+      "sensor": "hp-use-01",
+      "message": "New connection: 203.0.113.10:44821 (10.0.0.5:22) [session: 1a2b3c4d5e6f]",
+      "src_port": 44821,
+      "dst_ip": "10.0.0.5",
+      "dst_port": 22,
+      "protocol": "ssh"
+    },
+    {
+      "eventid": "cowrie.client.version",
+      "timestamp": "2026-09-06T03:12:05.292000Z",
+      "session": "1a2b3c4d5e6f",
+      "src_ip": "203.0.113.10",
+      "sensor": "hp-use-01",
+      "message": "Remote SSH version: SSH-2.0-Go",
+      "version": "SSH-2.0-Go"
+    },
+    {
+      "eventid": "cowrie.session.closed",
+      "timestamp": "2026-09-06T03:12:06.972000Z",
+      "session": "1a2b3c4d5e6f",
+      "src_ip": "203.0.113.10",
+      "sensor": "hp-use-01",
+      "message": "Connection lost after 1 seconds",
+      "duration_ms": 1868
+    }
+  ]
+}
