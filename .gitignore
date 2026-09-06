@@ -1,0 +1,38 @@
+# secrets & env (only .env.example is tracked)
+.env
+*.env
+!.env.example
+.env.local
+
+# personal notes — never in the public repo
+/SentinelBrief-INDEX.md
+
+# local tool state
+.claude/settings.local.json
+.superpowers/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+
+# node / next.js
+node_modules/
+.next/
+*.tsbuildinfo
+
+# coverage
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+
+# data that must never be committed
+honeypot/data/
+*.mmdb
+# per-run eval outputs stay local; docs/results.md is the published table (PRD §7.5)
+evals/results/*.json

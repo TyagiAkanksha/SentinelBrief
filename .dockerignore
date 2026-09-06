@@ -1,0 +1,53 @@
+# Docker build-context exclusions.
+#
+# infra/Dockerfile.api (and, from M3, infra/Dockerfile.web) build with the REPO ROOT as
+# context (`build: {context: .., dockerfile: infra/Dockerfile.*}` in infra/docker-compose.yml).
+# Without this file every `docker build` would tar up node_modules, .venv, caches and any
+# local data before the daemon starts resolving layers. Nothing listed here is COPYed by any
+# Dockerfile, so this changes build-context size only, never image contents.
+
+# VCS / editor / local tool state
+.git/
+.claude/
+.superpowers/
+
+# node / pnpm
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+
+# python
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.import_linter_cache/
+**/.import_linter_cache/
+
+# coverage / build artifacts
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# secrets — **/-anchored so nested env files (web/.env.local, ...) are excluded too, not just
+# the context root. The negation is deliberately root-anchored: only the tracked
+# .env.example is re-allowed.
+**/.env*
+!.env.example
+
+# data that must never enter an image
+honeypot/data/
+*.mmdb
+evals/results/
+
+# docs — not needed inside any image
+docs/
+*.md
