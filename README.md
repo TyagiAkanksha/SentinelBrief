@@ -1,0 +1,156 @@
+# SentinelBrief
+
+An LLM-powered triage layer for security alerts. It ingests real attacker sessions from a
+self-hosted SSH honeypot (Cowrie), lets a model gather context through tool calls, and gives
+analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
+measuring how well it does.
+
+**Status:** pre-M0. The build plan lives in [`docs/plans/`](docs/plans/README.md); the spec is
+[`PRD.md`](PRD.md). Nothing here serves traffic yet. Sections below marked *(from M2)* describe
+commands that exist once that milestone lands.
+
+## What it does
+
+1. The honeypot's log shipper posts one HMAC-signed alert per attacker session.
+2. A worker runs a triage pipeline: a cheap model reads a session summary, may call enrichment
+   tools (IP reputation, geo/ASN, alert history, session commands, asset info), and returns a
+   structured **verdict** — severity 1–5, category, confidence, reasoning, recommended action.
+   Low-confidence or high-severity verdicts are re-run on a stronger model.
+3. A public, read-only dashboard shows the queue and, per alert, the full tool-call trace.
+4. An evaluation harness scores every prompt/model change against a hand-labeled golden set and
+   publishes the numbers — including the ones that got worse — to [`docs/results.md`](docs/results.md).
+
+The human always decides. The system never blocks, quarantines, or responds automatically.
+
+## Architecture
+
+```
+┌─────────────┐   HMAC-signed    ┌──────────────────────────────────────┐
+│ Honeypot VM │   HTTPS POST     │              App host                │
+│  (Cowrie)   ├─────────────────►│  ┌─────────┐  enqueue  ┌──────────┐  │
+│ log shipper │                  │  │ FastAPI ├──────────►│  Redis   │  │
+└─────────────┘                  │  └────┬────┘           └────┬─────┘  │
+                                 │       │ write raw           │ dequeue│
+                                 │  ┌────▼────────┐      ┌─────▼──────┐ │
+                                 │  │  PostgreSQL │◄─────┤ ARQ worker │ │
+                                 │  └────┬────────┘ write│ (tool loop │ │
+                                 │       │        verdict│  + LLM)    │ │
+                                 └───────┼───────────────┴────────────┘ │
+                                         │ read-only queries
+                                 ┌───────▼────────┐
+                                 │ Next.js (Caddy) │◄── public, read-only
+                                 └────────────────┘
+```
+
+Invariants: ingest answers `202` in under 100 ms and all LLM work happens in the worker; no
+public request path can ever trigger an LLM call; the honeypot host shares nothing with the app
+host except one HMAC secret. Deployment topology: [`docs/deployment.md`](docs/deployment.md).
+
+## Dev quickstart
+
+### Prerequisites
+
+- Docker + Docker Compose v2 (developed with Docker 29 / Compose v5)
+- [uv](https://docs.astral.sh/uv/) — for running the Python gates outside a container
+- Node 24 + [pnpm](https://pnpm.io/) via corepack (`corepack enable`) — for the dashboard gates
+  *(from M3)*
+
+### 1. Configure environment
+
+```sh
+cp .env.example .env
+```
+
+Fill in `.env` — every variable is documented inline and in PRD §4/§8/§10. Generate the ingest
+secret (required in every environment; the API refuses to boot with it empty):
+
+```sh
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Set `LLM_API_KEY`, `CHEAP_MODEL`, and the matching entry in `MODEL_PRICES_JSON`. Any
+OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI, or point it at
+NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
+gitignored; only `.env.example` is tracked).
+
+### 2. Run the core loop *(from M0)*
+
+```sh
+uv sync
+uv run python -m worker.triage_one fixtures/alerts/alert1.json
+```
+
+Prints a validated verdict as JSON plus one line of model / token / cost / latency accounting.
+
+### 3. Run the stack *(from M2)*
+
+```sh
+docker compose -f infra/docker-compose.yml up -d --build
+docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
+curl -s localhost:8000/healthz                       # {"status":"ok","db":"ok"}
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # signed POST → 202
+```
+
+Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
+only DDL path.
+
+### 4. Tear down
+
+```sh
+docker compose -f infra/docker-compose.yml down     # add -v to drop the database volume too
+```
+
+## Gates (run before every commit that touches the relevant tree)
+
+Python (repo root):
+
+```sh
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test   # from M2
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run lint-imports
+uv run pytest -q
+```
+
+Frontend *(from M3)*:
+
+```sh
+pnpm -C web lint
+pnpm -C web type-check
+pnpm -C web format:check
+pnpm -C web test
+```
+
+Live-API smoke tests are opt-in: `uv run pytest -m live`.
+
+## Evaluation *(from M1)*
+
+```sh
+uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v2
+```
+
+Prints one comparable row per prompt version. Golden set v1 is synthetic and its numbers are never
+published; v2 is real, hand-labeled honeypot traffic and is the only source of the numbers in
+[`docs/results.md`](docs/results.md) *(from M7)*.
+
+## Deployment
+
+Target topology, secrets handling, backups and the verification checklist:
+[`docs/deployment.md`](docs/deployment.md). Scripts and synced production config land under
+`infra/deploy/` at M6.
+
+## Working on the repo
+
+- Spec: [`PRD.md`](PRD.md). Conventions: [`CONVENTIONS.md`](CONVENTIONS.md) (Python),
+  [`docs/FRONTEND-CONVENTIONS.md`](docs/FRONTEND-CONVENTIONS.md) (web).
+- Build plan and execution model: [`docs/plans/README.md`](docs/plans/README.md).
+- Claude Code users: [`CLAUDE.md`](CLAUDE.md) plus the agents, skills and rules in `.claude/`.
+
+## Implementation notes
+
+_(Appended by tasks as decisions are made; empty until M0.)_
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
