@@ -23,7 +23,7 @@ jobs:
           python-version: "3.12"
 
       - name: ruff check
-        run: uv run ruff check .
+        run: uv run ruff check --no-cache .
 
       - name: ruff format check
         run: uv run ruff format --check .
