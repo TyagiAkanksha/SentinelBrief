@@ -206,6 +206,52 @@ async def test_missing_usage_raises_llm_call_error() -> None:
         )
 
 
+async def test_complete_structured_missing_price_raises_config_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_chat_completion_body(json.dumps(_VALID_VERDICT)))
+
+    client = OpenAICompatibleLLMClient(
+        client=_mock_client(httpx.MockTransport(handler)),
+        prices={},
+        json_mode="json_object",
+    )
+
+    with pytest.raises(ConfigError):
+        await client.complete_structured(
+            messages=[{"role": "user", "content": "hi"}],
+            response_model=Verdict,
+            model="fake-model",
+        )
+
+
+async def test_complete_structured_json_schema_mode_sends_schema() -> None:
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_completion_body(json.dumps(_VALID_VERDICT)))
+
+    client = OpenAICompatibleLLMClient(
+        client=_mock_client(httpx.MockTransport(handler)),
+        prices=_FAKE_PRICES,
+        json_mode="json_schema",
+    )
+
+    result = await client.complete_structured(
+        messages=[{"role": "user", "content": "hi"}],
+        response_model=Verdict,
+        model="fake-model",
+    )
+
+    assert isinstance(result.parsed, Verdict)
+    assert len(captured) == 1
+    response_format = captured[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "Verdict"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"] == Verdict.model_json_schema()
+
+
 async def test_fake_records_calls_and_replays() -> None:
     boom = LLMCallError("simulated failure")
     fake = FakeLLMClient([json.dumps(_VALID_VERDICT), boom])
