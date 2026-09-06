@@ -1,0 +1,60 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git tag --list *)",
+      "Bash(uv run *)",
+      "Bash(uv sync *)",
+      "Bash(uv lock *)",
+      "Bash(pnpm -C web *)",
+      "Bash(pnpm install *)",
+      "Bash(docker compose -f infra/docker-compose.yml config *)",
+      "Bash(docker compose -f infra/docker-compose.yml ps *)",
+      "Bash(docker compose -f infra/docker-compose.yml logs *)",
+      "Bash(sha256sum *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(wc *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(sed -n *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(docker compose * up *)",
+      "Bash(docker compose * down *)",
+      "Bash(aws *)",
+      "Bash(terraform *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./**/.env)",
+      "Read(./honeypot/data/**)",
+      "Bash(git add .)",
+      "Bash(git add -A)",
+      "Bash(git push --force *)",
+      "Bash(rm -rf *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
