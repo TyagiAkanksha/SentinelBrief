@@ -43,6 +43,9 @@ extend-immutable-calls = [
     "fastapi.Body",
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["api", "worker", "core", "evals"]
+
 [tool.mypy]
 strict = true
 files = ["api", "worker", "core", "evals"]

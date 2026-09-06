@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 
 import pytest
-from worker.llm_client import OpenAICompatibleLLMClient
 
 from core.config import Settings
 from core.schemas.verdict import Verdict
+from worker.llm_client import OpenAICompatibleLLMClient
 
 
 @pytest.mark.live

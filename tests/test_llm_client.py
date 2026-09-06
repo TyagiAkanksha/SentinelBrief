@@ -14,13 +14,13 @@ from decimal import Decimal
 import httpx
 import openai
 import pytest
-from worker.llm_client import OpenAICompatibleLLMClient
 
 from core.config import ModelPrice, Settings
 from core.errors import ConfigError, LLMCallError, StructuredOutputError
 from core.llm import LLMResult, LLMUsage, compute_cost_usd, parse_structured
 from core.schemas.verdict import Verdict
 from tests.fakes import FakeCall, FakeLLMClient
+from worker.llm_client import OpenAICompatibleLLMClient
 
 # A valid Verdict reply body, shared across the tests that need one (task brief's fixed example).
 _VALID_VERDICT: dict[str, object] = {
