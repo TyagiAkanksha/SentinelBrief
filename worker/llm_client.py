@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from time import perf_counter
-from typing import Literal
+from typing import Literal, cast
 
 import httpx
 import openai
+from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat.completion_create_params import ResponseFormat
 from pydantic import BaseModel
 
 from core.config import ModelPrice, Settings
@@ -117,16 +119,20 @@ class OpenAICompatibleLLMClient:
                 },
             }
 
+        # `ChatMessage`/`response_format` are our provider-neutral shapes (core.llm, no SDK
+        # import allowed there); they are structurally identical to the SDK's own TypedDicts for
+        # the same wire JSON, so this cast is the boundary where provider-neutral becomes
+        # SDK-specific — contract 3 only forbids the SDK import in core.llm, not here.
+        messages_param = cast(list[ChatCompletionMessageParam], list(messages))
+        response_format_param = cast(ResponseFormat, response_format)
+
         start = perf_counter()
         try:
-            # `ChatMessage`/`response_format` are our provider-neutral shapes (core.llm); the SDK
-            # wants its own TypedDict unions for the same wire JSON, so this call is untypeable
-            # without importing SDK types into core.llm (forbidden by contract 3).
-            response = await self._client.chat.completions.create(  # type: ignore[call-overload]
+            response = await self._client.chat.completions.create(
                 model=model,
-                messages=list(messages),
+                messages=messages_param,
                 temperature=0.0,
-                response_format=response_format,
+                response_format=response_format_param,
             )
         except (openai.OpenAIError, httpx.HTTPError) as e:
             raise LLMCallError(f"LLM call failed: {e}") from e
