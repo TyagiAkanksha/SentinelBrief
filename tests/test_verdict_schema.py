@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from core.schemas.verdict import Verdict
 from pydantic import ValidationError
+
+from core.schemas.verdict import Verdict
 
 
 def _verdict_kwargs(**overrides: object) -> dict[str, object]:

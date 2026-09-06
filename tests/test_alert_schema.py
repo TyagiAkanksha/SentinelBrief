@@ -12,8 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from core.schemas.alert import SessionAlert
 from pydantic import ValidationError
+
+from core.schemas.alert import SessionAlert
 
 SESSION_ID = "a1b2c3d4e5f6"
 SRC_IP = "203.0.113.42"
@@ -153,6 +154,33 @@ def test_duration_ms_from_closed_event() -> None:
 
     assert alert.duration_ms == 9623
     assert alert.close_time is not None
+
+
+def test_duration_ms_falls_back_to_close_minus_connect() -> None:
+    events = [
+        _event("cowrie.session.connect", "2026-09-06T14:03:21.481902Z"),
+        _event("cowrie.session.closed", "2026-09-06T14:03:31.103902Z"),
+    ]
+    alert = SessionAlert.model_validate(_alert(events))
+
+    assert alert.duration_ms == 9622
+    assert alert.close_time is not None
+
+
+def test_duration_ms_none_when_never_closed() -> None:
+    events = [
+        _event("cowrie.session.connect", "2026-09-06T14:03:21.481902Z"),
+        _event(
+            "cowrie.login.failed",
+            "2026-09-06T14:03:22.115004Z",
+            username="root",
+            password="root",
+        ),
+    ]
+    alert = SessionAlert.model_validate(_alert(events))
+
+    assert alert.duration_ms is None
+    assert alert.close_time is None
 
 
 def test_extra_cowrie_fields_survive_model_dump() -> None:

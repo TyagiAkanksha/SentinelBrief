@@ -9,8 +9,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from core.config import Settings
 from pydantic import SecretStr, ValidationError
+
+from core.config import Settings
 
 # Every env var CONVENTIONS.md §7 / .env.example maps to a Settings field for M0.
 _SETTINGS_ENV_VARS = (
