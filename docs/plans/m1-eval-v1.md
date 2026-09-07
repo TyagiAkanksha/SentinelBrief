@@ -79,5 +79,6 @@ comes last because comparability is proven by the runner.
 
 ## Status
 
-in progress — briefs amended 2026-09-07 with M0 plan defects 1–5, 7, 8; snapshot only, git history
-and the ledger (`.superpowers/sdd/m1-eval-v1/progress.md`) are authoritative.
+**done** — PR #2 merged 2026-09-07 (merge `0b345e2`), tag `m1`. Five tasks reviewed; whole-branch
+review + one fix wave; live acceptance produced two comparable rows (v1 vs v2, then v1 vs v3);
+`TRIAGE_PROMPT_VERSION` stays `triage-v1` on the evidence. Plan defects are folded into the M2 spine.

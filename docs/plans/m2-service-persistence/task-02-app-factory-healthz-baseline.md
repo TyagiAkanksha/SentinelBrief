@@ -29,7 +29,9 @@ test that every `Settings` field is documented in `.env.example`.
   `api/routes/__init__.py`, `api/routes/health.py`, `api/openapi.json`,
   `scripts/export_openapi.py`
 - Create: `tests/test_app_factory.py`, `tests/test_health.py`, `tests/test_error_envelope.py`,
-  `tests/test_openapi_baseline.py`, `tests/test_env_example_roster.py`
+  `tests/test_openapi_baseline.py` (`tests/test_env_example_roster.py` exists since M1 task-00 — it
+  must stay green when `Settings` gains `ingest_hmac_secret`/`cors_origins`; `.env.example` already
+  documents both)
 - Modify: `core/errors.py` (+ `SignatureError`, `NotFoundError`, `ConflictError`,
   `RateLimitedError`), `core/config.py` (+ `ingest_hmac_secret: SecretStr`, `cors_origins: str
   = "http://localhost:3000"`, `cors_origin_list` property), `pyproject.toml` (deps `fastapi`,
@@ -93,9 +95,8 @@ test that every `Settings` field is documented in `.env.example`.
   raising `SignatureError`), `test_422_enveloped_without_input_echo` (post `{"x": "SECRET-INPUT"}`
   to a probe route with a typed body → body lacks `SECRET-INPUT`),
   `test_unhandled_exception_500_enveloped`. `tests/test_openapi_baseline.py::test_committed_baseline_matches_app`.
-  `tests/test_env_example_roster.py::test_every_settings_field_documented_in_env_example`
-  (every `Settings.model_fields` name upper-cased appears as `NAME=` or `# NAME=` in
-  `.env.example`). All HTTP tests use `httpx.AsyncClient(transport=ASGITransport(app=app),
+  (the existing `tests/test_env_example_roster.py` covers the two new `Settings` fields — no new
+  roster test). All HTTP tests use `httpx.AsyncClient(transport=ASGITransport(app=app),
   base_url="http://test")`.
 - [ ] **Step 2: Run to see them fail** → Expected: `ModuleNotFoundError: api.factory`.
 - [ ] **Step 3: Implement errors, deps, factory, health route, main.**
