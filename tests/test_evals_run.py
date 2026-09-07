@@ -20,8 +20,10 @@ import asyncio
 import json
 import re
 from dataclasses import fields
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -481,3 +483,105 @@ def test_main_exit_1_when_all_cases_failed(
     # Price before spend already happened; the run's JSON result is still written.
     written = list(output_dir.glob("*-triage-v1.json"))
     assert len(written) == 1
+
+
+# --- fix round 1 (C1, I1): additive only, no existing test/helper changed above. ---------------
+
+
+def test_main_exit_1_on_unpriced_model_flag_before_any_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """C1: an unpriced `--model` must fail as `config_error` *before any case runs*, via the
+    real `llm=None` path (`OpenAICompatibleLLMClient.from_settings`), not escape `main` as a
+    raised `ConfigError`/traceback from inside the async run. `LLM_BASE_URL` points at an
+    unroutable address: if a call were ever attempted despite the price check, it would surface
+    as `llm_call_failed` (or hang/time out), never silently as `config_error` — proving the
+    price check really runs before any network attempt, not just before this fake would notice.
+    """
+    monkeypatch.setenv("CHEAP_MODEL", "fake-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+    monkeypatch.setenv("LLM_API_KEY", "test")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9")
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--model",
+            "unpriced-model",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(tmp_path),
+        ]
+        # no llm= kwarg: exercises the real OpenAICompatibleLLMClient.from_settings path.
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "unpriced-model" in lines[0]
+    assert "Traceback" not in captured.err
+    assert list(tmp_path.glob("*.json")) == []
+
+
+class _SleepingLLMClient(FakeLLMClient):
+    """`FakeLLMClient` that sleeps briefly on its one call and records when it was called.
+
+    Used only by `test_main_started_at_is_taken_before_the_run` to prove ordering: if
+    `started_at` is captured before `run_golden` starts (as it must be), it is strictly earlier
+    than the wall-clock time recorded inside this fake's (artificially slow) call.
+    """
+
+    def __init__(self, responses: list[str | Exception]) -> None:
+        super().__init__(responses)
+        self.called_at: datetime | None = None
+
+    async def complete_structured(self, *, messages: Any, response_model: Any, model: str) -> Any:
+        await asyncio.sleep(0.05)
+        self.called_at = datetime.now(UTC)
+        return await super().complete_structured(
+            messages=messages, response_model=response_model, model=model
+        )
+
+
+def test_main_started_at_is_taken_before_the_run(tmp_path: Path) -> None:
+    """I1: the result JSON's `started_at` must be stamped before `run_golden` runs, not after —
+    otherwise it is not actually the run's start time.
+    """
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    fake = _SleepingLLMClient([VALID_VERDICT_JSON])
+
+    t0 = datetime.now(UTC)
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        llm=fake,
+    )
+    t1 = datetime.now(UTC)
+
+    assert rc == 0
+    written = list(tmp_path.glob("*.json"))
+    assert len(written) == 1
+    payload = json.loads(written[0].read_text())
+    started_at = datetime.fromisoformat(payload["started_at"])
+    assert t0 <= started_at <= t1
+    assert fake.called_at is not None
+    assert started_at < fake.called_at
