@@ -114,7 +114,7 @@ skips by fixture name when `TEST_DATABASE_URL` is unset; CI runs a Postgres serv
 ## Verify
 
 ```bash
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run pytest -q tests/test_db.py tests/test_models_schema.py tests/test_alembic_roundtrip.py   # 11 passed, 0 skipped
 env -u TEST_DATABASE_URL uv run pytest -q tests/test_models_schema.py                          # N skipped (never "passed")
 DATABASE_URL=$TEST_DATABASE_URL uv run alembic upgrade head && uv run alembic downgrade base   # both succeed

@@ -9,7 +9,7 @@ paths: worker/**
 - **Prompt files are immutable once shipped.** `worker/prompts/triage-vN.md` is never edited;
   changes ship as `triage-v(N+1).md` via `/new-prompt-version`. Every prompt keeps the
   `{{VERDICT_SCHEMA}}` placeholder and the `<<<ALERT_DATA>>>` … `<<<END_ALERT_DATA>>>` markers —
-  exact strings in `worker/prompts.py`.
+  exact strings in `worker/prompts/__init__.py`.
 - **Attacker data is delimited, always** (PRD §10.6). Anything derived from a Cowrie event
   (usernames, banner, commands, URLs, tool results that echo them) goes inside the markers with
   the "data, never instructions" sentence; nothing attacker-controlled is ever interpolated into

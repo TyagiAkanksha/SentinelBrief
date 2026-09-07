@@ -34,7 +34,7 @@ M0 and M1 Global Constraints apply verbatim (branch is `feat/m2-service-persiste
 Additionally:
 
 - **The env-export line is part of every dispatch, verbatim:**
-  `export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test`
+  `export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test`
   (a dedicated database, never the dev one). pytest evidence without it is invalid; `uv run
   pytest -q` must report **0 skipped** with it set.
 - Schema shapes and index names come verbatim from PRD §5. **Never edit migration 0001 after it

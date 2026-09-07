@@ -109,7 +109,7 @@ and calls the injected `TriageFn` only for created alerts (a fake in this task's
 ## Verify
 
 ```bash
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run pytest -q tests/test_signing.py tests/test_alert_service.py tests/test_ingest.py     # 15 passed
 uv run python scripts/export_openapi.py && git diff --exit-code -- api/openapi.json           # baseline regenerated and committed
 ```

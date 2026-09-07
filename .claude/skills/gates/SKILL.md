@@ -13,7 +13,7 @@ The gate set is the definition of "clean" for this repo (CONVENTIONS.md §9, FRO
 ## 1. Export the test database URL first
 
 ```sh
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 ```
 
 Use the value from `.env` if it differs. **pytest output produced without this export is not

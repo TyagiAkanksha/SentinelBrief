@@ -81,4 +81,6 @@ actual loop; task-05 is the acceptance surface.
 
 ## Status
 
-planned — snapshot only; git history and the ledger are authoritative.
+**done** — PR #1 merged 2026-09-07 (merge `dbcdceb`), tag `m0`. All five tasks reviewed; whole-branch
+review + one fix wave; live acceptance on the five fixtures (severities 1–5) recorded in the ledger.
+Plan defects surfaced during M0 are folded into the M1 spine and briefs.

@@ -94,7 +94,7 @@ signed POST through the real app produces rows in both tables.
 ## Verify
 
 ```bash
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run pytest -q tests/test_store.py tests/test_inline_triage.py     # 7 passed
 uv run lint-imports                                                   # Contracts: 5 kept, 0 broken.
 grep -n "ignore_imports" pyproject.toml                               # the two api.main lines with the "remove at M5" comment

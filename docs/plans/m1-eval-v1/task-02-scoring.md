@@ -78,7 +78,7 @@ formatter with a fixed column order that `docs/results.md` will reuse.
 
 ```bash
 uv run pytest -q tests/test_scoring.py      # 9 passed
-uv run mypy                                  # clean
+uv run mypy --no-incremental                 # clean
 ```
 
 ## Acceptance

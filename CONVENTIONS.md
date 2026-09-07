@@ -45,8 +45,8 @@ api/
   errors.py        # register_error_handlers(app) — the one place the §8 envelope is produced
   routes/          # FastAPI routers (health, alerts, stats, stream)
 worker/
-  prompts/         # triage-vN.md — versioned, immutable once shipped
-  prompts.py       # load_prompt / build_messages (placeholder + attacker-data markers)
+  prompts/         # package: __init__.py = load_prompt / build_messages (placeholder +
+                   #   attacker-data markers); triage-vN.md files beside it, immutable once shipped
   summarize.py     # SessionAlert -> SessionSummary (what the first-pass prompt sees)
   llm_client.py    # OpenAICompatibleLLMClient — the ONLY module that imports the openai SDK
   triage.py        # TriagePipeline: prompt -> LLM -> validate -> (tools, M4) -> (routing, M5)
@@ -55,8 +55,8 @@ worker/
   triage_one.py    # CLI entrypoint (PRD §12 M0)
   main.py          # ARQ WorkerSettings (M5); nothing imports main
 evals/
-  golden/          # v1.jsonl (synthetic, never published), v2.jsonl (human-labeled, published)
-  golden.py        # GoldenCase / load_golden
+  golden/          # package: __init__.py = GoldenCase / load_golden; v1.jsonl (synthetic, never
+                   #   published), v2.jsonl (human-labeled, published)
   scoring.py       # metrics + table formatting (pure functions)
   run.py           # python -m evals.run
   judge.py         # LLM-as-judge (M7)

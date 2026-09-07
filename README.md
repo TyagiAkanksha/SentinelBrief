@@ -108,7 +108,7 @@ docker compose -f infra/docker-compose.yml down     # add -v to drop the databas
 Python (repo root):
 
 ```sh
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test   # from M2
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test   # from M2
 uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental
@@ -127,15 +127,16 @@ pnpm -C web test
 
 Live-API smoke tests are opt-in: `uv run pytest -m live`.
 
-## Evaluation *(from M1)*
+## Evaluation
 
 ```sh
 uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v2
 ```
 
-Prints one comparable row per prompt version. Golden set v1 is synthetic and its numbers are never
-published; v2 is real, hand-labeled honeypot traffic and is the only source of the numbers in
-[`docs/results.md`](docs/results.md) *(from M7)*.
+Each `--prompt` value runs the full pipeline over the golden set and produces one comparable row
+in the printed table; the full per-case results land as JSON under `evals/results/` (gitignored).
+Golden set v1 is synthetic and its numbers are never published; v2 is real, hand-labeled honeypot
+traffic and is the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*.
 
 ## Deployment
 
