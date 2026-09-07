@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import Settings
@@ -57,6 +58,16 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+# Routes take `session: SessionDep`, never a bare `Depends(get_session)`. FastAPI's default
+# dependency scope for a yield-dependency is `"request"`, which runs the code after `yield`
+# (the commit/rollback here) only after the response has already been sent to the client — a
+# failing `commit()` would then be swallowed and the client would see the route handler's `200`
+# for a write that never persisted. `scope="function"` runs that exit code **before** the
+# response is built, so a failing commit propagates through `register_error_handlers` as the
+# generic 500 envelope instead (CONVENTIONS.md §3, §5).
+SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 
 
 def get_triage(request: Request) -> TriageFn:
