@@ -10,6 +10,8 @@ dependencies = [
     "sqlalchemy[asyncio]>=2",
     "psycopg[binary]>=3",
     "alembic",
+    "fastapi>=0.115,<0.137",
+    "uvicorn>=0.30",
 ]
 
 [dependency-groups]

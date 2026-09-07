@@ -97,3 +97,27 @@ class VerdictValidationError(SentinelBriefError):
         super().__init__(message)
         self.attempts = attempts
         self.last_error = last_error
+
+
+class SignatureError(SentinelBriefError):
+    """Raised when an ingest request's HMAC signature is missing or invalid (PRD §6.1)."""
+
+    code = "unauthorized"
+
+
+class NotFoundError(SentinelBriefError):
+    """Raised when a requested resource (e.g. an alert) does not exist."""
+
+    code = "not_found"
+
+
+class ConflictError(SentinelBriefError):
+    """Raised when a write conflicts with an existing resource (e.g. a duplicate fingerprint)."""
+
+    code = "conflict"
+
+
+class RateLimitedError(SentinelBriefError):
+    """Raised when a caller exceeds a configured rate limit."""
+
+    code = "rate_limited"
