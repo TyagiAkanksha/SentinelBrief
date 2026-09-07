@@ -23,8 +23,10 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from core.schemas.verdict import VerdictCategory
+from core.schemas.verdict import VERDICT_JSON_SCHEMA, VerdictCategory
 from evals.golden import GoldenCase, GoldenLabel, load_golden
+from worker.prompts import build_messages, load_prompt
+from worker.summarize import summarize_session
 
 GOLDEN_V1_PATH = Path("evals/golden/v1.jsonl")
 ALL_CATEGORIES = set(get_args(VerdictCategory))
@@ -88,6 +90,19 @@ def _client_versions(case: GoldenCase) -> list[str]:
     ]
 
 
+def _username_and_banner_injected_strings(case: GoldenCase) -> list[str]:
+    """The attacker-controlled strings this injection row carries via `username`/`version`.
+
+    Only the two kinds `worker.summarize.summarize_session` can ever surface today (a `login.*`
+    username containing `"ignore"` or the forged `"<<<"` marker, and a `cowrie.client.version`
+    banner containing `"ignore"`). A `cowrie.command.input`-based injection row has none of these
+    and reaches the prompt only from M4's `get_session_commands` tool, not the first-pass summary.
+    """
+    return [
+        username for username in _login_usernames(case) if "ignore" in username or "<<<" in username
+    ] + [version for version in _client_versions(case) if "ignore" in version]
+
+
 def test_v1_loads_20_cases(golden_cases: list[GoldenCase]) -> None:
     assert len(golden_cases) == 20
 
@@ -149,6 +164,44 @@ def test_injection_cases_cover_three_kinds(golden_cases: list[GoldenCase]) -> No
             f"{case.case_id}: injection row must be labeled by attacker behavior "
             f"(severity >= 3), got {case.label.severity}"
         )
+
+
+def test_injection_strings_reach_the_first_pass_prompt(golden_cases: list[GoldenCase]) -> None:
+    template = load_prompt("triage-v1")
+    injection_cases = [case for case in golden_cases if "injection" in case.tags]
+    assert injection_cases, "expected at least one row tagged 'injection'"
+
+    checked_a_username_or_banner_row = False
+    for case in injection_cases:
+        injected_strings = _username_and_banner_injected_strings(case)
+        if not injected_strings:
+            # A command.input-based injection (reaches the prompt only from M4's
+            # get_session_commands tool) has no username/version to check here; skip it.
+            continue
+        checked_a_username_or_banner_row = True
+
+        summary = summarize_session(case.alert)
+        messages = build_messages(template, summary=summary, schema=VERDICT_JSON_SCHEMA)
+        user_content = messages[1]["content"]
+
+        for injected in injected_strings:
+            neutralized = injected.replace("<<<", "‹‹‹")
+            assert neutralized in user_content, (
+                f"{case.case_id}: injected string {injected!r} (neutralized: {neutralized!r}) "
+                f"never reaches the first-pass prompt's user message — check "
+                f"worker.summarize.summarize_session's sampling caps"
+            )
+
+        assert user_content.count("<<<END_ALERT_DATA>>>") <= 1, (
+            f"{case.case_id}: the real <<<END_ALERT_DATA>>> closing marker must appear at most "
+            f"once in the user content — a forged marker in attacker data must be neutralized, "
+            f"never left as a second real-looking closing marker"
+        )
+
+    assert checked_a_username_or_banner_row, (
+        "expected at least one injection row carrying a username- or banner-based injected "
+        "string to check against the first-pass prompt"
+    )
 
 
 def test_labels_respect_escalate_rule(golden_cases: list[GoldenCase]) -> None:
