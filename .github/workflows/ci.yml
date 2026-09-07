@@ -50,8 +50,14 @@ jobs:
       - name: import-linter
         run: uv run lint-imports
 
-      - name: pytest with coverage
-        run: uv run pytest -q --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+      - name: pytest with coverage (no skips allowed)
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90 2>&1 | tee pytest.log
+          # The DB suite skips silently when TEST_DATABASE_URL is unset (CONVENTIONS §10); a green run
+          # with skips proves nothing, so any skip fails CI (M2 task-01 review M7).
+          if grep -qE '(^SKIPPED|[0-9]+ skipped)' pytest.log; then echo '::error::tests were skipped'; exit 1; fi
 
       - name: pip-audit
         continue-on-error: true
