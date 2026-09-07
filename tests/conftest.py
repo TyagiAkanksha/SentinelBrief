@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import SecretStr
 
 from core.config import ModelPrice, Settings
 
@@ -137,14 +138,21 @@ async def db_session(
 
 @pytest.fixture
 def settings() -> Settings:
-    """A DB-less `Settings` with the fields today's (task-01) tests need.
+    """A DB-less `Settings` wired for the API tests (m2 task-02): LLM fields, an ingest HMAC
+    secret and a CORS origin, on top of the task-01 fields.
 
-    `ingest_hmac_secret` is a task-02 field and does not exist yet — this fixture is extended
-    with it there. Keep this fixture to fields that exist on `core.config.Settings` today.
+    `ingest_hmac_secret` and `cors_origins` are task-02 `Settings` fields and do not exist yet.
+    `Settings.model_config` sets `extra="ignore"`, so passing them today does not raise at
+    construction time — it silently drops the two kwargs. Tests that read
+    `settings.ingest_hmac_secret` or rely on CORS being configured see the RED failure
+    (`AttributeError`/wrong default) at the point of use, which is the expected task-02 RED until
+    the implementer adds the fields.
     """
     return Settings(
+        ingest_hmac_secret=SecretStr("test-secret"),
         cheap_model="fake-model",
         model_prices_json={
             "fake-model": ModelPrice(input_per_mtok=Decimal("0"), output_per_mtok=Decimal("0"))
         },
+        cors_origins="http://localhost:3000",
     )
