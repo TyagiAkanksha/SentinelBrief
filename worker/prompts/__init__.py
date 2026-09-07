@@ -1,8 +1,9 @@
 """Prompt loading and message assembly for the triage pipeline (PRD §6.5/§6.6/§10.6).
 
-`load_prompt` reads a versioned template from `worker/prompts/` and enforces, at load time, that
-it still carries the schema placeholder and the attacker-data markers (CONVENTIONS.md §13) —
-raising `ConfigError` rather than letting a malformed prompt reach the LLM. `build_messages` never
+`load_prompt` reads a versioned template from this package's own directory (the prompt files ship
+beside this loader) and enforces, at load time, that it still carries the schema placeholder and
+the attacker-data markers (CONVENTIONS.md §13) — raising `ConfigError` rather than letting a
+malformed prompt reach the LLM. `build_messages` never
 touches a template's own marker text; it only substitutes the schema into the system message and
 wraps the `SessionSummary` between the fixed markers in the user message (PRD §10.6: attacker data
 is always delimited). Before wrapping, every `<<<` run inside the serialized summary is neutralized
@@ -21,7 +22,7 @@ from core.errors import ConfigError
 from core.llm import ChatMessage
 from worker.summarize import SessionSummary
 
-PROMPTS_DIR: Path = Path(__file__).parent / "prompts"
+PROMPTS_DIR: Path = Path(__file__).parent
 SCHEMA_PLACEHOLDER = "{{VERDICT_SCHEMA}}"
 ALERT_DATA_BEGIN = "<<<ALERT_DATA>>>"
 ALERT_DATA_END = "<<<END_ALERT_DATA>>>"
