@@ -1,8 +1,13 @@
 """Wiring entrypoint (CONVENTIONS.md §5): settings, engine, session factory, `create_app()`.
 
-The only module that reads real secrets and fails fast on empty required ones. LLM/CHEAP_MODEL
-guards and the triage seam are wired in task-04; this task wires the database only. Nothing
-imports this module (import-linter contract 5) — it is a process entrypoint, not a library.
+The only module that reads real secrets and fails fast on empty required ones, and the only
+module that builds the real LLM client and triage pipeline. Nothing imports this module
+(import-linter contract 5) — it is a process entrypoint, not a library.
+
+Imports `worker.llm_client` and `worker.triage` under the documented, dated M2-only exception to
+import-linter contract 3 (`api never imports worker or core.llm`, CONVENTIONS.md §2) — removed at
+M5 when the ARQ job owns triage instead. The route layer never sees more than a `TriageFn`
+callable (`api/deps.py`).
 """
 
 from __future__ import annotations
@@ -16,6 +21,8 @@ from api.factory import create_app
 from core.config import Settings
 from core.db import make_engine, make_session_factory
 from core.errors import ConfigError
+from worker.llm_client import OpenAICompatibleLLMClient
+from worker.triage import TriagePipeline
 
 
 def _configure_logging() -> None:
@@ -42,8 +49,17 @@ _configure_logging()
 settings: Settings = Settings()
 _require_nonempty("DATABASE_URL", settings.database_url.get_secret_value())
 _require_nonempty("INGEST_HMAC_SECRET", settings.ingest_hmac_secret.get_secret_value())
+_require_nonempty("LLM_API_KEY", settings.llm_api_key.get_secret_value())
+_require_nonempty("CHEAP_MODEL", settings.cheap_model)
 
 engine: AsyncEngine = make_engine(settings.database_url.get_secret_value())
 session_factory: async_sessionmaker[AsyncSession] = make_session_factory(engine)
 
-app: FastAPI = create_app(session_factory=session_factory, settings=settings)
+llm = OpenAICompatibleLLMClient.from_settings(settings)
+pipeline = TriagePipeline(
+    llm=llm, model=settings.cheap_model, prompt_version=settings.triage_prompt_version
+)
+
+app: FastAPI = create_app(
+    session_factory=session_factory, settings=settings, triage=pipeline.triage_alert
+)

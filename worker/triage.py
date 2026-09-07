@@ -6,19 +6,31 @@ validation error are appended to the conversation and the call is retried exactl
 `LLMCallError` (transport/HTTP failure) is never retried here — job-level retries (M5) own that
 (`.claude/rules/worker.md`). Tokens, cost and latency are summed across both attempts, including a
 failed attempt's usage, so billing is correct under retry.
+
+`triage_alert` loads an alert, runs it through the pipeline, and persists the outcome as one
+transaction (PRD §6.2): success commits `persist_verdict`'s write; a validation or LLM-call
+failure rolls that write back and marks the alert `failed` in its own transaction instead.
 """
 
 from __future__ import annotations
 
+import logging
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from core.errors import StructuredOutputError, VerdictValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.errors import LLMCallError, StructuredOutputError, VerdictValidationError
 from core.llm import ChatMessage, LLMClient
+from core.models.alerts import AlertStatus
 from core.schemas.alert import SessionAlert
 from core.schemas.verdict import VERDICT_JSON_SCHEMA, Verdict
+from core.services.alerts import get_alert, set_alert_status
 from worker.prompts import build_messages, load_prompt
 from worker.summarize import summarize_session
+
+logger = logging.getLogger(__name__)
 
 RETRY_INSTRUCTION = (
     "Your previous reply failed validation: {error}\n"
@@ -116,3 +128,41 @@ class TriagePipeline:
             latency_ms=result.latency_ms,
             retried=False,
         )
+
+    async def triage_alert(self, session: AsyncSession, alert_id: uuid.UUID) -> AlertStatus:
+        """Load `alert_id`, run it through the pipeline, and persist the outcome as one unit.
+
+        Success persists the verdict (`worker.store.persist_verdict`) and commits once, per PRD
+        §6.2. A validation or LLM-call failure rolls that write back and marks the alert `failed`
+        in its own transaction instead — never a 5xx, never a half-written verdict.
+
+        Args:
+            session: The request/job-scoped `AsyncSession`; this method owns its commit(s).
+            alert_id: The alert to triage.
+
+        Returns:
+            `"triaged"` on success, `"failed"` on a validation or LLM-call failure.
+
+        Raises:
+            NotFoundError: `alert_id` does not exist (propagates from `get_alert`).
+        """
+        # Local import breaks the worker.store <-> worker.triage cycle: store.py imports
+        # TriageOutcome from this module at its own module level, so this module must not import
+        # store.py back at module level too.
+        from worker.store import persist_verdict
+
+        row = await get_alert(session, alert_id)
+        alert = SessionAlert.model_validate(row.raw)
+        try:
+            outcome = await self.run(alert)
+            await persist_verdict(
+                session, alert_id=alert_id, outcome=outcome, model_primary=self._model
+            )
+            await session.commit()
+            return "triaged"
+        except (VerdictValidationError, LLMCallError) as exc:
+            await session.rollback()
+            await set_alert_status(session, alert_id, "failed")
+            await session.commit()
+            logger.warning("triage failed alert_id=%s code=%s", alert_id, exc.code)
+            return "failed"

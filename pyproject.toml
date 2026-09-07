@@ -96,6 +96,8 @@ type = "forbidden"
 source_modules = ["api"]
 forbidden_modules = ["worker", "core.llm"]
 allow_indirect_imports = true
+# M2 inline triage; remove at M5
+ignore_imports = ["api.main -> worker.triage", "api.main -> worker.llm_client"]
 
 [[tool.importlinter.contracts]]
 name = "worker and evals never import api"
