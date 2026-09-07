@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi import Depends, FastAPI
-from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,14 +43,27 @@ def test_create_app_without_db_or_env_builds(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_operation_ids_unique() -> None:
+    # Enumerated from the public OpenAPI surface (`app.openapi()`), not `app.routes`: FastAPI's
+    # internal route wrapping is a private implementation detail (e.g. `_IncludedRouter` from
+    # 0.137) that this test must not depend on. `path_item.values()` mixes per-method operation
+    # objects (dicts keyed by "operationId", ...) with sibling keys like "parameters" (a list),
+    # so non-dict values are skipped.
     app = create_app()
 
-    operation_ids = [route.operation_id for route in app.routes if isinstance(route, APIRoute)]
+    operation_ids = [
+        operation.get("operationId")
+        for path_item in app.openapi()["paths"].values()
+        for operation in path_item.values()
+        if isinstance(operation, dict)
+    ]
 
-    assert operation_ids, "expected at least one APIRoute on a freshly built app (e.g. healthz)"
-    assert all(operation_ids), f"every operation_id must be set: {operation_ids}"
+    assert operation_ids, "expected at least one operation on a freshly built app (e.g. healthz)"
+    assert "healthz" in operation_ids
+    assert all(operation_id is not None for operation_id in operation_ids), (
+        f"every operationId must be set: {operation_ids}"
+    )
     assert len(operation_ids) == len(set(operation_ids)), (
-        f"operation_ids must be unique: {operation_ids}"
+        f"operationIds must be unique: {operation_ids}"
     )
 
 
