@@ -11,10 +11,11 @@ spec: PRD.md §7.1 (v1 policy), §6.6 (labels follow the rubric), §10.6 (inject
 ## Goal
 
 `evals/golden/v1.jsonl` holds 20 synthetic Cowrie sessions labeled per PRD §6.6 — at least three
-per severity band, every category used at least once, at least two injection cases (one via
-`username`, one via `cowrie.command.input`) — and `evals/golden.py::load_golden` validates and
-loads them into `GoldenCase` objects with unique ids. v1 is a development set: its numbers are
-never published.
+per severity band, every category used at least once, at least three injection cases of three
+kinds (username instruction, username with a forged closing marker, client-banner instruction)
+— and `evals/golden/__init__.py::load_golden` (the `evals.golden` package, mirroring
+`worker/prompts/`) validates and loads them into `GoldenCase` objects with unique ids. v1 is a
+development set: its numbers are never published.
 
 ## Context (read ONLY these)
 
@@ -25,7 +26,7 @@ never published.
 
 ## Files
 
-- Create: `evals/golden.py`, `evals/golden/v1.jsonl`, `evals/golden/README.md`,
+- Create: `evals/golden/__init__.py` (the loader — a package, mirroring `worker/prompts/`; no `evals/golden.py`), `evals/golden/v1.jsonl`, `evals/golden/README.md`,
   `tests/test_golden.py`
 - Delete: `evals/golden/.gitkeep`
 
@@ -35,7 +36,7 @@ never published.
 - **Produces (later tasks rely on — produce exactly):**
 
   ```python
-  # evals/golden.py
+  # evals/golden/__init__.py
   class GoldenLabel(BaseModel):
       severity: Annotated[int, Field(ge=1, le=5)]
       category: VerdictCategory
@@ -82,8 +83,9 @@ never published.
   contains `"ignore"`; every injection row's label severity ≥ 3), `test_labels_respect_escalate_rule`,
   `test_rejects_invalid_row` (tmp file with `severity: 9` → `ValueError` mentioning `row 1`),
   `test_rejects_duplicate_case_id` (same alert twice → `ValueError`).
-- [ ] **Step 2: Run to see them fail** → Expected: `ModuleNotFoundError: evals.golden`.
-- [ ] **Step 3: Implement `evals/golden.py`.**
+- [ ] **Step 2: Run to see them fail** → Expected: `ImportError` on the `evals.golden` names
+  (the directory already exists as a namespace package).
+- [ ] **Step 3: Implement `evals/golden/__init__.py`** (delete `.gitkeep`; never create `evals/golden.py`).
 - [ ] **Step 4: Author the 20 rows with `/cowrie-fixture`**, each a complete, distinct session
   (different IPs, sensors, timestamps, credential lists); labels earn their band by behavior;
   `labeler_note` cites the rubric row and the evidence. Include the three injection kinds. Write
