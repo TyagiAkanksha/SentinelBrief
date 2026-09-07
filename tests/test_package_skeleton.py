@@ -5,9 +5,9 @@ Without this, the CI coverage gate (`--cov=api --cov=worker --cov=core --cov=eva
 suite imports these placeholder modules in-process, since the other gates-as-tests only
 shell out to subprocesses.
 
-Since m2 task-02, `api.main` fails fast on empty `DATABASE_URL`/`INGEST_HMAC_SECRET`
-(CONVENTIONS.md §5) — the two are set here so this smoke test exercises the happy wiring path
-instead of the (now expected) `ConfigError`.
+Since m2 task-02, `api.main` fails fast on empty required settings (CONVENTIONS.md §5) —
+importing it has side effects, so `tests/test_api_main.py` owns that module exclusively (m2
+task-04) and it is deliberately excluded from the module list below.
 """
 
 from __future__ import annotations
@@ -19,11 +19,8 @@ import pytest
 
 def test_all_scaffold_packages_import_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
     """PRD §4 / CONVENTIONS.md §2: every module named in the import-linter contracts exists."""
-    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/placeholder")
-    monkeypatch.setenv("INGEST_HMAC_SECRET", "test-secret")
     modules = [
         "api",
-        "api.main",
         "core",
         "core.llm",
         "core.models",
