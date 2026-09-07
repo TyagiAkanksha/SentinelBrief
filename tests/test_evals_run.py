@@ -414,6 +414,39 @@ def test_main_exit_1_on_unknown_prompt_before_any_case(
     assert fake.calls == []
 
 
+def test_main_exit_1_when_output_dir_not_writable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A regular file where a directory is needed (not `chmod`, unreliable as root/CI): the
+    output directory can never be created/written under it."""
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(blocker / "out"),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: output_error:")
+    assert "Traceback" not in captured.err
+
+
 def test_main_exit_1_when_all_cases_failed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
