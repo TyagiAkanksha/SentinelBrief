@@ -7,6 +7,9 @@ dependencies = [
     "pydantic-settings",
     "openai>=2",
     "httpx",
+    "sqlalchemy[asyncio]>=2",
+    "psycopg[binary]>=3",
+    "alembic",
 ]
 
 [dependency-groups]
@@ -14,6 +17,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-timeout",
     "ruff",
     "mypy",
     "import-linter",
@@ -56,6 +60,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["live: calls a real external API; excluded from CI and the default run"]
 addopts = "-m 'not live'"
+timeout = 120
 
 [tool.importlinter]
 root_packages = ["api", "worker", "core", "evals"]

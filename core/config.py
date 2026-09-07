@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     model_prices_json: Annotated[dict[str, ModelPrice], NoDecode] = Field(default_factory=dict)
     triage_prompt_version: str = "triage-v1"
     environment: str = "development"
+    database_url: SecretStr = SecretStr("")
 
     @field_validator("model_prices_json", mode="before")
     @classmethod
