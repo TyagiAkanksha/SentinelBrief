@@ -202,11 +202,12 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header",
                           "fastapi.Path", "fastapi.Body"]
 ```
 
-Mypy: `strict = true` over an explicit `files = ["api", "worker", "core", "evals"]` list. A package
-is either listed (strict-clean) or not present — never partially typed. Third-party gaps get a
-targeted `ignore_missing_imports` override with a comment naming the typed wrapper that contains
-them. `tests/` and `scripts/` are **deliberately out of the mypy gate's scope** (the suite
-duck-types fakes); a bare `mypy .` therefore reports errors there — expected, not a regression.
+Mypy: `strict = true` over an explicit `files = ["api", "worker", "core", "evals", "alembic"]`
+list. A package is either listed (strict-clean) or not present — never partially typed. `alembic/`
+is strict-clean too (its `env.py` is production wiring). Third-party gaps get a targeted
+`ignore_missing_imports` override with a comment naming the typed wrapper that contains them.
+`tests/` and `scripts/` are **deliberately out of the mypy gate's scope** (the suite duck-types
+fakes); a bare `mypy .` therefore reports errors there — expected, not a regression.
 
 pytest: `testpaths = ["tests"]`, `asyncio_mode = "auto"`, `addopts = '-m "not live"'` so the plain
 gate never touches a network; opt in with `uv run pytest -m live`.

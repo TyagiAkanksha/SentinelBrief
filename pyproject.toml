@@ -52,7 +52,7 @@ known-first-party = ["api", "worker", "core", "evals"]
 
 [tool.mypy]
 strict = true
-files = ["api", "worker", "core", "evals"]
+files = ["api", "worker", "core", "evals", "alembic"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
