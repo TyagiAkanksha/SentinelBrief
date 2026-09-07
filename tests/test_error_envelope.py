@@ -10,6 +10,8 @@ handlers are exercised the way a real route would trigger them, never by calling
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
@@ -23,6 +25,7 @@ from core.errors import (
     NotFoundError,
     RateLimitedError,
     SignatureError,
+    StructuredOutputError,
     VerdictValidationError,
 )
 
@@ -36,9 +39,9 @@ def _mount_raiser(app: FastAPI, path: str, operation_id: str, exc: Exception) ->
     app.add_api_route(path, _raise, methods=["GET"], operation_id=operation_id)
 
 
-async def _get(app: FastAPI, path: str, *, raise_server_exceptions: bool = True) -> Response:
+async def _get(app: FastAPI, path: str, *, raise_app_exceptions: bool = True) -> Response:
     """GET `path` on `app` through the real ASGI surface and return the httpx response."""
-    transport = ASGITransport(app=app, raise_server_exceptions=raise_server_exceptions)
+    transport = ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.get(path)
 
@@ -105,7 +108,7 @@ async def test_unhandled_exception_500_enveloped() -> None:
 
     app.add_api_route("/_probe/boom", _boom, methods=["GET"], operation_id="probe_boom")
 
-    response = await _get(app, "/_probe/boom", raise_server_exceptions=False)
+    response = await _get(app, "/_probe/boom", raise_app_exceptions=False)
 
     assert response.status_code == 500
     assert "boom" not in response.text
@@ -120,6 +123,18 @@ async def test_unhandled_exception_500_enveloped() -> None:
         (
             VerdictValidationError(
                 "gave up after retry", attempts=2, last_error="severity: field required"
+            ),
+            502,
+        ),
+        (
+            StructuredOutputError(
+                "bad json",
+                raw_text="x",
+                validation_error="e",
+                input_tokens=1,
+                output_tokens=1,
+                cost_usd=Decimal("0"),
+                latency_ms=1,
             ),
             502,
         ),
