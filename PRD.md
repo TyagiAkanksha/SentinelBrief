@@ -1,6 +1,6 @@
 # SentinelBrief — Product Requirements Document
 
-**Version:** 1.1 · **Owner:** Akanksha Tyagi · **Status:** Approved for build · **Changelog:** §15
+**Version:** 1.2 · **Owner:** Akanksha Tyagi · **Status:** Approved for build · **Changelog:** §15
 **One-liner:** An LLM-powered triage layer that reads incoming security alerts, gathers context via tool calls, and gives analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness measuring how well it does.
 
 ---
@@ -147,7 +147,7 @@ verdicts (
   input_tokens   int, output_tokens int,
   cost_usd       numeric(10,6),
   latency_ms     int,
-  created_at     timestamptz default now()
+  created_at     timestamptz NOT NULL default now()   -- v1.2: never null
 )
 
 -- tool_calls: full trace of the enrichment loop, per verdict
@@ -409,6 +409,10 @@ Terraform stack live; migration documented.
 ---
 
 ## 15. Changelog
+
+**v1.2 — 2026-09-07.** M2 build-time amendment; no scope change.
+- §5: `verdicts.created_at` is `NOT NULL` (migration 0001 already ships it that way; a creation timestamp must never be null — M2 task-01 review M2, ruled at the M2 gate).
+- §6.1 / §8 (clarification, no behaviour change): the ingest signature is enforced by the route class before FastAPI parses the body, so unsigned malformed JSON is `401`; the signed router holds only `POST /api/v1/alerts` — read routes (M3) live on a separate unsigned router. The request-scoped DB session commits before the response is sent (`scope="function"`), so a failing commit is a `500`, never a `2xx`.
 
 **v1.1 — 2026-09-06.** Pre-build amendments after reviewing the sibling AdvisorDesk repo's process and deployment; no scope change.
 - §1.2, §5, §6.1: the alert unit is one Cowrie session; `raw` shape and fingerprint formula defined; signature checked before body parsing; duplicates never re-triage.
