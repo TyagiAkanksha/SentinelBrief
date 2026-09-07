@@ -14,5 +14,7 @@ Published, versioned results of the SentinelBrief evaluation harness (PRD §7).
 
 ## Runs
 
-_No published runs yet. The table header is fixed at M1; the first published row appears at M7,
-after golden set v2 is labeled and the nightly gate's baselines are recorded from that run._
+| date | git_sha | prompt_version | models | n | failed | sev_exact | sev_±1 | category | esc_prec | esc_rec | critical_rec | cost_mean | cost_p95 | cost_total | lat_p50 | lat_p95 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+_No published runs yet — the first appears at M7._
