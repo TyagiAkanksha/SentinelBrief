@@ -44,9 +44,26 @@ gitignored `evals/results/`.
       # llm=None -> OpenAICompatibleLLMClient.from_settings; for each prompt: pipeline -> run_golden -> score -> ResultRow;
       # prints format_table(rows); writes evals/results/<YYYYMMDDTHHMMSSZ>-<prompt>.json =
       #   {"prompt_version", "model", "git_sha", "started_at", "metrics": asdict(RunMetrics), "cases": [asdict(CaseResult) with verdict as dict]}
-      # exit 0; exit 1 on missing golden file or ConfigError (one stderr line)
+      # exit 0; every failure path below is exit 1 with one stderr line
   if __name__ == "__main__": raise SystemExit(main())
   ```
+
+  **Failure paths — enumerated (M0 plan defect 3); every one is exit `1`, one stderr line
+  `error: <code>: <message>`, empty stdout, never a traceback:**
+
+  | Path | code |
+  |---|---|
+  | argparse usage error (no `--prompt`, unknown flag) — parser subclass, same shape as `worker/triage_one.py` | `usage` |
+  | `Settings()` fails validation (e.g. malformed `MODEL_PRICES_JSON`) | `config_error` |
+  | golden file missing / unreadable / invalid row (`load_golden` raises) | `invalid_golden` |
+  | `ConfigError` from `from_settings` (empty/unpriced model) or from `TriagePipeline(...)` (unknown `--prompt`) — raised before any case runs | `config_error` |
+  | output directory not writable | `output_error` |
+
+  Per-case `VerdictValidationError` / `LLMCallError` are **not** failures of the run: they become
+  `CaseResult.error` and the run exits `0` — unless every case failed, then exit `1` with code
+  `all_cases_failed`. **Price before spend** (M0 defect 2): the pipeline's client resolves the
+  price before each call, so an unpriced `--model` fails at construction, never mid-run;
+  `evals.run` reports the pipeline's accounted cost and never estimates.
 
 ## Steps (TDD)
 
@@ -59,7 +76,12 @@ gitignored `evals/results/`.
   `test_main_passes_prompt_versions_to_pipeline` (with a second prompt file created in `tmp_path`
   and `PROMPTS_DIR` monkeypatched → the fake's recorded system messages differ),
   `test_main_writes_result_json` (`--output-dir tmp_path` → one file per prompt, keys present),
-  `test_main_exit_1_on_missing_golden_file`.
+  `test_main_exit_1_on_missing_golden_file`, and one test per remaining failure-path row:
+  `test_main_usage_error_exit_1` (no `--prompt`), `test_main_exit_1_on_malformed_settings`
+  (`MODEL_PRICES_JSON=not-json`), `test_main_exit_1_on_invalid_golden_row`,
+  `test_main_exit_1_on_unknown_prompt_before_any_case` (fake `calls` stays empty),
+  `test_main_exit_1_when_all_cases_failed` (code `all_cases_failed`). The report carries the
+  Interfaces → test table.
 - [ ] **Step 2: Run to see them fail** → Expected: `ModuleNotFoundError: evals.run`.
 - [ ] **Step 3: Implement `evals/run.py`.** Docstring cites PRD §7.2 and the v1-never-published
   rule.
