@@ -168,3 +168,35 @@ def test_prompt_flag_unknown_version_exit_1(capsys: pytest.CaptureFixture[str]) 
     lines = captured.err.splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("error: config_error:")
+
+
+def test_usage_error_missing_path_exit_1(capsys: pytest.CaptureFixture[str]) -> None:
+    """A missing required argument is a clean exit 1, not argparse's own `SystemExit(2)`.
+
+    Exit code 2 is reserved for `VerdictValidationError` (PRD §12 M0 / Interfaces block); a usage
+    error colliding with it would make the exit code ambiguous to a caller.
+    """
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main([], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: usage:")
+
+
+def test_usage_error_unknown_flag_exit_1(capsys: pytest.CaptureFixture[str]) -> None:
+    """An unknown flag is a clean exit 1 with one stderr line, not argparse's `SystemExit(2)`."""
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(["fixtures/alerts/alert1.json", "--bogus"], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: usage:")
