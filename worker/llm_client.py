@@ -126,6 +126,14 @@ class OpenAICompatibleLLMClient:
         messages_param = cast(list[ChatCompletionMessageParam], list(messages))
         response_format_param = cast(ResponseFormat, response_format)
 
+        # Resolved before any provider call: an unpriced model must never be billed
+        # (CONVENTIONS.md §7) — a check that ran after `create()` would only prevent a *silent*
+        # zero-cost accounting, not the spend itself.
+        try:
+            price = self._prices[model]
+        except KeyError as e:
+            raise ConfigError(f"model {model!r} has no entry in MODEL_PRICES_JSON") from e
+
         start = perf_counter()
         try:
             response = await self._client.chat.completions.create(
@@ -149,10 +157,6 @@ class OpenAICompatibleLLMClient:
         if not content:
             raise LLMCallError("provider returned no content")
 
-        try:
-            price = self._prices[model]
-        except KeyError as e:
-            raise ConfigError(f"model {model!r} has no entry in MODEL_PRICES_JSON") from e
         cost_usd = compute_cost_usd(price, usage)
 
         return parse_structured(

@@ -200,3 +200,110 @@ def test_usage_error_unknown_flag_exit_1(capsys: pytest.CaptureFixture[str]) -> 
     lines = captured.err.splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("error: usage:")
+
+
+# --- m0 final-review fix wave (I1, I3): additive only, no existing test/helper changed above. ---
+
+
+def test_exit_1_on_malformed_model_prices_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`Settings()` itself is unguarded at `main`'s entry (I1a): a malformed `MODEL_PRICES_JSON`
+    in the environment must become a clean `config_error` exit 1, not a pydantic traceback —
+    including before argparse ever runs.
+    """
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+    monkeypatch.setenv("MODEL_PRICES_JSON", "not-json")
+
+    rc = main(["fixtures/alerts/alert1.json"], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
+
+
+def test_exit_1_on_unpriced_model_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """A `ConfigError` raised from inside `pipeline.run` (I1b) must not escape `main` as a
+    traceback. `CHEAP_MODEL=fake-model` (set by the autouse fixture) is priced, so `llm=None`
+    makes `main` build the real `OpenAICompatibleLLMClient` via `from_settings` — which succeeds,
+    since it only checks `cheap_model`/`strong_model`. `--model unpriced-model` then reaches
+    `complete_structured`'s price lookup, which (after the I2 fix) runs before any HTTP call, so
+    this exercises the real client/pipeline path with no network touched — no `MockTransport` or
+    fake needed to prove that.
+    """
+    rc = main(["fixtures/alerts/alert1.json", "--model", "unpriced-model"], llm=None)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
+
+
+def test_exit_1_on_malformed_alert_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The invalid-alert-file half of the exit-1 contract (I3a) was unpinned: mutation M-D showed
+    dropping `json.JSONDecodeError`/`ValidationError` from the handler left every CLI test green.
+    """
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("{not json")
+
+    rc = main([str(bad_file)], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: invalid_alert:")
+    assert "Traceback" not in captured.err
+
+
+def test_exit_1_on_schema_invalid_alert(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Valid JSON that fails `SessionAlert` schema validation (missing `events`) is the other half
+    of I3a — the same unpinned path, reached via `pydantic.ValidationError` instead of
+    `json.JSONDecodeError`.
+    """
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+    bad_file = tmp_path / "no_events.json"
+    bad_file.write_text(
+        json.dumps(
+            {
+                "source": "cowrie",
+                "session_id": "abc123",
+                "src_ip": "203.0.113.5",
+                "sensor": "hp-test-01",
+            }
+        )
+    )
+
+    rc = main([str(bad_file)], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: invalid_alert:")
+    assert "Traceback" not in captured.err
+
+
+def test_model_flag_overrides_default(capsys: pytest.CaptureFixture[str]) -> None:
+    """`--model` overrides the `Settings().cheap_model` default (I3b, named in the task-05
+    Interfaces block but never asserted).
+    """
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(["fixtures/alerts/alert1.json", "--model", "other-model"], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    out = json.loads(captured.out)
+    assert out["model"] == "other-model"
+    assert fake.calls[0].model == "other-model"

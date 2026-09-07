@@ -109,9 +109,9 @@ Python (repo root):
 
 ```sh
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test   # from M2
-uv run ruff check .
+uv run ruff check --no-cache .
 uv run ruff format --check .
-uv run mypy
+uv run mypy --no-incremental
 uv run lint-imports
 uv run pytest -q
 ```

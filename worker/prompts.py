@@ -5,7 +5,9 @@ it still carries the schema placeholder and the attacker-data markers (CONVENTIO
 raising `ConfigError` rather than letting a malformed prompt reach the LLM. `build_messages` never
 touches a template's own marker text; it only substitutes the schema into the system message and
 wraps the `SessionSummary` between the fixed markers in the user message (PRD §10.6: attacker data
-is always delimited).
+is always delimited). Before wrapping, every `<<<` run inside the serialized summary is neutralized
+so an attacker-controlled field (e.g. a username) cannot forge a closing/opening delimiter and
+escape the block (PRD §10.6(a)).
 """
 
 from __future__ import annotations
@@ -63,12 +65,15 @@ def build_messages(
 
     Returns:
         `[system, user]`: the system message with the schema substituted in, and the user
-        message with `summary` delimited between `ALERT_DATA_BEGIN` / `ALERT_DATA_END`.
+        message with `summary` delimited between `ALERT_DATA_BEGIN` / `ALERT_DATA_END`. Any `<<<`
+        run inside the serialized summary is replaced with `‹‹‹` first, so an
+        attacker-controlled field cannot forge `ALERT_DATA_BEGIN`/`ALERT_DATA_END` and close the
+        block early (PRD §10.6(a)); the real markers added here are untouched.
     """
     system_content = template.replace(SCHEMA_PLACEHOLDER, json.dumps(schema, indent=2))
+    summary_json = summary.model_dump_json(indent=2).replace("<<<", "‹‹‹")
     user_content = (
-        f"{ALERT_DATA_BEGIN}\n{summary.model_dump_json(indent=2)}\n{ALERT_DATA_END}\n"
-        "Return the verdict JSON object now."
+        f"{ALERT_DATA_BEGIN}\n{summary_json}\n{ALERT_DATA_END}\nReturn the verdict JSON object now."
     )
     return [
         {"role": "system", "content": system_content},

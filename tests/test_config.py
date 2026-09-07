@@ -81,3 +81,18 @@ def test_is_dev_default_true(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings()
 
     assert settings.is_dev is True
+
+
+# --- m0 final-review fix wave (t2 M2): additive only, no existing test/helper changed above. ---
+
+
+def test_is_dev_false_for_production_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The production branch was untested: mutation M-G (dropping `.strip().lower()`) passed
+    every existing config test. Case/whitespace-insensitivity is the named `is_dev` behavior.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", " Production ")
+
+    settings = Settings()
+
+    assert settings.is_dev is False

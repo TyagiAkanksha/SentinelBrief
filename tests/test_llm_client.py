@@ -284,3 +284,79 @@ async def test_fake_records_calls_and_replays() -> None:
     # Recorded even though the call had nothing left to replay — the call log is call-order
     # truth, independent of whether the reply could be produced.
     assert len(fake.calls) == 3
+
+
+# --- m0 final-review fix wave (I2, I4, t3 M1): additive only, no existing test/helper changed. ---
+
+
+async def test_unpriced_model_never_calls_provider() -> None:
+    """I2: the price lookup runs before `chat.completions.create` — an unpriced model must never
+    be billed (CONVENTIONS.md §7 "never a silent zero cost"), not merely have its cost silently
+    dropped after the spend. The handler recording zero calls is the load-bearing assertion.
+    """
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_chat_completion_body(json.dumps(_VALID_VERDICT)))
+
+    client = OpenAICompatibleLLMClient(
+        client=_mock_client(httpx.MockTransport(handler)),
+        prices={},
+        json_mode="json_object",
+    )
+
+    with pytest.raises(ConfigError):
+        await client.complete_structured(
+            messages=[{"role": "user", "content": "hi"}],
+            response_model=Verdict,
+            model="fake-model",
+        )
+
+    assert calls == []
+
+
+async def test_empty_content_raises_llm_call_error() -> None:
+    """t3 M1: an empty (falsy) `content` string is a guard the mutation sweep showed is a real
+    behavioral fork (an unretried `LLMCallError` here vs. a retried `StructuredOutputError` if the
+    guard is removed and the empty string reaches `parse_structured`), not mere defense-in-depth.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_chat_completion_body(""))
+
+    client = OpenAICompatibleLLMClient(
+        client=_mock_client(httpx.MockTransport(handler), max_retries=0),
+        prices=_FAKE_PRICES,
+        json_mode="json_object",
+    )
+
+    with pytest.raises(LLMCallError):
+        await client.complete_structured(
+            messages=[{"role": "user", "content": "hi"}],
+            response_model=Verdict,
+            model="fake-model",
+        )
+
+
+def test_from_settings_happy_path_configures_client() -> None:
+    """I4: `from_settings`'s happy path is the module's only lines with no other test (75-81) —
+    `LLM_BASE_URL` is the PRD §4 provider-swap knob, so a wiring slip (e.g. dropping `base_url=`)
+    must fail here rather than only surface on the owner's live run. Reads the SDK client at
+    `._client` — an external seam with no public accessor on `OpenAICompatibleLLMClient`; `tests/`
+    is out of the mypy strict gate's scope (CONVENTIONS.md §9), so this private-attribute read
+    does not affect it.
+    """
+    settings = Settings(
+        cheap_model="m",
+        model_prices_json={"m": {"input_per_mtok": "0.15", "output_per_mtok": "0.60"}},
+        llm_base_url="http://example.test/v1",
+    )
+
+    client = OpenAICompatibleLLMClient.from_settings(settings)
+
+    sdk_client = client._client
+    assert str(sdk_client.base_url) == "http://example.test/v1/"
+    assert sdk_client.timeout == 60.0
+    assert sdk_client.max_retries == 2
+    assert sdk_client.api_key == "unset"  # empty LLM_API_KEY default -> the "unset" placeholder

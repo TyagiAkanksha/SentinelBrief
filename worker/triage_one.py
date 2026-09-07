@@ -9,8 +9,10 @@ a clean one-line stderr message and a stable exit code — never a Python traceb
 
 Exit codes:
     0: success — the JSON verdict envelope is on stdout.
-    1: a CLI usage error (missing/unknown argument), the alert file is unreadable/invalid, or a
-       `ConfigError`/`LLMCallError` was raised.
+    1: a CLI usage error (missing/unknown argument), the alert file is unreadable/invalid,
+       `Settings()` itself fails to parse (e.g. a malformed `MODEL_PRICES_JSON`), or a
+       `ConfigError`/`LLMCallError` was raised — including a `ConfigError` raised from inside the
+       pipeline run (e.g. `--model` naming a model absent from `MODEL_PRICES_JSON`).
     2: `VerdictValidationError` — the reply failed validation on both PRD §6.5 attempts.
 """
 
@@ -56,6 +58,9 @@ class _Parser(argparse.ArgumentParser):
 
         Args:
             message: argparse's own description of the usage problem.
+
+        Raises:
+            UsageError: Always — this method never returns.
         """
         raise UsageError(f"{message} (see --help)")
 
@@ -84,10 +89,14 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
             tests inject `FakeLLMClient` through (CONVENTIONS.md §10).
 
     Returns:
-        `0` on success; `1` on a usage error, an unreadable/invalid alert file, a `ConfigError`,
-        or a `LLMCallError`; `2` on a `VerdictValidationError`.
+        `0` on success; `1` on a usage error, an unreadable/invalid alert file, `Settings()`
+        itself failing to parse, a `ConfigError`, or a `LLMCallError`; `2` on a
+        `VerdictValidationError`.
     """
-    settings = Settings()
+    try:
+        settings = Settings()
+    except ValidationError as e:
+        return _fail("config_error", str(e))
 
     parser = _Parser(prog="python -m worker.triage_one")
     parser.add_argument("alert_path")
@@ -113,7 +122,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
 
     try:
         outcome = asyncio.run(pipeline.run(alert))
-    except LLMCallError as e:
+    except (ConfigError, LLMCallError) as e:
         return _fail(e.code, str(e))
     except VerdictValidationError as e:
         last_error = " ".join(e.last_error.split())

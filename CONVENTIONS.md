@@ -216,7 +216,7 @@ The gate commands (run from the repo root):
 ```sh
 uv run ruff check --no-cache .
 uv run ruff format --check .
-uv run mypy
+uv run mypy --no-incremental
 uv run lint-imports
 uv run pytest -q
 ```
