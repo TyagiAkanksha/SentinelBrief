@@ -16,7 +16,9 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import Settings
+from core.errors import SignatureError
 from core.models.alerts import AlertStatus
+from core.signing import SIGNATURE_HEADER, verify_signature
 
 TriageFn = Callable[[AsyncSession, uuid.UUID], Awaitable[AlertStatus]]
 
@@ -86,3 +88,26 @@ def get_triage(request: Request) -> TriageFn:
     if triage is None:
         raise RuntimeError("no triage wired")
     return triage
+
+
+async def require_signature(request: Request, settings: Settings = Depends(get_settings)) -> None:
+    """Raise `SignatureError` unless the raw request body carries a valid `X-Signature`.
+
+    Reads the raw body itself, rather than depending on the parsed body model, so the signature
+    check never depends on the body being valid JSON. This is the shared verification function
+    named in the Interfaces contract; `api/routes/alerts.py::SignedRoute` is what actually
+    guarantees 401-before-422 for malformed JSON (FastAPI decodes the JSON body before solving
+    `Depends`, so declaration order alone cannot do it) — this dependency is kept on the route too
+    as a second, idempotent check of the same signature.
+
+    Args:
+        request: The current request; used to read the raw body and the `X-Signature` header.
+        settings: The app's `Settings`, for `ingest_hmac_secret`.
+
+    Raises:
+        SignatureError: When the signature is missing or does not verify.
+    """
+    body = await request.body()
+    header = request.headers.get(SIGNATURE_HEADER)
+    if not verify_signature(settings.ingest_hmac_secret.get_secret_value(), body, header):
+        raise SignatureError("missing or invalid signature")

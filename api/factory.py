@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.deps import TriageFn
 from api.errors import register_error_handlers
+from api.routes.alerts import router as alerts_router
 from api.routes.health import router as health_router
 from core.config import Settings
 
-# All non-health routes live under this prefix (CONVENTIONS.md §5); the alerts router lands here
-# in task-03.
+# All non-health routes live under this prefix (CONVENTIONS.md §5).
 API_V1_PREFIX = "/api/v1"
 
 
@@ -52,5 +52,6 @@ def create_app(
     register_error_handlers(app)
 
     app.include_router(health_router)
+    app.include_router(alerts_router, prefix=API_V1_PREFIX)
 
     return app

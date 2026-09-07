@@ -1,10 +1,305 @@
 {
+  "components": {
+    "schemas": {
+      "CowrieEvent": {
+        "additionalProperties": true,
+        "description": "One raw Cowrie JSON event; unlisted fields survive via `extra=\"allow\"` for forensics.",
+        "properties": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "eventid": {
+            "title": "Eventid",
+            "type": "string"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "outfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfile"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "sensor": {
+            "title": "Sensor",
+            "type": "string"
+          },
+          "session": {
+            "title": "Session",
+            "type": "string"
+          },
+          "shasum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shasum"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "eventid",
+          "timestamp",
+          "session",
+          "src_ip",
+          "sensor"
+        ],
+        "title": "CowrieEvent",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IngestResponse": {
+        "description": "The `POST /api/v1/alerts` response body: the alert's id, current status, and whether this\nrequest is the one that created it (as opposed to a fingerprint duplicate).",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "triaged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created"
+        ],
+        "title": "IngestResponse",
+        "type": "object"
+      },
+      "SessionAlert": {
+        "additionalProperties": true,
+        "description": "The `raw` alert payload: one Cowrie session's events, ordered, plus the envelope fields.",
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CowrieEvent"
+            },
+            "minItems": 1,
+            "title": "Events",
+            "type": "array"
+          },
+          "sensor": {
+            "title": "Sensor",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "const": "cowrie",
+            "title": "Source",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "session_id",
+          "src_ip",
+          "sensor",
+          "events"
+        ],
+        "title": "SessionAlert",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
   "info": {
     "title": "FastAPI",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/alerts": {
+      "post": {
+        "description": "Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.\n\nArgs:\n    payload: The parsed session alert body.\n    session: The request-scoped session (`SessionDep`); its commit/rollback runs before the\n        response is sent.\n    triage: The wired triage callable, invoked only for newly created alerts.\n    _sig: Unused; its presence re-runs `require_signature` as a second, idempotent check\n        (see the module docstring for why `SignedRoute` is what actually guarantees\n        401-before-422).\n\nReturns:\n    `202` with the new alert's id/status when this request created it; `200` with the\n    existing alert's id/current status on a fingerprint duplicate.",
+        "operationId": "ingest_alert",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionAlert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Alert"
+      }
+    },
     "/healthz": {
       "get": {
         "description": "Report DB liveness by running `SELECT 1` through the wired session factory.\n\nArgs:\n    request: The current request, used to reach `app.state.session_factory`.\n\nReturns:\n    `200 {\"status\": \"ok\", \"db\": \"ok\"}` when the database answers;\n    `503 {\"status\": \"degraded\", \"db\": \"unconfigured\"}` when no session factory is wired;\n    `503 {\"status\": \"degraded\", \"db\": \"error\"}` when the database is unreachable.",
