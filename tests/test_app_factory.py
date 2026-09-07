@@ -12,6 +12,8 @@ zero-env `Settings()` when none is injected), so its test pins the happy path in
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -64,6 +66,12 @@ def test_operation_ids_unique() -> None:
     )
     assert len(operation_ids) == len(set(operation_ids)), (
         f"operationIds must be unique: {operation_ids}"
+    )
+    # FastAPI auto-generates an operation id ending in the HTTP method (e.g. "healthz_get") for
+    # any route missing an explicit `operation_id=`; catching that suffix here means a future
+    # route can never silently rely on the auto-generated id instead of declaring its own.
+    assert not any(
+        re.search(r"_(get|post|put|patch|delete)$", operation_id) for operation_id in operation_ids
     )
 
 
