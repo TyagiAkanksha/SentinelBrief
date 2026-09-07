@@ -16,13 +16,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.factory import create_app
+from api.routes.alerts import SignedRoute, router
 from core.config import Settings
 from core.models import AlertRow, AlertStatus
+from core.services.alerts import set_alert_status
 from core.signing import SIGNATURE_HEADER, sign_body
 
 _FIXTURE_BODY = (
@@ -33,14 +36,20 @@ _SECRET = "test-secret"  # matches the `settings` fixture's `ingest_hmac_secret`
 
 @dataclass
 class FakeTriage:
-    """Records every `alert_id` it is invoked with; returns a fixed `AlertStatus`."""
+    """Records every `alert_id` it is invoked with; returns a fixed `AlertStatus`.
 
-    result: AlertStatus = "triaged"
+    A `TriageFn` persists the status it returns (task-04's real `triage_alert` owns verdict +
+    status in one transaction); the fake mirrors that so the route never writes status itself.
+    """
+
+    status: AlertStatus = "triaged"
     calls: list[uuid.UUID] = field(default_factory=list)
 
     async def __call__(self, session: AsyncSession, alert_id: uuid.UUID) -> AlertStatus:
         self.calls.append(alert_id)
-        return self.result
+        await set_alert_status(session, alert_id, self.status)
+        await session.commit()
+        return self.status
 
 
 @pytest.fixture
@@ -195,7 +204,7 @@ async def test_signed_post_status_reflects_triage_outcome(
     db_session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    failing_triage = FakeTriage(result="failed")
+    failing_triage = FakeTriage(status="failed")
     app = create_app(session_factory=db_session_factory, settings=settings, triage=failing_triage)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -205,3 +214,16 @@ async def test_signed_post_status_reflects_triage_outcome(
 
     assert response.status_code == 202
     assert response.json()["status"] == "failed"
+
+
+def test_signed_router_holds_only_the_ingest_post() -> None:
+    """`router` (`route_class=SignedRoute`) must hold exactly the ingest `POST` — never a `GET`.
+
+    Any route added to this router demands a signature, since `SignedRoute` checks it ahead of
+    everything else; M3's read routes (`GET /api/v1/alerts/...`) must live on their own,
+    unsigned router rather than being added here.
+    """
+    routes = [r for r in router.routes if isinstance(r, APIRoute)]
+
+    assert [(r.path, sorted(r.methods)) for r in routes] == [("/alerts", ["POST"])]
+    assert all(isinstance(r, SignedRoute) for r in routes)
