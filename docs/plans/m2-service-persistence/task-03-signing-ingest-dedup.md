@@ -35,7 +35,7 @@ and calls the injected `TriageFn` only for created alerts (a fake in this task's
 ## Interfaces
 
 - **Consumes:** `AlertRow`, `AlertStatus`, `SessionAlert`, `SignatureError`, `NotFoundError`,
-  `TriageFn`, `get_session`, `get_settings`, `get_triage`, `Settings.ingest_hmac_secret`.
+  `TriageFn`, `SessionDep` (the `Annotated[AsyncSession, Depends(get_session, scope="function")]` alias — never bare `Depends(get_session)`), `get_settings`, `get_triage`, `Settings.ingest_hmac_secret`.
 - **Produces (later tasks rely on — produce exactly):**
 
   ```python
@@ -66,7 +66,9 @@ and calls the injected `TriageFn` only for created alerts (a fake in this task's
 
   # api/routes/alerts.py — router = APIRouter(); POST "/alerts", operation_id="ingest_alert", response_model=IngestResponse
   async def ingest_alert(payload: SessionAlert, _sig: None = Depends(require_signature),
-                         session: AsyncSession = Depends(get_session), triage: TriageFn = Depends(get_triage)) -> JSONResponse: ...
+                         session: SessionDep, triage: TriageFn = Depends(get_triage)) -> JSONResponse: ...
+      # SessionDep (task-02 review ruling I5): scope="function" makes commit/rollback run before the response is built,
+      # so a failing commit is the 500 envelope, never a 2xx with the row rolled back.
       # require_signature is declared BEFORE payload parsing takes effect: FastAPI resolves dependencies in declaration order,
       # and require_signature reads the raw body itself, so a bad signature is 401 even when the body is invalid JSON.
       # result = await insert_alert(session, payload); if result.created: await session.commit(); status = await triage(session, result.alert_id)

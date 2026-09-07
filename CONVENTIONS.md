@@ -131,7 +131,10 @@ no contract forbids the import.
 
 - `api/factory.py::create_app(*, session_factory=None, settings=None, triage=None) -> FastAPI` —
   no module-level globals; everything request-scoped lives on `app.state` and is read back through
-  `api/deps.py` (`get_session`, `get_settings`, `get_triage`, `require_signature`).
+  `api/deps.py` (`get_session`, `get_settings`, `get_triage`, `require_signature`). Routes never write
+  `Depends(get_session)` directly: they take `session: SessionDep`, the
+  `Annotated[AsyncSession, Depends(get_session, scope="function")]` alias, so the dependency's
+  commit/rollback runs before the response is sent and a failing commit surfaces as a 500.
 - `create_app()` must succeed **with no database and no env vars** — this is what makes the
   OpenAPI baseline export (§8) and DB-less tests possible. Dependencies that need something
   unwired raise `RuntimeError` at request time rather than silently working.
