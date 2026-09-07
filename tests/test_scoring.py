@@ -1,0 +1,341 @@
+"""Pins `evals.scoring`: `CaseResult`, `RunMetrics`, `percentile`, `score`, `ResultRow`,
+`COLUMNS`, `format_table` (m1 task-02).
+
+PRD §7.3 (metrics: severity exact/within-one, category accuracy, escalation precision/recall,
+critical recall, cost mean/p95/total, latency p50/p95) and §7.5 (`docs/results.md` table
+columns); `.claude/rules/evals.md` ("failed cases count in every denominator and as wrong";
+critical recall is "recall over labeled severity >= 4 -- the number that matters most").
+
+All nine tests build `CaseResult` values by hand via the `_label`/`_verdict`/`_result` factories
+below -- no golden-set file, no DB, no LLM. `evals.scoring` does not exist yet, so every test in
+this module is RED at collection with `ModuleNotFoundError: No module named 'evals.scoring'`, not
+merely at first use.
+"""
+
+from __future__ import annotations
+
+import itertools
+from decimal import Decimal
+
+from core.schemas.verdict import Verdict, VerdictCategory
+from evals.golden import GoldenLabel
+from evals.scoring import (
+    COLUMNS,
+    CaseResult,
+    ResultRow,
+    RunMetrics,
+    format_table,
+    percentile,
+    score,
+)
+
+_case_id_counter = itertools.count(1)
+
+
+def _label(sev: int, cat: VerdictCategory = "brute_force", esc: bool | None = None) -> GoldenLabel:
+    """Build a `GoldenLabel`; `esc` defaults to the PRD §6.6 rubric (severity >= 4 => True)."""
+    escalate = (sev >= 4) if esc is None else esc
+    return GoldenLabel(severity=sev, category=cat, escalate=escalate)
+
+
+def _verdict(sev: int, cat: VerdictCategory = "brute_force", esc: bool | None = None) -> Verdict:
+    """Build a minimally-valid `Verdict`; `esc` defaults the same way as `_label`."""
+    escalate = (sev >= 4) if esc is None else esc
+    return Verdict(
+        severity=sev,
+        category=cat,
+        confidence=0.9,
+        reasoning="synthetic test reasoning citing session evidence.",
+        recommended_action="synthetic recommended action.",
+        escalate=escalate,
+    )
+
+
+def _result(
+    label: GoldenLabel,
+    verdict: Verdict | None,
+    *,
+    cost: str = "0.000100",
+    latency: int = 10,
+    error: str | None = None,
+) -> CaseResult:
+    """Build a `CaseResult` with a unique `case_id` and fixed token counts (irrelevant here)."""
+    return CaseResult(
+        case_id=f"case-{next(_case_id_counter)}",
+        label=label,
+        verdict=verdict,
+        input_tokens=100,
+        output_tokens=50,
+        cost_usd=Decimal(cost),
+        latency_ms=latency,
+        error=error,
+    )
+
+
+def test_severity_exact_and_within_one() -> None:
+    """4 cases: exact (diff 0), off-by-one (diff 1), off-by-two (diff 2), failed -> wrong.
+
+    exact = 1/4 = 0.25 (only the exact-match case); within_one = 2/4 = 0.50 (exact + off-by-one;
+    off-by-two and the failed case are neither).
+    """
+    exact = _result(_label(3), _verdict(3))
+    off_by_one = _result(_label(2), _verdict(3))
+    off_by_two = _result(_label(2), _verdict(4))
+    failed = _result(_label(1), None, error="llm timeout")
+
+    metrics = score([exact, off_by_one, off_by_two, failed])
+
+    assert metrics.n_cases == 4
+    assert metrics.n_failed == 1
+    assert metrics.severity_exact == 0.25
+    assert metrics.severity_within_one == 0.50
+
+
+def test_category_accuracy() -> None:
+    """2 category matches, 1 mismatch, 1 failed (wrong) out of 4 -> 0.5."""
+    match_a = _result(_label(1, cat="scanning"), _verdict(1, cat="scanning"))
+    match_b = _result(_label(1, cat="malware_delivery"), _verdict(1, cat="malware_delivery"))
+    mismatch = _result(_label(1, cat="reconnaissance"), _verdict(1, cat="other"))
+    failed = _result(_label(1, cat="persistence_attempt"), None, error="boom")
+
+    metrics = score([match_a, match_b, mismatch, failed])
+
+    assert metrics.category_accuracy == 0.5
+
+
+def test_escalation_precision_recall() -> None:
+    """Escalation precision/recall against `label.escalate` vs `verdict.escalate`.
+
+    Edge: zero predicted positives (no verdict has `escalate=True`) -> precision = 0.0 by
+    definition (not a division by zero) and, since the one positive label was never predicted,
+    recall = 0.0 too. Normal: 1 true positive, 1 false positive, 1 false negative, 1 true
+    negative -> precision = TP/(TP+FP) = 1/2 = 0.5, recall = TP/(TP+FN) = 1/2 = 0.5.
+    """
+    fn_only = _result(_label(2, esc=True), _verdict(1, esc=False))
+    tn_only = _result(_label(1, esc=False), _verdict(1, esc=False))
+
+    edge_metrics = score([fn_only, tn_only])
+
+    assert edge_metrics.escalate_precision == 0.0
+    assert edge_metrics.escalate_recall == 0.0
+
+    true_positive = _result(_label(2, esc=True), _verdict(2, esc=True))
+    false_positive = _result(_label(1, esc=False), _verdict(1, esc=True))
+    false_negative = _result(_label(2, esc=True), _verdict(1, esc=False))
+    true_negative = _result(_label(1, esc=False), _verdict(1, esc=False))
+
+    normal_metrics = score([true_positive, false_positive, false_negative, true_negative])
+
+    assert normal_metrics.escalate_precision == 0.5
+    assert normal_metrics.escalate_recall == 0.5
+
+
+def test_critical_recall_counts_only_labeled_ge_4() -> None:
+    """critical_recall = |{label.sev >= 4 AND verdict.sev >= 4}| / |{label.severity >= 4}|.
+
+    Non-critical labels (severity < 4) never enter the denominator regardless of their verdict.
+    Three cases: label severity 2 (excluded), label severity 4 correctly hit by a severity-4
+    verdict, label severity 5 missed by a severity-2 verdict -> 1 hit / 2 critical labels = 0.5.
+    The edge case (no case has a labeled severity >= 4) is 0.0, not a division by zero.
+    """
+    not_critical = _result(_label(2), _verdict(2))
+    critical_hit = _result(_label(4), _verdict(4))
+    critical_miss = _result(_label(5), _verdict(2))
+
+    metrics = score([not_critical, critical_hit, critical_miss])
+
+    assert metrics.critical_recall == 0.5
+
+    no_critical_a = _result(_label(1), _verdict(1))
+    no_critical_b = _result(_label(2), _verdict(3))
+    no_critical_c = _result(_label(3), _verdict(2))
+
+    edge_metrics = score([no_critical_a, no_critical_b, no_critical_c])
+
+    assert edge_metrics.critical_recall == 0.0
+
+
+def test_failed_case_counts_as_wrong() -> None:
+    """A `verdict=None` case lowers every rate (it can never be "correct") but its cost and
+    latency were still spent and must still be counted in the cost/latency aggregates.
+
+    2 cases: 1 exact/matching/non-escalating success, 1 failure with a positively-labeled
+    escalation. Every rate that would be 1.0 with only the success case is 0.5 with the failure
+    included; cost_total_usd sums both costs; latency_p95_ms reflects the failed case's (larger)
+    latency.
+    """
+    success = _result(
+        _label(2, cat="scanning", esc=False),
+        _verdict(2, cat="scanning", esc=False),
+        cost="0.000100",
+        latency=10,
+    )
+    failed = _result(
+        _label(2, cat="scanning", esc=True),
+        None,
+        cost="0.000200",
+        latency=500,
+        error="LLM timeout",
+    )
+
+    metrics = score([success, failed])
+
+    assert metrics.n_cases == 2
+    assert metrics.n_failed == 1
+    assert metrics.severity_exact == 0.5
+    assert metrics.severity_within_one == 0.5
+    assert metrics.category_accuracy == 0.5
+    assert metrics.escalate_precision == 0.0
+    assert metrics.escalate_recall == 0.0
+    assert metrics.critical_recall == 0.0
+    assert metrics.cost_total_usd == Decimal("0.000300")
+    assert metrics.latency_p95_ms == 500
+
+
+def test_cost_mean_p95_total() -> None:
+    """Cost mean/p95/total over Decimal `cost_usd`, quantized to 6 dp.
+
+    Costs 100, 200, 200 (micro-USD, i.e. 0.0001, 0.0002, 0.0002): mean = 0.0005/3 =
+    0.000166666... -> quantized to 0.000167; p95 by nearest-rank over the sorted 3-value list
+    (index = ceil(0.95*3) - 1 = 2) = 0.000200; total = 0.000500.
+    """
+    a = _result(_label(1), _verdict(1), cost="0.000100")
+    b = _result(_label(1), _verdict(1), cost="0.000200")
+    c = _result(_label(1), _verdict(1), cost="0.000200")
+
+    metrics = score([a, b, c])
+
+    assert metrics.cost_mean_usd == Decimal("0.000167")
+    assert metrics.cost_p95_usd == Decimal("0.000200")
+    assert metrics.cost_total_usd == Decimal("0.000500")
+
+
+def test_latency_p50_p95() -> None:
+    """Latency p50/p95 (ints) by nearest-rank over 4 sorted values [10, 20, 30, 40].
+
+    p50: index = ceil(0.5*4) - 1 = 1 -> 20. p95: index = ceil(0.95*4) - 1 = 3 -> 40.
+    """
+    cases = [_result(_label(1), _verdict(1), latency=ms) for ms in (10, 20, 30, 40)]
+
+    metrics = score(cases)
+
+    assert metrics.latency_p50_ms == 20
+    assert metrics.latency_p95_ms == 40
+
+
+def test_percentile_nearest_rank_edges() -> None:
+    """`percentile` is nearest-rank: `values_sorted[ceil(p/100 * n) - 1]`; empty -> 0.0.
+
+    Edges: empty list -> 0.0 regardless of p; a single value -> that value regardless of p; two
+    values at p50/p95 pick different ranks. A 10-value list [1..10] at p50 picks index
+    ceil(0.5*10)-1 = 4 -> 5.0 (not an averaged median); at p95 picks index ceil(0.95*10)-1 = 9 ->
+    10.0 (the max).
+    """
+    assert percentile([], 50) == 0.0
+    assert percentile([], 95) == 0.0
+
+    assert percentile([42.0], 50) == 42.0
+    assert percentile([42.0], 95) == 42.0
+
+    assert percentile([1.0, 2.0], 50) == 1.0
+    assert percentile([1.0, 2.0], 95) == 2.0
+
+    ten_values = [float(i) for i in range(1, 11)]
+
+    assert percentile(ten_values, 50) == 5.0
+    assert percentile(ten_values, 95) == 10.0
+
+
+def test_format_table_one_row_per_result_with_headers() -> None:
+    """`format_table` renders a markdown table: header = `COLUMNS`, a separator line, then one
+    body line per `ResultRow`. Rates render at 2 dp (`0.50`), costs at 6 dp (`0.000123`), and
+    latencies as plain ints (`12`).
+    """
+    row_a = ResultRow(
+        prompt_version="triage-v1",
+        model="gpt-test",
+        metrics=RunMetrics(
+            n_cases=10,
+            n_failed=1,
+            severity_exact=0.50,
+            severity_within_one=0.80,
+            category_accuracy=0.70,
+            escalate_precision=0.60,
+            escalate_recall=0.40,
+            critical_recall=0.90,
+            cost_mean_usd=Decimal("0.000123"),
+            cost_p95_usd=Decimal("0.000456"),
+            cost_total_usd=Decimal("0.001230"),
+            latency_p50_ms=12,
+            latency_p95_ms=34,
+        ),
+    )
+    row_b = ResultRow(
+        prompt_version="triage-v2",
+        model="gpt-test-2",
+        metrics=RunMetrics(
+            n_cases=5,
+            n_failed=0,
+            severity_exact=1.0,
+            severity_within_one=1.0,
+            category_accuracy=1.0,
+            escalate_precision=1.0,
+            escalate_recall=1.0,
+            critical_recall=0.0,
+            cost_mean_usd=Decimal("0.000001"),
+            cost_p95_usd=Decimal("0.000002"),
+            cost_total_usd=Decimal("0.000005"),
+            latency_p50_ms=1,
+            latency_p95_ms=2,
+        ),
+    )
+
+    table = format_table([row_a, row_b])
+    lines = table.rstrip("\n").splitlines()
+
+    assert lines[0] == "| " + " | ".join(COLUMNS) + " |"
+    # A markdown separator: one '|'-delimited cell per column, each cell only dashes/colons/spaces.
+    separator_cells = [cell.strip() for cell in lines[1].strip("|").split("|")]
+    assert len(separator_cells) == len(COLUMNS)
+    assert all(cell and set(cell) <= set("-: ") for cell in separator_cells)
+
+    body = lines[2:]
+    assert len(body) == 2
+
+    cells_a = [cell.strip() for cell in body[0].strip("|").split("|")]
+    assert cells_a == [
+        "triage-v1",
+        "gpt-test",
+        "10",
+        "1",
+        "0.50",
+        "0.80",
+        "0.70",
+        "0.60",
+        "0.40",
+        "0.90",
+        "0.000123",
+        "0.000456",
+        "0.001230",
+        "12",
+        "34",
+    ]
+
+    cells_b = [cell.strip() for cell in body[1].strip("|").split("|")]
+    assert cells_b == [
+        "triage-v2",
+        "gpt-test-2",
+        "5",
+        "0",
+        "1.00",
+        "1.00",
+        "1.00",
+        "1.00",
+        "1.00",
+        "0.00",
+        "0.000001",
+        "0.000002",
+        "0.000005",
+        "1",
+        "2",
+    ]
