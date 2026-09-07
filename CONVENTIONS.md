@@ -55,8 +55,8 @@ worker/
   triage_one.py    # CLI entrypoint (PRD §12 M0)
   main.py          # ARQ WorkerSettings (M5); nothing imports main
 evals/
-  golden/          # v1.jsonl (synthetic, never published), v2.jsonl (human-labeled, published)
-  golden.py        # GoldenCase / load_golden
+  golden/          # package: __init__.py = GoldenCase / load_golden; v1.jsonl (synthetic, never
+                   #   published), v2.jsonl (human-labeled, published)
   scoring.py       # metrics + table formatting (pure functions)
   run.py           # python -m evals.run
   judge.py         # LLM-as-judge (M7)

@@ -108,7 +108,7 @@ test that every `Settings` field is documented in `.env.example`.
 ## Verify
 
 ```bash
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run pytest -q tests/test_app_factory.py tests/test_health.py tests/test_error_envelope.py tests/test_openapi_baseline.py tests/test_env_example_roster.py   # 11 passed
 uv run python scripts/export_openapi.py && git diff --exit-code -- api/openapi.json          # no drift
 DATABASE_URL=$TEST_DATABASE_URL INGEST_HMAC_SECRET=x uv run uvicorn api.main:app --port 8000 &  # boots; curl localhost:8000/healthz -> {"status":"ok","db":"ok"}

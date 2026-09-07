@@ -44,6 +44,26 @@ Three kinds are present (CONVENTIONS.md §13 / M0 final review, plan defect 8):
    `get_session_commands` tool; before M4 ships, this row's injected text never reaches the LLM at
    all. One row (severity 5, `persistence_attempt`).
 
+## Category definitions
+
+Golden-set labels use this standard for the seven `VerdictCategory` values (the
+`/cowrie-fixture` skill's rule): `scanning` = untargeted probes or mass-scanner fingerprints, no
+credential attempts; `brute_force` = repeated credential attempts, generic or targeted, no
+success; `reconnaissance` = engaged probing of this specific host **without** a foothold
+(host-derived usernames, banner/kex fingerprinting); `successful_intrusion` = any successful
+login, including post-login recon commands, unless `malware_delivery`/`persistence_attempt`
+applies; `malware_delivery` = download/upload of a payload after a foothold;
+`persistence_attempt` = cron, `authorized_keys`, service or account changes after a foothold;
+`other` = nothing above fits.
+
+Shipped prompts `triage-v1.md` and `triage-v2.md` word `reconnaissance` differently —
+"post-login information-gathering commands with no further compromise" — which describes a
+foothold case rather than a no-foothold one and leaves several `successful_intrusion` sessions
+ambiguous against that same prompt text. `triage-v3.md` aligns its category-definition block to
+the standard above (v1/v2 are immutable and stay as shipped). Because of this mismatch, the M1
+golden-v1 category-accuracy numbers measured under `triage-v1`/`triage-v2` carry this definition
+confound and should not be read as pure model signal.
+
 ## v2 (future, M7)
 
 `v2.jsonl` will hold >=200 real alerts sampled from live honeypot traffic, stratified across

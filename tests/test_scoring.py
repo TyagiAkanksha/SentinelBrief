@@ -246,6 +246,91 @@ def test_percentile_nearest_rank_edges() -> None:
     assert percentile(ten_values, 95) == 10.0
 
 
+# --- m1 final-review fix wave (I1): additive only, no existing test/helper changed above. -------
+
+
+def test_recall_denominators_include_failed_cases() -> None:
+    """`.claude/rules/evals.md`: "failed cases count in every denominator" — a failed case
+    (`verdict=None`) with a positively-labeled outcome must still enter `escalate_recall`'s and
+    `critical_recall`'s denominators, not just their numerators' absence (mutation check: moving
+    the denominator increments inside `if verdict is not None:` must break this test).
+
+    escalate_recall: 1 true positive + 1 failed case with `label.escalate=True` -> denominator 2
+    (the failed case can never be a hit) -> 0.5. critical_recall: 1 critical hit (label severity
+    4, verdict severity 4) + 1 failed case with `label.severity=5` -> denominator 2 -> 0.5.
+    """
+    true_positive = _result(_label(2, esc=True), _verdict(2, esc=True))
+    failed_escalate_positive = _result(_label(2, esc=True), None, error="llm timeout")
+
+    escalate_metrics = score([true_positive, failed_escalate_positive])
+
+    assert escalate_metrics.escalate_recall == 0.5
+
+    critical_hit = _result(_label(4, esc=True), _verdict(4, esc=True))
+    failed_critical = _result(_label(5, esc=True), None, error="llm timeout")
+
+    critical_metrics = score([critical_hit, failed_critical])
+
+    assert critical_metrics.critical_recall == 0.5
+
+
+def test_critical_hit_uses_severity_ge_4_not_exact() -> None:
+    """critical_recall's hit test is `verdict.severity >= 4`, not an exact match against the
+    label's severity (mutation check: `verdict.severity == r.label.severity` must not pass here).
+
+    label 5 / verdict 4 is a hit (the verdict clears the >= 4 bar even though it is not 5); label
+    4 / verdict 3 is a miss (the verdict falls below the bar) -> 1 hit / 2 critical labels = 0.5.
+    """
+    near_miss_hit = _result(_label(5), _verdict(4))
+    below_bar_miss = _result(_label(4), _verdict(3))
+
+    metrics = score([near_miss_hit, below_bar_miss])
+
+    assert metrics.critical_recall == 0.5
+
+
+def test_score_empty_results_returns_zeros() -> None:
+    """`score([])` (t2-M1): every rate `0.0`, every cost `Decimal("0")`, every latency `0`,
+    `n_cases`/`n_failed` both `0` -- never a `ZeroDivisionError`/`IndexError`.
+
+    Reachable via the CLI with an empty golden file: `evals.golden.load_golden` on a file with no
+    non-blank lines returns `[]` without raising (it is not `evals.run`'s `invalid_golden` path).
+    `run_golden([], ...)` then also returns `[]`, and `main`'s `any(r.error is None for r in
+    results)` over that empty list is `False`, so `main` actually exits via `all_cases_failed`,
+    not by calling `score([])` on a genuinely empty case list -- this test pins the pure
+    function's own edge case directly, independent of which CLI path reaches it.
+    """
+    metrics = score([])
+
+    assert metrics.n_cases == 0
+    assert metrics.n_failed == 0
+    assert metrics.severity_exact == 0.0
+    assert metrics.severity_within_one == 0.0
+    assert metrics.category_accuracy == 0.0
+    assert metrics.escalate_precision == 0.0
+    assert metrics.escalate_recall == 0.0
+    assert metrics.critical_recall == 0.0
+    assert metrics.cost_mean_usd == Decimal("0")
+    assert metrics.cost_p95_usd == Decimal("0")
+    assert metrics.cost_total_usd == Decimal("0")
+    assert metrics.latency_p50_ms == 0
+    assert metrics.latency_p95_ms == 0
+
+
+def test_escalate_recall_zero_when_no_labeled_positives() -> None:
+    """escalate_recall's denominator-is-zero branch (t2-M2): no case in the run has
+    `label.escalate == True` (`labeled_positive == 0`), so recall must be `0.0` by definition,
+    not a `ZeroDivisionError` -- distinct from `test_escalation_precision_recall`'s edge, whose
+    one labeled positive exists but was simply never predicted.
+    """
+    no_positive_a = _result(_label(1, esc=False), _verdict(1, esc=False))
+    no_positive_b = _result(_label(2, esc=False), _verdict(3, esc=False))
+
+    metrics = score([no_positive_a, no_positive_b])
+
+    assert metrics.escalate_recall == 0.0
+
+
 def test_format_table_one_row_per_result_with_headers() -> None:
     """`format_table` renders a markdown table: header = `COLUMNS`, a separator line, then one
     body line per `ResultRow`. Rates render at 2 dp (`0.50`), costs at 6 dp (`0.000123`), and

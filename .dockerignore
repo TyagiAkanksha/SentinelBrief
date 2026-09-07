@@ -3,8 +3,9 @@
 # infra/Dockerfile.api (and, from M3, infra/Dockerfile.web) build with the REPO ROOT as
 # context (`build: {context: .., dockerfile: infra/Dockerfile.*}` in infra/docker-compose.yml).
 # Without this file every `docker build` would tar up node_modules, .venv, caches and any
-# local data before the daemon starts resolving layers. Nothing listed here is COPYed by any
-# Dockerfile, so this changes build-context size only, never image contents.
+# local data before the daemon starts resolving layers. Most entries here change build-context
+# size only, never image contents — the one deliberate exception is worker/prompts/*.md, negated
+# below: `COPY worker ./worker` needs the shipped prompt files at runtime (`load_prompt`).
 
 # VCS / editor / local tool state
 .git/
@@ -51,3 +52,4 @@ evals/results/
 # docs — not needed inside any image
 docs/
 *.md
+!worker/prompts/*.md

@@ -3,7 +3,7 @@
 `score()` turns a run's `CaseResult`s into a `RunMetrics`; `format_table()` renders one or more
 runs' metrics as the markdown table `docs/results.md` reuses (task-04). Every function here is a
 pure, side-effect-free transform over already-computed values — no I/O, no golden-set loading, no
-LLM or pipeline invocation (those live in `evals/golden.py` and `evals/run.py`).
+LLM or pipeline invocation (those live in `evals/golden/__init__.py` and `evals/run.py`).
 
 Per `.claude/rules/evals.md`: failed cases (`CaseResult.verdict is None`) count in every rate's
 denominator and are always wrong; costs and latencies aggregate over every case, failed included,

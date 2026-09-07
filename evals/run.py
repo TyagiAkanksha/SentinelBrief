@@ -12,7 +12,7 @@ and task/ledger reports — never `docs/results.md`, the README, or a commit mes
 Every failure path prints exactly one `error: <code>: <message>` line to stderr, leaves stdout
 empty, and never raises a traceback:
 
-    argparse usage error (no --prompt, unknown flag)                          usage
+    argparse usage error (no --prompt, unknown flag, --concurrency < 1)       usage
     `Settings()` fails validation (e.g. malformed MODEL_PRICES_JSON)          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model,
@@ -77,6 +77,24 @@ class _Parser(argparse.ArgumentParser):
             UsageError: Always — this method never returns.
         """
         raise UsageError(f"{message} (see --help)")
+
+
+def _positive_int(value: str) -> int:
+    """`argparse` `type=` for `--concurrency`: a value `< 1` is a usage error, not a runtime one.
+
+    `asyncio.Semaphore(concurrency)` raises `ValueError` for a negative value and blocks forever
+    for `0`; both must be rejected here, before `args` is even built, so they route through
+    `_Parser.error` (`UsageError` -> `_fail("usage", ...)`) like every other malformed flag,
+    never as a traceback or a hang.
+
+    Raises:
+        argparse.ArgumentTypeError: `value` is not an int, or is `< 1`. `argparse` converts this
+            (and a plain `ValueError` from `int()`) into a usage error via `self.error()`.
+    """
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"--concurrency must be >= 1, got {parsed}")
+    return parsed
 
 
 def _fail(code: str, message: str) -> int:
@@ -205,7 +223,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     parser.add_argument("--golden", required=True, type=Path)
     parser.add_argument("--prompt", action="append", required=True)
     parser.add_argument("--model", default=None)
-    parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--concurrency", type=_positive_int, default=4)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     try:
         args = parser.parse_args(argv)

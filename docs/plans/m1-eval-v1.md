@@ -19,7 +19,7 @@ accuracy, escalation precision/recall, critical recall, cost (mean, p95, total) 
 p95); results print as a table; **two different prompt versions produce two comparable rows** in
 one invocation.
 
-**Architecture:** `evals/golden.py` loads and validates JSONL rows into `GoldenCase`
+**Architecture:** `evals/golden/__init__.py` loads and validates JSONL rows into `GoldenCase`
 (`SessionAlert` + `GoldenLabel`); `evals/scoring.py` is pure functions from `CaseResult`s to
 `RunMetrics` and a markdown table; `evals/run.py` drives the **real** `TriagePipeline` from M0
 over every case with a concurrency semaphore, one pipeline per `--prompt` value, and writes a
@@ -72,7 +72,7 @@ comes last because comparability is proven by the runner.
 
 | Clause | Demonstrated by |
 |---|---|
-| Golden set v1: 20 synthetic fixtures labeled per rubric | task-01 `test_v1_loads_20_cases`, `test_every_severity_band_present`, `test_at_least_two_injection_cases_one_via_username` |
+| Golden set v1: 20 synthetic fixtures labeled per rubric | task-01 `test_v1_loads_20_cases`, `test_every_severity_band_present`, `test_injection_cases_cover_three_kinds` |
 | `evals.run` scores severity exact/±1, category accuracy, cost, latency | task-02 `score`; task-03 wiring |
 | Results print as a table | task-02 `format_table`; task-03 `test_main_prints_one_row_per_prompt_version` |
 | Two different prompt versions produce two comparable result rows | task-04 `test_live_two_prompt_versions_produce_two_rows` (live, key exported); output pasted into the ledger |

@@ -585,3 +585,43 @@ def test_main_started_at_is_taken_before_the_run(tmp_path: Path) -> None:
     assert t0 <= started_at <= t1
     assert fake.called_at is not None
     assert started_at < fake.called_at
+
+
+# --- m1 final-review fix wave (I2): additive only, no existing test/helper changed above. -------
+
+
+@pytest.mark.parametrize("concurrency", ["-1", "0"])
+def test_main_usage_error_on_nonpositive_concurrency(
+    concurrency: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """I2: `--concurrency <= 0` must be a `usage` exit (argparse `type=` validation), never a
+    `ValueError` traceback (`asyncio.Semaphore(-1)`) or a hang (`asyncio.Semaphore(0)` never
+    releases). `llm=fake` has no queued replies, so if the validator ever let a nonpositive value
+    through and the run actually reached the pipeline, this test would fail fast
+    (`FakeLLMClient` raising `AssertionError` on an empty queue) rather than hang.
+    """
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    fake = FakeLLMClient([])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            concurrency,
+            "--output-dir",
+            str(tmp_path / "results"),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: usage:")
+    assert "Traceback" not in captured.err
+    assert fake.calls == []
