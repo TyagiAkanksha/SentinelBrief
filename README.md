@@ -73,7 +73,7 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
-### 2. Run the core loop *(from M0)*
+### 2. Run the core loop
 
 ```sh
 uv sync
@@ -81,6 +81,8 @@ uv run python -m worker.triage_one fixtures/alerts/alert1.json
 ```
 
 Prints a validated verdict as JSON plus one line of model / token / cost / latency accounting.
+Exit codes: `0` on success; `1` on a config, LLM, or invalid-input error; `2` when the verdict
+still fails validation after its one retry.
 
 ### 3. Run the stack *(from M2)*
 
