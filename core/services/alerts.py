@@ -35,16 +35,17 @@ async def insert_alert(session: AsyncSession, alert: SessionAlert) -> IngestResu
     caller can tell a duplicate that already finished triage from one still in flight.
 
     Args:
-        session: The request-scoped `AsyncSession`; flushed here, never committed.
+        session: The request-scoped `AsyncSession`; never committed here.
         alert: The parsed session alert to insert.
 
     Returns:
         The new or existing row's id, whether it was newly created, and its current status.
     """
+    fingerprint = alert.fingerprint()
     stmt = (
         pg_insert(AlertRow)
         .values(
-            fingerprint=alert.fingerprint(),
+            fingerprint=fingerprint,
             source=alert.source,
             event_time=alert.connect_time,
             raw=alert.model_dump(mode="json"),
@@ -54,12 +55,11 @@ async def insert_alert(session: AsyncSession, alert: SessionAlert) -> IngestResu
     )
     new_id = (await session.execute(stmt)).scalar_one_or_none()
     if new_id is not None:
-        await session.flush()
         return IngestResult(alert_id=new_id, created=True, status="pending")
 
     existing_id, existing_status = (
         await session.execute(
-            select(AlertRow.id, AlertRow.status).where(AlertRow.fingerprint == alert.fingerprint())
+            select(AlertRow.id, AlertRow.status).where(AlertRow.fingerprint == fingerprint)
         )
     ).one()
     # `AlertRow.status` is a plain `Text` column (no DB-level enum), so the ORM only ever gives

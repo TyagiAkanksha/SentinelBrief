@@ -52,8 +52,9 @@ def main(argv: Sequence[str] | None = None, *, transport: httpx.BaseTransport | 
         return 1
 
     headers = {SIGNATURE_HEADER: sign_body(secret, body), "content-type": "application/json"}
+    base = args.url.rstrip("/")
     with httpx.Client(transport=transport) as client:
-        response = client.post(f"{args.url}/api/v1/alerts", content=body, headers=headers)
+        response = client.post(f"{base}/api/v1/alerts", content=body, headers=headers)
 
     print(f"{response.status_code} {response.text}")
     return 0 if 200 <= response.status_code < 300 else 1

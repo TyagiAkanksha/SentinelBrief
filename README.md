@@ -91,6 +91,7 @@ still fails validation after its one retry.
 docker compose -f infra/docker-compose.yml up -d --build
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 curl -s localhost:8000/healthz                       # {"status":"ok","db":"ok"}
+export INGEST_HMAC_SECRET=<value from .env>          # read from the environment only, no dotenv
 uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # signed POST → 202
 ```
 

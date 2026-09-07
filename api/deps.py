@@ -20,6 +20,8 @@ from core.errors import SignatureError
 from core.models.alerts import AlertStatus
 from core.signing import SIGNATURE_HEADER, verify_signature
 
+# A `TriageFn` persists the status it returns (verdict + status in one transaction, PRD §6.2);
+# the route that calls it never writes `alerts.status` itself.
 TriageFn = Callable[[AsyncSession, uuid.UUID], Awaitable[AlertStatus]]
 
 
@@ -94,11 +96,11 @@ async def require_signature(request: Request, settings: Settings = Depends(get_s
     """Raise `SignatureError` unless the raw request body carries a valid `X-Signature`.
 
     Reads the raw body itself, rather than depending on the parsed body model, so the signature
-    check never depends on the body being valid JSON. This is the shared verification function
-    named in the Interfaces contract; `api/routes/alerts.py::SignedRoute` is what actually
-    guarantees 401-before-422 for malformed JSON (FastAPI decodes the JSON body before solving
-    `Depends`, so declaration order alone cannot do it) — this dependency is kept on the route too
-    as a second, idempotent check of the same signature.
+    check never depends on the body being valid JSON. `api/routes/alerts.py::SignedRoute` calls
+    this directly, ahead of FastAPI's own body parsing — which is what actually guarantees
+    401-before-422 for malformed JSON, since FastAPI decodes the JSON body before solving
+    `Depends` and a bare `Depends(require_signature)` alone could not do it. This is the one
+    function that verifies the signature; `tests/test_require_signature.py` pins it directly.
 
     Args:
         request: The current request; used to read the raw body and the `X-Signature` header.
