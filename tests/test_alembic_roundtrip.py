@@ -8,6 +8,7 @@ Uses `db_engine`/`tmp_schema` (CONVENTIONS.md §10) — real Postgres, skipped b
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -56,21 +57,34 @@ async def test_upgrade_downgrade_upgrade(
     previous_migrate_schema = os.environ.get("MIGRATE_SCHEMA")
     os.environ["MIGRATE_SCHEMA"] = schema
     try:
-        downgrade(cfg, "base")
+        # Sync Alembic commands run in a worker thread, never awaited directly: this test is
+        # `async def` (it needs `db_engine` for reflection), but `alembic/env.py` drives its own
+        # migrations with a plain `asyncio.run(...)`, which cannot nest inside this coroutine's
+        # already-running event loop (CONVENTIONS.md §10).
+        await asyncio.to_thread(downgrade, cfg, "base")
 
         async with db_engine.connect() as conn:
             tables_after_downgrade = await conn.run_sync(
                 lambda sync_conn: set(sa.inspect(sync_conn).get_table_names(schema=schema))
             )
-        assert tables_after_downgrade == set()
+        # `downgrade base` clears alembic_version's row but does not drop the table itself — it
+        # persists in this schema by design (`version_table_schema=schema`); exclude it here too.
+        assert tables_after_downgrade - {"alembic_version"} == set()
 
-        upgrade(cfg, "head")
+        await asyncio.to_thread(upgrade, cfg, "head")
 
         async with db_engine.connect() as conn:
             tables_after_reupgrade = await conn.run_sync(
                 lambda sync_conn: set(sa.inspect(sync_conn).get_table_names(schema=schema))
             )
-        assert tables_after_reupgrade == {"alerts", "verdicts", "tool_calls", "eval_runs"}
+        # Same bookkeeping-table exclusion as above — alembic_version was never dropped, so it
+        # is still present after the re-upgrade too.
+        assert tables_after_reupgrade - {"alembic_version"} == {
+            "alerts",
+            "verdicts",
+            "tool_calls",
+            "eval_runs",
+        }
     finally:
         if previous_migrate_schema is None:
             os.environ.pop("MIGRATE_SCHEMA", None)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from core.db import make_engine
+from core.db import make_engine, make_session_factory
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -53,3 +53,14 @@ def test_search_path_option_set() -> None:
 
     connect_kwargs = _pool_creator_connect_kwargs(engine)
     assert connect_kwargs.get("options") == "-csearch_path=s,public"
+
+
+def test_session_factory_does_not_expire_on_commit() -> None:
+    """`make_session_factory` sets `expire_on_commit=False` (CONVENTIONS.md §6): the M2 ingest
+    route commits the alert insert before awaiting inline triage, and ORM attribute access after
+    that commit must not trigger a lazy refresh — on an `AsyncSession` that raises
+    `MissingGreenlet` rather than quietly working, so nothing else in the suite happens to catch
+    a regression here (confirmed: flipping the flag left the rest of the suite green)."""
+    engine = make_engine("postgresql://u:p@h/d")
+    factory = make_session_factory(engine)
+    assert factory.kw["expire_on_commit"] is False

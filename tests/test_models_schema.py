@@ -113,7 +113,9 @@ async def test_migration_creates_all_four_tables(
             lambda sync_conn: set(sa.inspect(sync_conn).get_table_names(schema=schema))
         )
 
-    assert table_names == {"alerts", "verdicts", "tool_calls", "eval_runs"}
+    # Alembic's own `alembic_version` bookkeeping table legitimately lives in this schema too
+    # (`version_table_schema=schema`, per the brief) — exclude it rather than assert its absence.
+    assert table_names - {"alembic_version"} == {"alerts", "verdicts", "tool_calls", "eval_runs"}
 
 
 async def test_indexes_present(db_engine: AsyncEngine, tmp_schema: tuple[str, str]) -> None:
