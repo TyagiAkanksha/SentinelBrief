@@ -80,7 +80,8 @@ uv sync
 uv run python -m worker.triage_one fixtures/alerts/alert1.json
 ```
 
-Prints a validated verdict as JSON plus one line of model / token / cost / latency accounting.
+Prints one JSON document: the validated verdict plus model, prompt version, token, cost and
+latency fields.
 Exit codes: `0` on success; `1` on a config, LLM, or invalid-input error; `2` when the verdict
 still fails validation after its one retry.
 

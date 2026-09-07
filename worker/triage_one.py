@@ -9,7 +9,8 @@ a clean one-line stderr message and a stable exit code — never a Python traceb
 
 Exit codes:
     0: success — the JSON verdict envelope is on stdout.
-    1: the alert file is unreadable/invalid, or a `ConfigError`/`LLMCallError` was raised.
+    1: a CLI usage error (missing/unknown argument), the alert file is unreadable/invalid, or a
+       `ConfigError`/`LLMCallError` was raised.
     2: `VerdictValidationError` — the reply failed validation on both PRD §6.5 attempts.
 """
 
@@ -21,15 +22,42 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from pydantic import ValidationError
 
 from core.config import Settings
-from core.errors import ConfigError, LLMCallError, VerdictValidationError
+from core.errors import ConfigError, LLMCallError, SentinelBriefError, VerdictValidationError
 from core.llm import LLMClient
 from core.schemas.alert import SessionAlert
 from worker.llm_client import OpenAICompatibleLLMClient
 from worker.triage import TriagePipeline
+
+
+class UsageError(SentinelBriefError):
+    """CLI-only: raised by `_Parser.error` instead of letting argparse exit the process directly.
+
+    Not a `core.errors` member — a malformed command line is a CLI presentation concern, not a
+    domain error any other layer needs to catch.
+    """
+
+    code = "usage"
+
+
+class _Parser(argparse.ArgumentParser):
+    """An `ArgumentParser` that raises `UsageError` on a usage error instead of exiting.
+
+    `--help` is unaffected: it exits via `self.exit(0, ...)` in argparse's own help action, which
+    never calls `error()`.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        """Raise `UsageError` instead of argparse's default `self.exit(2, ...)`.
+
+        Args:
+            message: argparse's own description of the usage problem.
+        """
+        raise UsageError(f"{message} (see --help)")
 
 
 def _fail(code: str, message: str) -> int:
@@ -56,16 +84,19 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
             tests inject `FakeLLMClient` through (CONVENTIONS.md §10).
 
     Returns:
-        `0` on success; `1` on an unreadable/invalid alert file, a `ConfigError`, or a
-        `LLMCallError`; `2` on a `VerdictValidationError`.
+        `0` on success; `1` on a usage error, an unreadable/invalid alert file, a `ConfigError`,
+        or a `LLMCallError`; `2` on a `VerdictValidationError`.
     """
     settings = Settings()
 
-    parser = argparse.ArgumentParser(prog="python -m worker.triage_one")
+    parser = _Parser(prog="python -m worker.triage_one")
     parser.add_argument("alert_path")
     parser.add_argument("--model", default=settings.cheap_model)
     parser.add_argument("--prompt", default=settings.triage_prompt_version)
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except UsageError as e:
+        return _fail(e.code, str(e))
 
     try:
         raw = Path(args.alert_path).read_text()
