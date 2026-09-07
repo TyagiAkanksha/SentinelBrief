@@ -219,6 +219,13 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
 
     model: str = args.model if args.model is not None else settings.cheap_model
 
+    # Price before spend for the flag itself: a fake never prices, so this only applies to the
+    # real client, and it must fail here rather than mid-run inside `TriagePipeline`/
+    # `complete_structured` (`worker/llm_client.py`), which price-checks per call, deep inside
+    # `run_golden`'s `asyncio.gather` — too late to keep every case from starting.
+    if llm is None and model not in settings.model_prices_json:
+        return _fail("config_error", f"model {model!r} has no entry in MODEL_PRICES_JSON")
+
     try:
         cases = load_golden(args.golden)
     except (ValueError, OSError) as e:
@@ -240,13 +247,25 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
         except ConfigError as e:
             return _fail(e.code, str(e))
 
-        results = asyncio.run(run_golden(cases, pipeline=pipeline, concurrency=args.concurrency))
+        # Captured before the run, not after: this is the run's *start* time, not its finish
+        # time — a downstream consumer correlating this JSON against logs or computing elapsed
+        # wall-clock time needs the former.
+        started_at = datetime.now(UTC)
+        try:
+            results = asyncio.run(
+                run_golden(cases, pipeline=pipeline, concurrency=args.concurrency)
+            )
+        except (ConfigError, LLMCallError) as e:
+            # Backstop: `_run_one` already captures a per-case `VerdictValidationError`/
+            # `LLMCallError` as `CaseResult.error`, so a `ConfigError`/`LLMCallError` should
+            # never actually escape `run_golden` today. Mirrors `worker/triage_one.py`'s
+            # `asyncio.run(pipeline.run(...))` guard at no cost.
+            return _fail(e.code, str(e))
         metrics = score(results)
         rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
         if any(r.error is None for r in results):
             any_case_succeeded = True
 
-        started_at = datetime.now(UTC)
         payload = {
             "prompt_version": prompt_version,
             "model": model,
