@@ -214,12 +214,15 @@ gate never touches a network; opt in with `uv run pytest -m live`.
 The gate commands (run from the repo root):
 
 ```sh
-uv run ruff check .
+uv run ruff check --no-cache .
 uv run ruff format --check .
-uv run mypy
+uv run mypy --no-incremental
 uv run lint-imports
 uv run pytest -q
 ```
+
+ruff's cache can mask lint errors on freshly created files (observed on m0 task-02); the gate
+therefore always runs cold.
 
 All five must be clean before every commit that touches Python. Additionally, run `uv run mypy`
 **after every implementation or significant change** — not only at the commit gate. `/gates`

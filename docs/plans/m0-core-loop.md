@@ -36,10 +36,10 @@ Every task's requirements implicitly include this section.
 - Work on branch `feat/m0-core-loop` off `main`; **path-scoped `git add` only** — never
   `git add .` / `-A`; never stage `.env` or secrets. Conventional Commits with scope + task id
   (`feat(core): settings and verdict schema (m0 task-02)`), both trailers from CONVENTIONS.md §12.
-- **Python gates before every commit** (repo root): `uv run ruff check .` · `uv run ruff format
-  --check .` · `uv run mypy` · `uv run lint-imports` · `uv run pytest -q` — all clean. No DB in
-  M0, so no export line is needed yet; from task-01 on, `uv run pytest -q` must report **0
-  skipped**.
+- **Python gates before every commit** (repo root): `uv run ruff check --no-cache .` · `uv run
+  ruff format --check .` · `uv run mypy --no-incremental` · `uv run lint-imports` · `uv run
+  pytest -q` — all clean. No DB in M0, so no export line is needed yet; from task-01 on, `uv run
+  pytest -q` must report **0 skipped**.
 - `uv run mypy` after every implementation or significant change, not only at the gate.
 - **No LLM outside `worker/`**: `core/llm.py` is an interface (no SDK import);
   `worker/llm_client.py` is the only module importing `openai`. Contract 3 fails CI otherwise.

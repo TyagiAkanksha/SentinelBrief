@@ -1,0 +1,85 @@
+{
+  "source": "cowrie",
+  "session_id": "4d5e6f708192",
+  "src_ip": "192.0.2.55",
+  "sensor": "hp-eu-01",
+  "events": [
+    {
+      "eventid": "cowrie.session.connect",
+      "timestamp": "2026-09-06T12:20:03.741000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "New connection: 192.0.2.55:59902 (10.0.0.12:22) [session: 4d5e6f708192]",
+      "src_port": 59902,
+      "dst_ip": "10.0.0.12",
+      "dst_port": 22,
+      "protocol": "ssh"
+    },
+    {
+      "eventid": "cowrie.client.version",
+      "timestamp": "2026-09-06T12:20:03.961000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "Remote SSH version: SSH-2.0-libssh2_1.10.0",
+      "version": "SSH-2.0-libssh2_1.10.0"
+    },
+    {
+      "eventid": "cowrie.login.failed",
+      "timestamp": "2026-09-06T12:20:04.691000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "login attempt [root/root] failed",
+      "username": "root",
+      "password": "root"
+    },
+    {
+      "eventid": "cowrie.login.success",
+      "timestamp": "2026-09-06T12:20:05.341000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "login attempt [root/123456] succeeded",
+      "username": "root",
+      "password": "123456"
+    },
+    {
+      "eventid": "cowrie.command.input",
+      "timestamp": "2026-09-06T12:20:06.571000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "CMD: uname -a",
+      "input": "uname -a"
+    },
+    {
+      "eventid": "cowrie.command.input",
+      "timestamp": "2026-09-06T12:20:07.851000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "CMD: cat /etc/passwd",
+      "input": "cat /etc/passwd"
+    },
+    {
+      "eventid": "cowrie.command.input",
+      "timestamp": "2026-09-06T12:20:09.211000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "CMD: w",
+      "input": "w"
+    },
+    {
+      "eventid": "cowrie.session.closed",
+      "timestamp": "2026-09-06T12:20:16.041000Z",
+      "session": "4d5e6f708192",
+      "src_ip": "192.0.2.55",
+      "sensor": "hp-eu-01",
+      "message": "Connection lost after 12 seconds",
+      "duration_ms": 12296
+    }
+  ]
+}

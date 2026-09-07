@@ -23,11 +23,11 @@ line in whatever you paste.
 ## 2. Python gates (in this order; stop at the first red)
 
 ```sh
-uv run ruff check .            # expected: "All checks passed!"
-uv run ruff format --check .   # expected: "N files already formatted"
-uv run mypy                    # expected: "Success: no issues found in N source files"
-uv run lint-imports            # expected: "Contracts: N kept, 0 broken."
-uv run pytest -q               # expected: "N passed, S skipped" — S must be 0 when the export line is set
+uv run ruff check --no-cache .  # expected: "All checks passed!"
+uv run ruff format --check .    # expected: "N files already formatted"
+uv run mypy --no-incremental    # expected: "Success: no issues found in N source files"
+uv run lint-imports             # expected: "Contracts: N kept, 0 broken."
+uv run pytest -q                # expected: "N passed, S skipped" — S must be 0 when the export line is set
 ```
 
 A non-zero skip count with the export active means a fixture is misnamed or the DB is
@@ -57,6 +57,6 @@ current task's scope.
 
 ## Cold-cache variant (reviewers, milestone gates)
 
-Lint caches can mask latent violations across environments. Reviewers run
-`uv run ruff check --no-cache .` and `uv run mypy --no-incremental`, or run the whole set in a
-fresh worktree.
+The ruff check in §2 now always runs cold (`--no-cache`), so reviewers need no special variant
+for ruff. Lint caches can still mask latent violations elsewhere; for a fully cold mypy run, use
+`uv run mypy --no-incremental`, or run the whole set in a fresh worktree.

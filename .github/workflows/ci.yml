@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+    branches:
+      - main
+
+env:
+  UV_LOCKED: "1"
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: ruff check
+        run: uv run ruff check --no-cache .
+
+      - name: ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      - name: pytest with coverage
+        run: uv run pytest -q --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+
+      - name: pip-audit
+        continue-on-error: true
+        shell: bash
+        run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin

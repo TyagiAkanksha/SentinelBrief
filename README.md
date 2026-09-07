@@ -73,14 +73,17 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
-### 2. Run the core loop *(from M0)*
+### 2. Run the core loop
 
 ```sh
 uv sync
 uv run python -m worker.triage_one fixtures/alerts/alert1.json
 ```
 
-Prints a validated verdict as JSON plus one line of model / token / cost / latency accounting.
+Prints one JSON document: the validated verdict plus model, prompt version, token, cost and
+latency fields.
+Exit codes: `0` on success; `1` on a config, LLM, or invalid-input error; `2` when the verdict
+still fails validation after its one retry.
 
 ### 3. Run the stack *(from M2)*
 
@@ -106,9 +109,9 @@ Python (repo root):
 
 ```sh
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief_test   # from M2
-uv run ruff check .
+uv run ruff check --no-cache .
 uv run ruff format --check .
-uv run mypy
+uv run mypy --no-incremental
 uv run lint-imports
 uv run pytest -q
 ```
