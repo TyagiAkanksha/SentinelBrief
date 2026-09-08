@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { formatDatetimeLocalUtc } from "@/lib/format";
 
 import { VERDICT_CATEGORIES } from "./interface";
@@ -58,7 +60,7 @@ export function FilterBar({ query }: FilterBarProps) {
       </label>
       <input type="hidden" name="page_size" value={query.page_size} />
       <button type="submit">Apply</button>
-      <a href="/alerts">Clear</a>
+      <Link href="/alerts">Clear</Link>
     </form>
   );
 }
