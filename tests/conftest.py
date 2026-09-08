@@ -141,12 +141,8 @@ def settings() -> Settings:
     """A DB-less `Settings` wired for the API tests (m2 task-02): LLM fields, an ingest HMAC
     secret and a CORS origin, on top of the task-01 fields.
 
-    `ingest_hmac_secret` and `cors_origins` are task-02 `Settings` fields and do not exist yet.
-    `Settings.model_config` sets `extra="ignore"`, so passing them today does not raise at
-    construction time — it silently drops the two kwargs. Tests that read
-    `settings.ingest_hmac_secret` or rely on CORS being configured see the RED failure
-    (`AttributeError`/wrong default) at the point of use, which is the expected task-02 RED until
-    the implementer adds the fields.
+    `ingest_hmac_secret` and `cors_origins` are `Settings` fields since `76a7a62` (m2 task-02);
+    both are exercised directly by the ingest/CORS tests that request this fixture.
     """
     return Settings(
         ingest_hmac_secret=SecretStr("test-secret"),

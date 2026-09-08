@@ -101,6 +101,29 @@ async def test_bad_signature_401(
     assert response.json()["error"]["code"] == "unauthorized"
 
 
+async def test_non_ascii_signature_header_is_401_not_500(
+    db_session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    fake_triage: FakeTriage,
+) -> None:
+    """A byte >= 0x80 in `X-Signature` (Starlette decodes headers as latin-1) must still be a
+    clean 401, never the 500 `hmac.compare_digest` raises on non-ASCII `str` operands
+    (m2-final-review.md I2).
+    """
+    app = create_app(session_factory=db_session_factory, settings=settings, triage=fake_triage)
+    headers = [
+        (b"x-signature", b"sha256=" + b"\xe9" * 64),
+        (b"content-type", b"application/json"),
+    ]
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/alerts", content=_FIXTURE_BODY, headers=headers)
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
 async def test_signed_post_202_and_inserts_row(
     db_session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,

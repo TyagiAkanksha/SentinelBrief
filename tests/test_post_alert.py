@@ -118,3 +118,21 @@ def test_post_alert_url_flag_overrides_default(monkeypatch: pytest.MonkeyPatch) 
 
     assert exit_code == 0
     assert seen_hosts == ["example.test"]
+
+
+def test_post_alert_url_trailing_slash_joins_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `--url` with a trailing slash must not produce a doubled `//` in the request path
+    (m2-final-review.md t03 M3/N2 — the fix landed at `scripts/post_alert.py:55`; this pins it).
+    """
+    monkeypatch.setenv("INGEST_HMAC_SECRET", "s")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/alerts"
+        return _ok_response()
+
+    exit_code = post_alert.main(
+        [str(_FIXTURE_PATH), "--url", "http://example.test:9/"],
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert exit_code == 0

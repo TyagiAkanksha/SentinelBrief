@@ -48,8 +48,17 @@ def test_verify_rejects_tampered_body() -> None:
         "md5=abcd",
         "sha256=zz",
         "sha256=" + "0" * 63,
+        "sha256=" + "\xe9" * 64,
     ],
-    ids=["none", "empty", "empty-hex", "wrong-algo", "non-hex", "wrong-length"],
+    ids=[
+        "none",
+        "empty",
+        "empty-hex",
+        "wrong-algo",
+        "non-hex",
+        "wrong-length",
+        "non-ascii",
+    ],
 )
 def test_verify_rejects_missing_or_malformed_header(header: str | None) -> None:
     assert verify_signature("secret", b"body", header) is False
