@@ -49,6 +49,9 @@ M0–M3 Global Constraints apply verbatim (branch `feat/m4-tool-calling`). Addit
 - `get_alert_history` is the only tool touching the DB and does so through `core/services/`.
 - Unkeyed AbuseIPDB / missing `.mmdb` return `{unavailable: true}` and log once; they never raise
   into the loop.
+- **Country flag on the queue and detail IP cells (PRD §9, deferred from M3).** Lands with
+  `get_ip_geo_asn`'s result: task-07 (trace timeline) also renders the flag from the geo tool
+  result, escaped text + emoji, with `{unavailable}` rendering as no flag.
 
 ## Tasks (briefs written at the M3 gate)
 

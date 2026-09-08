@@ -6,8 +6,9 @@ paths: web/**
 
 - TypeScript `strict` plus `noUncheckedIndexedAccess`; `any` is banned. Run `pnpm -C web
   type-check` after every significant change.
-- **Tailwind only**, with tokens defined once in `src/app/globals.css` and `tailwind.config.ts`.
-  No hex values in components; no CSS modules; no component library.
+- **Tailwind only**, with tokens defined once in `src/app/globals.css` under `@theme`; no
+  `tailwind.config.ts` (Tailwind v4). No hex values in components; no CSS modules; no component
+  library.
 - Folder-per-component (`<Name>/{Component.tsx, interface.ts, index.ts, Component.test.tsx}`).
   Components are dumb: props in, events out. Fetching, SSE, polling and formatting live in hooks
   or server components.
