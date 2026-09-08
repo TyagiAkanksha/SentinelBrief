@@ -11,5 +11,9 @@ export default defineConfig({
     globals: false,
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // Fixed non-UTC zone (+05:30, no DST): a UTC test runner can't tell naive-as-local
+    // apart from naive-as-UTC, so this makes any test that silently depends on the host
+    // zone (e.g. formatDatetimeLocalUtc's naive-as-UTC clause) fail everywhere, CI included.
+    env: { TZ: "Asia/Kolkata" },
   },
 });

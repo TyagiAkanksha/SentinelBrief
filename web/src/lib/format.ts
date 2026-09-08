@@ -72,8 +72,10 @@ export function formatTokens(n: number | null): string {
 // ISO input — zoned or naive — to the UTC wall clock in datetime-local's own format, so a naive
 // value round-trips unchanged and a zoned value is converted rather than dropped.
 export function formatDatetimeLocalUtc(iso: string): string {
-  const hasZoneDesignator = /[Zz]$|[+-]\d{2}:\d{2}$/.test(iso);
-  const date = new Date(hasZoneDesignator ? iso : `${iso}Z`);
+  const hasZoneDesignator = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(iso);
+  const hasTimePart = iso.includes("T");
+  const normalized = hasZoneDesignator || !hasTimePart ? iso : `${iso}Z`;
+  const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) {
     return "";
   }
