@@ -37,6 +37,7 @@ Cloudflare DNS (grey-cloud).
 
 M0–M5 Global Constraints apply verbatim (branch `feat/m6-real-data-deploy`). Additionally:
 
+- **Bound the ingest request body (M2 final review I1).** The signed ingest reads the whole body before verifying the HMAC and nothing bounds it today. The prod Caddyfile sets `request_body { max_size 2MB }` on the api site, and the shipper brief states the per-session payload cap it enforces; an in-app `Content-Length` guard (413 envelope, checked before `request.body()`) lands with the shipper task so the api never buffers an unbounded unauthenticated body. Pinned by a test that posts an oversized body.
 - **No secret value in the repo, ever** — scripts and docs name variables and SSM paths only.
   `.env` on the box is rendered by `fetch-secrets.sh`; the honeypot host holds only
   `INGEST_HMAC_SECRET`.
