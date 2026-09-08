@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0f14;
+  --color-surface: #131a22;
+  --color-border: #24303d;
+  --color-text: #e6edf3;
+  --color-muted: #8b98a5;
+  --color-accent: #58a6ff;
+  --color-sev-1: #6e7681;
+  --color-sev-2: #3fb950;
+  --color-sev-3: #d29922;
+  --color-sev-4: #f0883e;
+  --color-sev-5: #f85149;
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text font-sans;
+    font-variant-numeric: tabular-nums;
+  }
+}

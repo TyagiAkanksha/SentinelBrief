@@ -76,3 +76,20 @@ jobs:
         continue-on-error: true
         shell: bash
         run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: corepack enable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: codegen drift (CONVENTIONS §8)
+        run: pnpm -C web codegen && git diff --exit-code -- web/src/types/generated
+      - run: pnpm -C web lint
+      - run: pnpm -C web type-check
+      - run: pnpm -C web format:check
+      - run: pnpm -C web test

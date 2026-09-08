@@ -1,1 +1,16 @@
 packages: ["web"]
+
+# pnpm 10+ blocks dependency build scripts by default for supply-chain safety; we explicitly
+# decline to run them rather than silently allow-listing (mirrors AdvisorDesk's
+# pnpm-workspace.yaml, m3 task-03 controller ruling).
+allowBuilds:
+  # lefthook's postinstall just runs `lefthook install`, which the root "prepare" script
+  # already does explicitly — the build script is redundant, not required for the hook to work.
+  lefthook: false
+  # optional next/image codec used only for production image optimization we don't rely on yet.
+  sharp: false
+  # eslint import-resolver native binding; has a pure-JS fallback, no build needed.
+  unrs-resolver: false
+  # vite/vitest's JS/TS transform dependency; ships a platform-specific optionalDependency binary
+  # resolved at install time, so its own postinstall script is not needed to run `vitest`/`vite`.
+  esbuild: false
