@@ -28,6 +28,7 @@ from core.schemas.alert import SessionAlert
 from core.schemas.verdict import VERDICT_JSON_SCHEMA, Verdict
 from core.services.alerts import get_alert, set_alert_status
 from worker.prompts import build_messages, load_prompt
+from worker.store import persist_verdict
 from worker.summarize import summarize_session
 
 logger = logging.getLogger(__name__)
@@ -146,11 +147,6 @@ class TriagePipeline:
         Raises:
             NotFoundError: `alert_id` does not exist (propagates from `get_alert`).
         """
-        # Local import breaks the worker.store <-> worker.triage cycle: store.py imports
-        # TriageOutcome from this module at its own module level, so this module must not import
-        # store.py back at module level too.
-        from worker.store import persist_verdict
-
         row = await get_alert(session, alert_id)
         alert = SessionAlert.model_validate(row.raw)
         try:

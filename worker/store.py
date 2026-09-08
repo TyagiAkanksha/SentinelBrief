@@ -10,13 +10,15 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.models import ToolCallRow, VerdictRow
 from core.services.alerts import set_alert_status
-from worker.triage import TriageOutcome
+
+if TYPE_CHECKING:
+    from worker.triage import TriageOutcome
 
 
 @dataclass(frozen=True)
