@@ -287,12 +287,14 @@ def test_cache_key_keeps_false_and_zero_values() -> None:
 async def test_list_alerts_escalate_false_is_a_distinct_cache_entry(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """m3 task-02 review N3, route-level: fails if `escalate=False` were dropped from the cache
-    key (both requests would then share the unfiltered key and return the same body) or if the
-    filter itself silently dropped a `False` value. `?escalate=false` on a public path returning
-    the *unfiltered* list would be a wrong-body wire bug, not just a cache-hygiene one."""
+    """m3 task-02 review N3 route-level (re-review round 2, N6: the original true/false pair never
+    collided with the *bare* request either way, so it pinned only the filter, not the cache-key
+    half of N3). GETting the bare list first caches it under the undecorated key; `?escalate=false`
+    must then be a genuinely distinct cache entry, not fall back onto that cached, unfiltered body.
+    Under `if value is None` -> `if not value`, `escalate=False` would drop out of the key and
+    `?escalate=false` would collapse onto the bare key's cached total."""
     app, _clock = _build_app(db_session_factory)
-    escalated_id = await _seed(
+    await _seed(
         db_session_factory,
         session_id="escfalse-true",
         verdict=_verdict(severity=4, escalate=True),
@@ -304,14 +306,12 @@ async def test_list_alerts_escalate_false_is_a_distinct_cache_entry(
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        true_response = await client.get("/api/v1/alerts", params={"escalate": "true"})
+        bare_response = await client.get("/api/v1/alerts")
+        assert bare_response.json()["total"] == 2  # cached under the bare (undecorated) key
+
         false_response = await client.get("/api/v1/alerts", params={"escalate": "false"})
 
-    true_body = true_response.json()
     false_body = false_response.json()
-
-    assert true_body["total"] == 1
-    assert true_body["items"][0]["id"] == str(escalated_id)
     assert false_body["total"] == 1
     assert false_body["items"][0]["id"] == str(non_escalated_id)
 

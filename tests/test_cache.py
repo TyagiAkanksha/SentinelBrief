@@ -140,18 +140,22 @@ async def test_in_memory_cache_purges_all_expired_before_evicting_live() -> None
 
 
 async def test_in_memory_cache_overwrite_at_capacity_never_evicts() -> None:
-    """m3 task-02 review N2: overwriting an existing key at capacity must never evict a live
-    neighbour — only a genuinely new key ever competes for a slot."""
+    """m3 task-02 review N2 (re-review round 2: NOT ADDRESSED the first time — the overwritten key
+    was itself the soonest-expiring entry, so dropping the `key not in self._entries` guard just
+    evicted and immediately re-inserted that same key, leaving `b` untouched and the test still
+    green under the mutant). `b` (ttl 10) now expires *before* `a` (ttl 20), so `a` is never the
+    soonest-expiring entry a buggy eviction would pick when `a` is overwritten — only `b` is, and
+    `b` must survive that overwrite regardless."""
     box = [0.0]
     cache = InMemoryTTLCache(clock=lambda: box[0], max_entries=2)
 
-    await cache.set("a", b"a1", 10)  # expires at 10
-    await cache.set("b", b"b", 20)  # expires at 20; store now at capacity (2)
+    await cache.set("a", b"a1", 20)  # expires at 20
+    await cache.set("b", b"b", 10)  # expires at 10 (soonest); store now at capacity (2)
 
     await cache.set("a", b"a2", 30)  # overwrite, not a new key -> must not evict b
-    assert await cache.get("b") == b"b"  # overwriting a never evicted b
+    assert await cache.get("b") == b"b"  # overwriting a never evicted b, even though b is soonest
 
-    box[0] = 25.0  # past a's *original* 10s TTL; well within its restarted 30s TTL
+    box[0] = 25.0  # past a's *original* 20s TTL; well within its restarted 30s TTL
     assert await cache.get("a") == b"a2"
 
 
