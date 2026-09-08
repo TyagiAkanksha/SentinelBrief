@@ -73,4 +73,36 @@ describe("RoutingInfo", () => {
     expect(screen.getByText("yes")).toBeInTheDocument();
     expect(screen.getAllByText(EM_DASH)).toHaveLength(3);
   });
+
+  it("renders the nine routing fields as label/value pairs in the brief's order", () => {
+    const verdict = makeVerdict({
+      model_primary: "gpt-5-nano",
+      model_final: "gpt-5-mini",
+      escalated_model: true,
+      prompt_version: "triage-v1",
+      input_tokens: 512,
+      output_tokens: 128,
+      cost_usd: "0.000228",
+      latency_ms: 900,
+      created_at: "2026-09-06T00:59:00.000Z",
+    });
+
+    const { container } = render(<RoutingInfo verdict={verdict} />);
+
+    const dts = Array.from(container.querySelectorAll("dt"));
+    const dds = Array.from(container.querySelectorAll("dd"));
+    const pairs = dts.map((dt, i) => [dt.textContent, dds[i]?.textContent]);
+
+    expect(pairs).toEqual([
+      ["Primary model", "gpt-5-nano"],
+      ["Final model", "gpt-5-mini"],
+      ["Escalated to strong model", "yes"],
+      ["Prompt version", "triage-v1"],
+      ["Input tokens", "512"],
+      ["Output tokens", "128"],
+      ["Cost", "$0.000228"],
+      ["Latency", "900 ms"],
+      ["Verdict at", "2026-09-06 00:59:00Z"],
+    ]);
+  });
 });
