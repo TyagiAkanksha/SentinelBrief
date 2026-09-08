@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import importlib
 
-import pytest
 
-
-def test_all_scaffold_packages_import_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_all_scaffold_packages_import_cleanly() -> None:
     """PRD §4 / CONVENTIONS.md §2: every module named in the import-linter contracts exists."""
     modules = [
         "api",
