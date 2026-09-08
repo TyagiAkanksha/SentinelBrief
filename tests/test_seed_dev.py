@@ -291,6 +291,64 @@ def test_unreachable_database_exit_1(
     assert lines[0].startswith("error: database_error:")
 
 
+# --- main: failure paths (check-order rows 1, 2, 5 — task-06 addendum, review finding I1) -------
+
+
+def test_usage_error_exit_1(seed_dev: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    """Check-order row 1: an unknown flag is a `usage` error, never argparse's own `SystemExit(2)`
+    or a traceback — the brief's "one stderr line, exit 1" contract must hold here too."""
+    rc = seed_dev.main(["--bogus-flag"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: usage:")
+
+
+def test_settings_validation_error_exit_1(
+    monkeypatch: pytest.MonkeyPatch, seed_dev: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check-order row 2: a malformed `MODEL_PRICES_JSON` fails `Settings()` itself, before the
+    database URL (or anything else) is even inspected — confirmed against `core/config.py`'s
+    `_decode_model_prices_json` validator, which turns a `json.JSONDecodeError` into a pydantic
+    `ValidationError`."""
+    monkeypatch.setenv("MODEL_PRICES_JSON", "not-json")
+
+    rc = seed_dev.main(["--database-url", "postgresql://unused"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+
+
+def test_live_with_unpriced_model_exit_1(
+    monkeypatch: pytest.MonkeyPatch, seed_dev: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check-order row 5: `--live` with a key present but `CHEAP_MODEL` absent from
+    `MODEL_PRICES_JSON` fails inside `OpenAICompatibleLLMClient.from_settings` — "price before
+    spend" (`worker/llm_client.py`). The bogus `--database-url` is never reached: if the check
+    order were wrong, this would surface as `error: database_error:` instead."""
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.setenv("CHEAP_MODEL", "unpriced-model")
+    monkeypatch.delenv("MODEL_PRICES_JSON", raising=False)
+
+    rc = seed_dev.main(["--live", "--database-url", "postgresql://unused"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "MODEL_PRICES_JSON" in lines[0]
+    assert "unpriced-model" in lines[0]
+
+
 # --- never referenced from compose (DB-less; no `seed_dev` fixture -> green on arrival) ---------
 
 
