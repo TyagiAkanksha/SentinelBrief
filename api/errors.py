@@ -1,9 +1,10 @@
 """The PRD §8 error envelope, produced exactly once (CONVENTIONS.md §4).
 
-`register_error_handlers` maps every `SentinelBriefError` subclass to its HTTP status via
-`STATUS_BY_ERROR`, envelopes `RequestValidationError` as a 422 that never echoes the request body,
-and turns any other exception into a generic 500 whose traceback goes to the log, never the
-response.
+`register_error_handlers` maps every `SentinelBriefError` subclass to its HTTP status by walking
+the exception's MRO (`status_for`), envelopes `RequestValidationError` as a 422 that never echoes
+the request body, and turns any other exception into a generic 500 whose traceback goes to the
+log, never the response. Every ≥ 500 mapping hides its real message behind `GENERIC_MESSAGE` on
+the wire too (M2 final review, plan defect 3) — only the log line carries the real text.
 """
 
 from __future__ import annotations
@@ -26,8 +27,11 @@ from core.errors import (
     StructuredOutputError,
     VerdictValidationError,
 )
+from core.schemas.errors import ErrorBody, ErrorEnvelope
 
 logger = logging.getLogger(__name__)
+
+GENERIC_MESSAGE = "internal error"
 
 STATUS_BY_ERROR: Mapping[type[SentinelBriefError], int] = {
     SignatureError: 401,
@@ -41,21 +45,56 @@ STATUS_BY_ERROR: Mapping[type[SentinelBriefError], int] = {
 }
 
 
+def status_for(exc_type: type[SentinelBriefError]) -> int | None:
+    """Resolve `exc_type`'s HTTP status by walking its MRO against `STATUS_BY_ERROR`.
+
+    Args:
+        exc_type: The raised exception's concrete class.
+
+    Returns:
+        The status of the first `STATUS_BY_ERROR` row matching `exc_type` or one of its
+        ancestors (nearest first), or `None` when no ancestor is mapped.
+    """
+    for ancestor in exc_type.__mro__:
+        if ancestor in STATUS_BY_ERROR:
+            return STATUS_BY_ERROR[ancestor]
+    return None
+
+
+def _envelope(status_code: int, code: str, message: str) -> JSONResponse:
+    """Build the one PRD §8 error envelope every handler in this module returns.
+
+    Args:
+        status_code: The HTTP status to respond with.
+        code: The wire `error.code` value.
+        message: The wire `error.message` value.
+
+    Returns:
+        A `JSONResponse` whose body is `ErrorEnvelope(error=ErrorBody(code=code,
+        message=message))`, dumped to a plain dict.
+    """
+    envelope = ErrorEnvelope(error=ErrorBody(code=code, message=message))
+    return JSONResponse(status_code=status_code, content=envelope.model_dump())
+
+
 async def _handle_sentinelbrief_error(request: Request, exc: Exception) -> JSONResponse:
-    """Envelope a `SentinelBriefError` subclass at its `STATUS_BY_ERROR` status.
+    """Envelope a `SentinelBriefError` subclass at its MRO-resolved status.
 
     Args:
         request: The request that triggered the error (unused; required by the handler shape).
         exc: The raised `SentinelBriefError`.
 
     Returns:
-        `{"error": {"code", "message"}}` at the mapped status code.
+        `{"error": {"code", "message"}}` at the resolved status code (falling back to 500 when
+        `status_for` finds no mapped ancestor). ≥ 500 responses never carry the real message —
+        only `GENERIC_MESSAGE`; the real text is logged at `ERROR` instead.
     """
     assert isinstance(exc, SentinelBriefError)
-    status_code = STATUS_BY_ERROR.get(type(exc), 500)
-    return JSONResponse(
-        status_code=status_code, content={"error": {"code": exc.code, "message": str(exc)}}
-    )
+    status_code = status_for(type(exc)) or 500
+    message = str(exc) if status_code < 500 else GENERIC_MESSAGE
+    if status_code >= 500:
+        logger.error("sentinelbrief error code=%s status=%s message=%s", exc.code, status_code, exc)
+    return _envelope(status_code, exc.code, message)
 
 
 async def _handle_validation_error(request: Request, exc: Exception) -> JSONResponse:
@@ -72,10 +111,7 @@ async def _handle_validation_error(request: Request, exc: Exception) -> JSONResp
     message = "; ".join(
         f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
     )
-    return JSONResponse(
-        status_code=422,
-        content={"error": {"code": "validation_error", "message": message}},
-    )
+    return _envelope(422, "validation_error", message)
 
 
 async def _handle_unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
@@ -89,10 +125,7 @@ async def _handle_unhandled_exception(request: Request, exc: Exception) -> JSONR
         A 500 `{"error": {"code": "internal_error", "message": "internal error"}}`.
     """
     logger.exception("unhandled exception", exc_info=exc)
-    return JSONResponse(
-        status_code=500,
-        content={"error": {"code": "internal_error", "message": "internal error"}},
-    )
+    return _envelope(500, "internal_error", GENERIC_MESSAGE)
 
 
 def register_error_handlers(app: FastAPI) -> None:

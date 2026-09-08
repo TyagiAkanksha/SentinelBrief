@@ -78,6 +78,7 @@ forbidden_modules = [
     "api",
     "worker",
     "evals",
+    "core.cache",
     "core.config",
     "core.db",
     "core.errors",

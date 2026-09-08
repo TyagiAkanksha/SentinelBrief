@@ -50,6 +50,9 @@ jobs:
       - name: import-linter
         run: uv run lint-imports
 
+      - name: OpenAPI baseline drift (CONVENTIONS §8)
+        run: uv run python scripts/export_openapi.py --out /tmp/openapi.json && cmp /tmp/openapi.json api/openapi.json
+
       - name: pytest with coverage (no skips allowed)
         shell: bash
         run: |

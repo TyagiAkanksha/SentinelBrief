@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cache import TTLCache
 from core.config import Settings
 from core.errors import SignatureError
 from core.models.alerts import AlertStatus
@@ -38,6 +39,20 @@ def get_settings(request: Request) -> Settings:
     if settings is None:
         return Settings()
     return settings
+
+
+def get_cache(request: Request) -> TTLCache:
+    """Return the app's `TTLCache`, always installed by `create_app()`.
+
+    Args:
+        request: The current request, used to reach `app.state.cache`.
+
+    Returns:
+        The `TTLCache` instance `create_app()` was built with (or its default
+        `InMemoryTTLCache` when no `cache=` kwarg was passed).
+    """
+    cache: TTLCache = request.app.state.cache
+    return cache
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:

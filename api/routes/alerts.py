@@ -28,6 +28,7 @@ from fastapi.routing import APIRoute
 
 from api.deps import SessionDep, TriageFn, get_settings, get_triage, require_signature
 from core.schemas.alert import SessionAlert
+from core.schemas.errors import ErrorEnvelope
 from core.schemas.ingest import IngestResponse
 from core.services.alerts import insert_alert
 
@@ -65,8 +66,9 @@ router = APIRouter(route_class=SignedRoute)
             "model": IngestResponse,
             "description": "Duplicate session: existing alert returned, triage not re-run.",
         },
-        401: {"description": "Missing or invalid X-Signature."},
-        422: {"description": "Invalid session payload."},
+        401: {"model": ErrorEnvelope, "description": "Missing or invalid X-Signature."},
+        422: {"model": ErrorEnvelope, "description": "Invalid session payload."},
+        500: {"model": ErrorEnvelope},
     },
 )
 async def ingest_alert(
@@ -75,7 +77,7 @@ async def ingest_alert(
     triage: TriageFn = Depends(get_triage),
 ) -> JSONResponse:
     """Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.
-
+    \f
     Args:
         payload: The parsed session alert body.
         session: The request-scoped session (`SessionDep`); its commit/rollback runs before the

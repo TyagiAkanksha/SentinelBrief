@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     database_url: SecretStr = SecretStr("")
     ingest_hmac_secret: SecretStr = SecretStr("")
     cors_origins: str = "http://localhost:3000"
+    alerts_list_cache_ttl_s: int = 15
+    stats_cache_ttl_s: int = 60
 
     @field_validator("model_prices_json", mode="before")
     @classmethod
