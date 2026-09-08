@@ -1,0 +1,272 @@
+"""Read-only, session-first services answering PRD §8 from the database alone (m3 task-01).
+
+`list_alerts`, `get_alert_detail`, and `get_stats` never `commit()` (CONVENTIONS.md §3) and never
+trigger compute — they only ever read `alerts`, `verdicts`, and `tool_calls`. Every "latest
+verdict per alert" view (list rows, detail, and the stats distributions) shares one `DISTINCT ON`
+subquery so a retriaged alert always collapses to its newest verdict, never both.
+"""
+
+from __future__ import annotations
+
+import uuid
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, cast, get_args
+
+from sqlalchemy import Date, Subquery, func, select
+from sqlalchemy import cast as sql_cast
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.models import AlertRow, AlertStatus, ToolCallRow, VerdictRow
+from core.schemas.alerts_read import (
+    AlertDetail,
+    AlertSummary,
+    DayVolume,
+    ListFilters,
+    StatsOut,
+    ToolCallOut,
+    VerdictOut,
+    VerdictSummary,
+    reasoning_excerpt,
+)
+from core.schemas.verdict import VerdictCategory
+from core.services.alerts import get_alert
+
+_SIX_DP = Decimal("0.000001")
+
+
+def _latest_verdicts_subquery() -> Subquery:
+    """The latest verdict per alert: Postgres `DISTINCT ON (alert_id)` (PRD §5, §9).
+
+    Ordered `alert_id, created_at DESC, id DESC` — the `id` tiebreaker matters when two verdicts
+    for the same alert share a `created_at` (e.g. two writes in one transaction/second).
+    """
+    return (
+        select(VerdictRow)
+        .distinct(VerdictRow.alert_id)
+        .order_by(VerdictRow.alert_id, VerdictRow.created_at.desc(), VerdictRow.id.desc())
+        .subquery("latest")
+    )
+
+
+async def list_alerts(
+    session: AsyncSession, *, filters: ListFilters, page: int, page_size: int
+) -> tuple[list[AlertSummary], int]:
+    """Page the alert list, latest verdict per alert, `severity DESC NULLS LAST, received_at DESC`
+    then `id DESC` (PRD §9) so pending/failed alerts (`verdict=None`) still list, after every
+    verdict-bearing row, and paging never drops or duplicates a row.
+
+    Args:
+        session: The request-scoped `AsyncSession`.
+        filters: PRD §8 list filters (`severity_gte`, `category`, `since`, `escalate`); a
+            verdict-field filter naturally excludes alerts with no verdict (`NULL` comparisons).
+        page: 1-indexed page number.
+        page_size: Rows per page.
+
+    Returns:
+        The page's `AlertSummary` rows and the total count of rows matching `filters`.
+    """
+    latest = _latest_verdicts_subquery()
+
+    base = select(
+        AlertRow.id,
+        AlertRow.source,
+        func.coalesce(AlertRow.raw["src_ip"].astext, "").label("src_ip"),
+        func.coalesce(AlertRow.raw["sensor"].astext, "").label("sensor"),
+        AlertRow.event_time,
+        AlertRow.received_at,
+        AlertRow.status,
+        latest.c.severity,
+        latest.c.category,
+        latest.c.confidence,
+        latest.c.escalate,
+        latest.c.reasoning,
+        latest.c.created_at,
+    ).outerjoin(latest, latest.c.alert_id == AlertRow.id)
+
+    if filters.severity_gte is not None:
+        base = base.where(latest.c.severity >= filters.severity_gte)
+    if filters.category is not None:
+        base = base.where(latest.c.category == filters.category)
+    if filters.escalate is not None:
+        base = base.where(latest.c.escalate == filters.escalate)
+    if filters.since is not None:
+        base = base.where(AlertRow.received_at >= filters.since)
+
+    total = await session.scalar(select(func.count()).select_from(base.subquery()))
+    assert total is not None
+
+    items_stmt = (
+        base.order_by(
+            latest.c.severity.desc().nulls_last(),
+            AlertRow.received_at.desc(),
+            AlertRow.id.desc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await session.execute(items_stmt)).all()
+
+    items = [
+        AlertSummary(
+            id=row.id,
+            source=row.source,
+            src_ip=row.src_ip,
+            sensor=row.sensor,
+            event_time=row.event_time,
+            received_at=row.received_at,
+            status=cast(AlertStatus, row.status),
+            verdict=(
+                None
+                if row.severity is None
+                else VerdictSummary(
+                    severity=row.severity,
+                    category=cast(VerdictCategory, row.category),
+                    confidence=row.confidence,
+                    escalate=row.escalate,
+                    reasoning_excerpt=reasoning_excerpt(row.reasoning),
+                    created_at=row.created_at,
+                )
+            ),
+        )
+        for row in rows
+    ]
+    return items, total
+
+
+async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertDetail:
+    """Return `alert_id`'s full detail: raw payload, latest verdict, and its tool calls in
+    `seq` order (PRD §5, §8).
+
+    Args:
+        session: The request-scoped `AsyncSession`.
+        alert_id: The alert's primary key.
+
+    Returns:
+        The alert's `AlertDetail`; `verdict=None` and `tool_calls=[]` when it has never been
+        triaged.
+
+    Raises:
+        NotFoundError: When no alert with `alert_id` exists.
+    """
+    row = await get_alert(session, alert_id)
+
+    latest_stmt = (
+        select(VerdictRow)
+        .where(VerdictRow.alert_id == alert_id)
+        .order_by(VerdictRow.created_at.desc(), VerdictRow.id.desc())
+        .limit(1)
+    )
+    latest_verdict = (await session.execute(latest_stmt)).scalar_one_or_none()
+
+    verdict_out: VerdictOut | None = None
+    tool_calls: list[ToolCallOut] = []
+    if latest_verdict is not None:
+        verdict_out = VerdictOut.model_validate(latest_verdict)
+        tool_calls_stmt = (
+            select(ToolCallRow)
+            .where(ToolCallRow.verdict_id == latest_verdict.id)
+            .order_by(ToolCallRow.seq)
+        )
+        tool_call_rows = (await session.execute(tool_calls_stmt)).scalars().all()
+        tool_calls = [ToolCallOut.model_validate(tc) for tc in tool_call_rows]
+
+    raw: dict[str, Any] = row.raw
+    return AlertDetail(
+        id=row.id,
+        source=row.source,
+        src_ip=raw.get("src_ip", ""),
+        sensor=raw.get("sensor", ""),
+        event_time=row.event_time,
+        received_at=row.received_at,
+        status=cast(AlertStatus, row.status),
+        raw=raw,
+        verdict=verdict_out,
+        tool_calls=tool_calls,
+    )
+
+
+async def get_stats(session: AsyncSession) -> StatsOut:
+    """The dashboard stats view (PRD §8): zero-filled on an empty database.
+
+    `by_severity`/`by_category`/`escalated_count` use the latest verdict per alert (the same
+    `DISTINCT ON` subquery as `list_alerts`); `cost_total_usd` sums *every* verdict row —
+    retriage spend already happened and counts. `latency_pNN_ms` is Postgres `percentile_disc`,
+    identical in definition to `evals/scoring.py::percentile`'s nearest rank.
+
+    Args:
+        session: The request-scoped `AsyncSession`.
+
+    Returns:
+        The whole-database `StatsOut`.
+    """
+    total_alerts = await session.scalar(select(func.count()).select_from(AlertRow))
+    assert total_alerts is not None
+
+    status_rows = (
+        await session.execute(select(AlertRow.status, func.count()).group_by(AlertRow.status))
+    ).all()
+    by_status = {"pending": 0, "triaged": 0, "failed": 0}
+    for status, count in status_rows:
+        by_status[status] = count
+
+    latest = _latest_verdicts_subquery()
+
+    severity_rows = (
+        await session.execute(select(latest.c.severity, func.count()).group_by(latest.c.severity))
+    ).all()
+    by_severity = {str(i): 0 for i in range(1, 6)}
+    for severity, count in severity_rows:
+        by_severity[str(severity)] = count
+
+    category_rows = (
+        await session.execute(select(latest.c.category, func.count()).group_by(latest.c.category))
+    ).all()
+    by_category: dict[str, int] = {category: 0 for category in get_args(VerdictCategory)}
+    for category, count in category_rows:
+        by_category[category] = count
+
+    escalated_count = await session.scalar(
+        select(func.count()).select_from(latest).where(latest.c.escalate.is_(True))
+    )
+    assert escalated_count is not None
+
+    day_expr = sql_cast(func.timezone("UTC", AlertRow.received_at), Date)
+    volume_rows = (
+        await session.execute(
+            select(day_expr.label("day"), func.count()).group_by(day_expr).order_by(day_expr)
+        )
+    ).all()
+    volume_by_day = [DayVolume(day=day, count=count) for day, count in volume_rows]
+
+    cost_total_usd = await session.scalar(select(func.coalesce(func.sum(VerdictRow.cost_usd), 0)))
+    assert cost_total_usd is not None
+
+    cost_mean_usd = await session.scalar(select(func.coalesce(func.avg(VerdictRow.cost_usd), 0)))
+    assert cost_mean_usd is not None
+
+    latency_p50 = await session.scalar(
+        select(func.percentile_disc(0.5).within_group(VerdictRow.latency_ms)).where(
+            VerdictRow.latency_ms.is_not(None)
+        )
+    )
+    latency_p95 = await session.scalar(
+        select(func.percentile_disc(0.95).within_group(VerdictRow.latency_ms)).where(
+            VerdictRow.latency_ms.is_not(None)
+        )
+    )
+
+    last_alert_at = await session.scalar(select(func.max(AlertRow.received_at)))
+
+    return StatsOut(
+        total_alerts=total_alerts,
+        by_status=by_status,
+        by_severity=by_severity,
+        by_category=by_category,
+        escalated_count=escalated_count,
+        volume_by_day=volume_by_day,
+        cost_total_usd=cost_total_usd,
+        cost_mean_usd=cost_mean_usd.quantize(_SIX_DP, rounding=ROUND_HALF_UP),
+        latency_p50_ms=latency_p50 if latency_p50 is not None else 0,
+        latency_p95_ms=latency_p95 if latency_p95 is not None else 0,
+        last_alert_at=last_alert_at,
+    )
