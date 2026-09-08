@@ -31,3 +31,4 @@ paths: infra/**, honeypot/**, docs/deployment.md
   criticality, never hostnames' real credentials or internal addresses beyond what the honeypot
   already exposes.
 - Never commit a raw Cowrie log or `honeypot/data/`.
+- `docker compose ... config` interpolates `.env` into its output. Always redirect it (`> /dev/null`, or `--format json` piped only into a parser that never echoes); never paste its output into a report, ledger, or transcript. (M2 task-05: an agent's first `config` call printed real secrets into its transcript; the local dev secrets were rotated.)
