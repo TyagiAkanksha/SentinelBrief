@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { AlertRow } from "@/components/alerts/AlertRow";
 import type { AlertSummary, VerdictSummary } from "@/types/api";
@@ -103,5 +103,30 @@ describe("AlertRow", () => {
     expect(time.tagName).toBe("TIME");
     expect(time).toHaveAttribute("title", "2026-09-06 00:57:00Z");
     expect(time).toHaveAttribute("dateTime", alert.received_at);
+  });
+
+  it("renders exactly six cells in ALERT_COLUMNS order", () => {
+    const verdict = makeVerdict({ severity: 4 });
+    const alert = makeAlert({ verdict });
+
+    render(
+      <table>
+        <tbody>
+          <AlertRow alert={alert} now={now} />
+        </tbody>
+      </table>,
+    );
+
+    const cells = screen.getAllByRole("cell");
+    expect(cells).toHaveLength(6);
+
+    const [severityCell, categoryCell, ipCell, sensorCell, reasoningCell, receivedCell] = cells;
+
+    expect(within(severityCell!).getByLabelText("Severity 4")).toBeInTheDocument();
+    expect(categoryCell!).toHaveTextContent(verdict.category);
+    expect(within(ipCell!).getByRole("link", { name: alert.src_ip })).toBeInTheDocument();
+    expect(sensorCell!).toHaveTextContent(alert.sensor);
+    expect(reasoningCell!).toHaveTextContent(verdict.reasoning_excerpt);
+    expect(receivedCell!.querySelector("time")).not.toBeNull();
   });
 });

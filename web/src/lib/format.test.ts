@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatAge,
+  formatDatetimeLocalUtc,
   formatLatency,
   formatPercent,
   formatTokens,
@@ -56,5 +57,14 @@ describe("formatTokens", () => {
   it("formatTokens uses thousands separators", () => {
     expect(formatTokens(1234)).toBe("1,234");
     expect(formatTokens(null)).toBe("—");
+  });
+});
+
+describe("formatDatetimeLocalUtc", () => {
+  it("formatDatetimeLocalUtc normalizes any ISO value to a UTC datetime-local string", () => {
+    expect(formatDatetimeLocalUtc("2026-09-01T00:00:00Z")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01T05:30:00+05:30")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01T00:00")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("nope")).toBe("");
   });
 });

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { AlertQueue } from "@/components/alerts/AlertQueue";
+import { ALERT_COLUMNS, AlertQueue } from "@/components/alerts/AlertQueue";
 import { ApiError } from "@/lib/api/server";
 import type { AlertSummary, PaginatedAlerts, VerdictSummary } from "@/types/api";
 
@@ -76,5 +76,23 @@ describe("AlertQueue", () => {
 
     expect(screen.getAllByRole("row")).toHaveLength(3);
     expect(screen.getByRole("navigation", { name: "Pagination" })).toBeInTheDocument();
+  });
+
+  it("renders the six column headers in ALERT_COLUMNS order", () => {
+    expect(ALERT_COLUMNS.map((column) => column.key)).toEqual([
+      "severity",
+      "category",
+      "src_ip",
+      "sensor",
+      "reasoning",
+      "received",
+    ]);
+
+    const page: PaginatedAlerts = { items: [makeAlert()], page: 1, page_size: 25, total: 1 };
+
+    render(<AlertQueue page={page} error={null} now={now} hrefForPage={hrefForPage} />);
+
+    const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
+    expect(headers).toEqual(ALERT_COLUMNS.map((column) => column.header));
   });
 });
