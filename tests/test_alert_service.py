@@ -9,41 +9,19 @@ paths the route and any future retriage need.
 
 from __future__ import annotations
 
-import json
 import uuid
-from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.errors import NotFoundError
 from core.models import AlertRow
-from core.schemas.alert import SessionAlert
 from core.services.alerts import get_alert, insert_alert, set_alert_status
-
-_FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "alerts" / "alert4.json"
-
-
-def _load_alert(**overrides: object) -> SessionAlert:
-    """Load `fixtures/alerts/alert4.json`, applying top-level field overrides.
-
-    A distinct `session_id` per test mints a fresh fingerprint without hand-rolling a whole
-    session payload (`SessionAlert.fingerprint()` is `sha256(source|session_id|connect_time)`).
-    """
-    data = json.loads(_FIXTURE.read_text())
-    data.update(overrides)
-    return SessionAlert.model_validate(data)
-
-
-async def _count_alerts(session: AsyncSession) -> int:
-    count = await session.scalar(select(func.count()).select_from(AlertRow))
-    assert count is not None
-    return count
+from tests.helpers import count_rows, load_alert
 
 
 async def test_insert_alert_new_returns_created_true_pending(db_session: AsyncSession) -> None:
-    alert = _load_alert(session_id="new-session-001")
+    alert = load_alert(session_id="new-session-001")
 
     result = await insert_alert(db_session, alert)
     await db_session.commit()
@@ -59,7 +37,7 @@ async def test_insert_alert_new_returns_created_true_pending(db_session: AsyncSe
 
 
 async def test_insert_conflict_returns_existing_id_and_status(db_session: AsyncSession) -> None:
-    alert = _load_alert(session_id="dup-session-002")
+    alert = load_alert(session_id="dup-session-002")
 
     first = await insert_alert(db_session, alert)
     await db_session.commit()
@@ -80,7 +58,7 @@ async def test_insert_conflict_returns_existing_id_and_status(db_session: AsyncS
     assert third.alert_id == first.alert_id
     assert third.status == "triaged"
 
-    assert await _count_alerts(db_session) == 1
+    assert await count_rows(db_session, AlertRow) == 1
 
 
 async def test_get_alert_missing_raises_not_found(db_session: AsyncSession) -> None:
@@ -89,7 +67,7 @@ async def test_get_alert_missing_raises_not_found(db_session: AsyncSession) -> N
 
 
 async def test_set_alert_status(db_session: AsyncSession) -> None:
-    alert = _load_alert(session_id="status-session-003")
+    alert = load_alert(session_id="status-session-003")
     result = await insert_alert(db_session, alert)
     await db_session.commit()
 

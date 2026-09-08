@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import pytest
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.factory import create_app
@@ -26,12 +24,10 @@ from api.routes.alerts import SignedRoute, router
 from core.config import Settings
 from core.models import AlertRow, AlertStatus
 from core.services.alerts import set_alert_status
-from core.signing import SIGNATURE_HEADER, sign_body
+from core.signing import SIGNATURE_HEADER
+from tests.helpers import TEST_SECRET, count_rows_fresh, fixture_body, signed_headers
 
-_FIXTURE_BODY = (
-    Path(__file__).resolve().parent.parent / "fixtures" / "alerts" / "alert4.json"
-).read_bytes()
-_SECRET = "test-secret"  # matches the `settings` fixture's `ingest_hmac_secret`
+_FIXTURE_BODY = fixture_body("alert4")
 
 
 @dataclass
@@ -55,17 +51,6 @@ class FakeTriage:
 @pytest.fixture
 def fake_triage() -> FakeTriage:
     return FakeTriage()
-
-
-def _signed_headers(body: bytes, *, secret: str = _SECRET) -> dict[str, str]:
-    return {SIGNATURE_HEADER: sign_body(secret, body), "content-type": "application/json"}
-
-
-async def _count_alerts(session_factory: async_sessionmaker[AsyncSession]) -> int:
-    async with session_factory() as session:
-        count = await session.scalar(select(func.count()).select_from(AlertRow))
-    assert count is not None
-    return count
 
 
 async def test_unsigned_post_401(
@@ -133,7 +118,9 @@ async def test_signed_post_202_and_inserts_row(
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
-            "/api/v1/alerts", content=_FIXTURE_BODY, headers=_signed_headers(_FIXTURE_BODY)
+            "/api/v1/alerts",
+            content=_FIXTURE_BODY,
+            headers=signed_headers(TEST_SECRET, _FIXTURE_BODY),
         )
 
     assert response.status_code == 202
@@ -141,7 +128,7 @@ async def test_signed_post_202_and_inserts_row(
     alert_id = uuid.UUID(body["id"])
     assert body["status"] == "triaged"
     assert body["created"] is True
-    assert await _count_alerts(db_session_factory) == 1
+    assert await count_rows_fresh(db_session_factory, AlertRow) == 1
     assert fake_triage.calls == [alert_id]
 
 
@@ -151,7 +138,7 @@ async def test_duplicate_post_200_same_id_no_new_row(
     fake_triage: FakeTriage,
 ) -> None:
     app = create_app(session_factory=db_session_factory, settings=settings, triage=fake_triage)
-    headers = _signed_headers(_FIXTURE_BODY)
+    headers = signed_headers(TEST_SECRET, _FIXTURE_BODY)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.post("/api/v1/alerts", content=_FIXTURE_BODY, headers=headers)
@@ -162,7 +149,7 @@ async def test_duplicate_post_200_same_id_no_new_row(
     assert second.json()["id"] == first.json()["id"]
     assert second.json()["created"] is False
     assert second.json()["status"] == "triaged"
-    assert await _count_alerts(db_session_factory) == 1
+    assert await count_rows_fresh(db_session_factory, AlertRow) == 1
 
 
 async def test_invalid_payload_422(
@@ -174,7 +161,9 @@ async def test_invalid_payload_422(
     body = b'{"source":"cowrie"}'
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post("/api/v1/alerts", content=body, headers=_signed_headers(body))
+        response = await client.post(
+            "/api/v1/alerts", content=body, headers=signed_headers(TEST_SECRET, body)
+        )
 
     assert response.status_code == 422
     payload = response.json()
@@ -201,7 +190,7 @@ async def test_signature_checked_before_body_validation(
         wrong_secret = await client.post(
             "/api/v1/alerts",
             content=bad_json,
-            headers=_signed_headers(bad_json, secret="wrong-secret"),
+            headers=signed_headers("wrong-secret", bad_json),
         )
 
     assert unsigned.status_code == 401
@@ -214,7 +203,7 @@ async def test_duplicate_post_does_not_invoke_triage(
     fake_triage: FakeTriage,
 ) -> None:
     app = create_app(session_factory=db_session_factory, settings=settings, triage=fake_triage)
-    headers = _signed_headers(_FIXTURE_BODY)
+    headers = signed_headers(TEST_SECRET, _FIXTURE_BODY)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         await client.post("/api/v1/alerts", content=_FIXTURE_BODY, headers=headers)
@@ -232,7 +221,9 @@ async def test_signed_post_status_reflects_triage_outcome(
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
-            "/api/v1/alerts", content=_FIXTURE_BODY, headers=_signed_headers(_FIXTURE_BODY)
+            "/api/v1/alerts",
+            content=_FIXTURE_BODY,
+            headers=signed_headers(TEST_SECRET, _FIXTURE_BODY),
         )
 
     assert response.status_code == 202
