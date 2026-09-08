@@ -90,17 +90,17 @@ still fails validation after its one retry.
 docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok"}
+curl -s localhost:3000/healthz                                              # {"status":"ok"}
 # Seed a browsable queue: 5 fixtures + 20 golden v1 sessions through the real pipeline with the fake LLM
 # (add --live to spend real tokens with the key in .env; a re-run creates nothing).
 uv run python scripts/seed_dev.py --database-url postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief   # created=25 skipped=0 failed=0
-open http://localhost:3000/alerts                                           # the queue; click an IP for the detail page
+# Open http://localhost:3000/alerts in a browser — the queue; click an IP for the detail page
 curl -s 'localhost:8000/api/v1/alerts?page_size=5' | python3 -m json.tool | head -30
 # keeps the secret out of shell history and out of this file
 export INGEST_HMAC_SECRET=$(grep '^INGEST_HMAC_SECRET=' .env | cut -d= -f2-)
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 202 {..., "status":"triaged", "created":true}
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # duplicate → 200 {..., "created":false}
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 200 {"created": false} — already seeded; dedup by fingerprint (a session with a new session_id gets 202 and is triaged inline)
 docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sentinelbrief \
-  -c "select count(*) from alerts; select count(*) from verdicts;"   # 26 and 26
+  -c "select count(*) from alerts; select count(*) from verdicts;"   # 25 and 25
 ```
 
 Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
