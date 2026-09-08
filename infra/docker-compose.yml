@@ -1,0 +1,54 @@
+# infra/docker-compose.yml — SentinelBrief local orchestration (PRD §11; CONVENTIONS.md §11).
+#
+# Two services for now: `postgres` (a first-class compose service — self-hosted is the deployed
+# target too, PRD §11) and `api`. `worker` and `redis` arrive at M5, `web` at M3.
+#
+# Migrations are never run at container startup (CONVENTIONS.md §11) — run them explicitly:
+#   docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
+#
+# Both services publish ports on 127.0.0.1 only (`.claude/rules/infra.md`) and use json-file log
+# rotation from day one (docs/deployment.md).
+
+name: sentinelbrief
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      # Dev-only values matching .env.example's DATABASE_URL — never used against a deployed
+      # database.
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinelbrief
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - sentinelbrief_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinelbrief"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    image: sentinelbrief-api
+    env_file: ../.env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+volumes:
+  sentinelbrief_pg:

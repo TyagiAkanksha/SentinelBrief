@@ -6,8 +6,8 @@ analysts a ranked, explained queue instead of raw JSON — with a published eval
 measuring how well it does.
 
 **Status:** pre-M0. The build plan lives in [`docs/plans/`](docs/plans/README.md); the spec is
-[`PRD.md`](PRD.md). Nothing here serves traffic yet. Sections below marked *(from M2)* describe
-commands that exist once that milestone lands.
+[`PRD.md`](PRD.md). The dev stack (`docker compose` + Postgres) is runnable from M2; sections
+below marked *(from M3)* still describe commands that exist once that milestone lands.
 
 ## What it does
 
@@ -85,14 +85,17 @@ latency fields.
 Exit codes: `0` on success; `1` on a config, LLM, or invalid-input error; `2` when the verdict
 still fails validation after its one retry.
 
-### 3. Run the stack *(from M2)*
+### 3. Run the stack
 
 ```sh
 docker compose -f infra/docker-compose.yml up -d --build
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 curl -s localhost:8000/healthz                       # {"status":"ok","db":"ok"}
 export INGEST_HMAC_SECRET=<value from .env>          # read from the environment only, no dotenv
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # signed POST → 202
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 202 {..., "status":"triaged", "created":true}
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # duplicate → 200 {..., "created":false}
+docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sentinelbrief \
+  -c "select count(*) from alerts; select count(*) from verdicts;"   # 1 and 1
 ```
 
 Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
@@ -109,7 +112,7 @@ docker compose -f infra/docker-compose.yml down     # add -v to drop the databas
 Python (repo root):
 
 ```sh
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test   # from M2
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental
