@@ -217,6 +217,42 @@ def test_web_copies_standalone_static_and_public() -> None:
             )
 
 
+def test_web_copy_destinations_match_the_standalone_layout() -> None:
+    """Review I2 (m3 task-07 fix-1): `test_web_copies_standalone_static_and_public` pins the three
+    `COPY --from=builder` *sources* but discards their destinations, so a wrong destination (e.g.
+    the static assets landing at `./static` instead of `./web/.next/static`) ships a container
+    that reports **healthy** (`/healthz` is a route handler needing no static assets) while every
+    stylesheet and client chunk 404s. The brief's Interfaces block pins each destination
+    explicitly, matching the `CMD`'s `web/`-nested layout: the standalone tree unpacks at `./`
+    (it already contains the `web/server.js` prefix), the static assets land at
+    `./web/.next/static`, and `public/` lands at `./web/public`.
+    """
+    instructions = _instructions()
+    from_indices = _from_indices(instructions)
+    tail = instructions[from_indices[-1] :]
+
+    entries = _copies_from_builder(tail)
+    expected_destinations = {
+        "/web/.next/standalone": "./",
+        "/web/.next/static": "./web/.next/static",
+        "/web/public": "./web/public",
+    }
+    found_destinations: dict[str, str] = {}
+    for source, dest, _block in entries:
+        for suffix in expected_destinations:
+            if source.endswith(suffix):
+                found_destinations[suffix] = dest
+
+    missing = sorted(set(expected_destinations) - set(found_destinations))
+    assert not missing, f"runtime stage is missing COPY --from=builder for: {missing}"
+
+    for suffix, expected_dest in expected_destinations.items():
+        assert found_destinations[suffix] == expected_dest, (
+            f"COPY --from=builder ...{suffix} has destination {found_destinations[suffix]!r}, "
+            f"expected {expected_dest!r}"
+        )
+
+
 def test_web_no_env_file_copied() -> None:
     """CONVENTIONS.md §11 / `.claude/rules/infra.md`: runtime config is env-only. Neither a
     `COPY`/`ADD` of `.env` nor an `ENV` line hardcoding a secret name may ship inside the image

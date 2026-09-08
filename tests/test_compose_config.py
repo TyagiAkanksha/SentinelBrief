@@ -33,10 +33,19 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _COMPOSE_FILE = _REPO_ROOT / "infra" / "docker-compose.yml"
 
 
-def _render_compose_config(tmp_path: Path) -> dict[str, Any]:
+def _render_compose_config(tmp_path: Path, *, env_text: str = "") -> dict[str, Any]:
     """Renders `infra/docker-compose.yml` with `docker compose config --format json` from a
     throwaway `tmp_path` copy and returns the parsed config. Skips (by name, not a silent pass)
     when `docker` is not on PATH, so every compose test in this module skips together.
+
+    `env_text` seeds the throwaway `.env` this copy renders against; every existing caller relies
+    on the empty default. `test_compose_web_service_shape` (m3 task-07 fix-1, review I3) passes a
+    synthetic, non-secret canary line instead: `docker compose config` resolves a service's
+    `env_file:` directive into its rendered `environment` dict and *never* renders the `env_file`
+    key itself (verified empirically — see that test's docstring), so against an empty `.env` a
+    stray `env_file: ../.env` on `web` would add zero keys and go undetected by an
+    `environment`-shape assertion. The canary makes a leaked `env_file` observable without ever
+    exercising a real secret.
     """
     if shutil.which("docker") is None:
         pytest.skip("docker not on PATH")
@@ -50,7 +59,7 @@ def _render_compose_config(tmp_path: Path) -> dict[str, Any]:
     tmp_infra.mkdir()
     tmp_compose = tmp_infra / "docker-compose.yml"
     shutil.copy(_COMPOSE_FILE, tmp_compose)
-    (tmp_path / ".env").write_text("")
+    (tmp_path / ".env").write_text(env_text)
 
     proc = subprocess.run(
         ["docker", "compose", "-f", str(tmp_compose), "config", "--format", "json"],
@@ -149,6 +158,12 @@ def test_compose_api_build_context_is_repo_root(tmp_path: Path) -> None:
     assert dockerfile.endswith("infra/Dockerfile.api"), dockerfile
 
 
+_ENV_FILE_LEAK_CANARY = "SENTINELBRIEF_TEST_CANARY=canary\n"
+"""Synthetic, non-secret `.env` content for `test_compose_web_service_shape` only (review I3) —
+see `_render_compose_config`'s `env_text` docstring for why a non-empty `.env` is required to
+make a leaked `env_file: ../.env` on the `web` service observable at all."""
+
+
 def test_compose_web_service_shape(tmp_path: Path) -> None:
     """m3 task-07 brief Interfaces: the `web` service builds from the repo-root context with
     `infra/Dockerfile.web`, bakes the browser-visible API origin in as a build `arg`, talks to
@@ -158,12 +173,28 @@ def test_compose_web_service_shape(tmp_path: Path) -> None:
     race the API's boot. Rendered from its own `tmp_path` copy (not the shared
     `rendered_compose_config` fixture), mirroring `test_compose_api_build_context_is_repo_root`,
     so `context: ..` can be checked against the exact directory it resolves relative to.
+
+    Review I3 (m3 task-07 fix-1): `web` is the one internet-facing SSR surface (PRD §9/§11 —
+    Caddy fronts it); copy-pasting `api`'s `env_file: ../.env` onto `web` would put
+    `LLM_API_KEY`/`INGEST_HMAC_SECRET`/`ADMIN_TOKEN`/`DATABASE_URL` into a Node process whose error
+    pages and SSR bugs are reachable from the public internet. `set(web["environment"])` pins that
+    `API_URL` is the *only* rendered environment key. Rendered against
+    `_ENV_FILE_LEAK_CANARY` (a synthetic, non-secret line) rather than the module's usual empty
+    `.env`: `docker compose config` folds a service's `env_file:` variables into its rendered
+    `environment` dict but never renders an `env_file` key at all (verified empirically — see
+    `_render_compose_config`'s docstring), so against an empty `.env` a leaked `env_file: ../.env`
+    on `web` would add zero observable keys and this assertion would not catch it. The
+    `"env_file" not in web` assertion below is therefore not load-bearing on its own (compose
+    never renders that key, mutated or not) — it is kept as source-adjacent documentation of the
+    same intent, not as the catch.
     """
-    config = _render_compose_config(tmp_path)
+    config = _render_compose_config(tmp_path, env_text=_ENV_FILE_LEAK_CANARY)
     web = config["services"]["web"]
 
     assert web["image"] == "sentinelbrief-web"
     assert web["environment"]["API_URL"] == "http://api:8000"
+    assert set(web["environment"]) == {"API_URL"}, web["environment"]
+    assert "env_file" not in web
     assert web["depends_on"]["api"]["condition"] == "service_healthy"
 
     build = web["build"]
