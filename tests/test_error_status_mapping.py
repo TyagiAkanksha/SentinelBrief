@@ -180,3 +180,36 @@ async def test_every_handler_output_validates_as_error_envelope(
     body = response.json()
     envelope = ErrorEnvelope.model_validate(body)
     assert envelope.model_dump() == body
+
+
+async def test_unmatched_path_404_uses_envelope() -> None:
+    """I2 (m3 task-03 review): PRD §8 says "one envelope everywhere", but an unmatched path hits
+    Starlette's built-in `StarletteHTTPException` today, which `register_error_handlers` does not
+    map — so it answers `{"detail": "Not Found"}` instead of the PRD §8 envelope. This pins the
+    fix: `not_found` / "Not Found", body keys exactly `{"error"}`.
+    """
+    app = create_app()
+
+    response = await _get(app, "/api/v1/does-not-exist")
+
+    assert response.status_code == 404
+    body = response.json()
+    assert set(body.keys()) == {"error"}
+    assert body["error"] == {"code": "not_found", "message": "Not Found"}
+
+
+async def test_method_not_allowed_405_uses_envelope() -> None:
+    """I2 (m3 task-03 review): a wrong-method request must keep Starlette's `Allow` header *and*
+    answer the PRD §8 envelope (`method_not_allowed` / "Method Not Allowed") instead of
+    `{"detail": "Method Not Allowed"}`.
+    """
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/stats")
+
+    assert response.status_code == 405
+    assert "GET" in response.headers.get("allow", "")
+    body = response.json()
+    assert set(body.keys()) == {"error"}
+    assert body["error"] == {"code": "method_not_allowed", "message": "Method Not Allowed"}

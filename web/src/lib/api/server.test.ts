@@ -91,4 +91,46 @@ describe("getJson", () => {
     expect(apiError.envelope).toBeNull();
     expect(apiError.message).toBe("API error 502");
   });
+
+  it("getJson throws ApiError with envelope null when the error body is JSON but not an envelope", async () => {
+    vi.stubEnv("API_URL", "http://api:8000");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ detail: "Not Found" }, { status: 404 })),
+    );
+
+    let caught: unknown;
+    try {
+      await getJson("/x");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    const apiError = caught as ApiError;
+    expect(apiError.status).toBe(404);
+    expect(apiError.envelope).toBeNull();
+    expect(apiError.message).toBe("API error 404");
+  });
+
+  it("getJson rejects an envelope whose error lacks string code/message", async () => {
+    vi.stubEnv("API_URL", "http://api:8000");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: { code: 42 } }, { status: 400 })),
+    );
+
+    let caught: unknown;
+    try {
+      await getJson("/x");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    const apiError = caught as ApiError;
+    expect(apiError.status).toBe(400);
+    expect(apiError.envelope).toBeNull();
+    expect(apiError.message).toBe("API error 400");
+  });
 });
