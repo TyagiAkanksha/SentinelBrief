@@ -72,6 +72,43 @@ async def test_in_memory_cache_rejects_non_positive_ttl() -> None:
         await cache.set("k", b"v", -1)
 
 
+def test_in_memory_cache_rejects_non_positive_max_entries() -> None:
+    with pytest.raises(ValueError):
+        InMemoryTTLCache(max_entries=0)
+    with pytest.raises(ValueError):
+        InMemoryTTLCache(max_entries=-1)
+
+
+async def test_in_memory_cache_evicts_expired_then_soonest_expiring_at_capacity() -> None:
+    """Controller ruling (m3 task-02 review I3): at capacity, `set` first purges every expired
+    entry; only if the store is still full after that does it evict the soonest-`expires_at`
+    survivor. Asserted entirely through the public `get`, never `_entries` (m3 task-02 review M2:
+    keeping this one behavioral, unlike the boundary-eviction test above, means it stays reusable
+    as a `TTLCache` conformance test once M5 adds `RedisTTLCache`)."""
+    box = [0.0]
+    cache = InMemoryTTLCache(clock=lambda: box[0], max_entries=2)
+
+    await cache.set("a", b"a", 10)  # expires at 10
+    await cache.set("b", b"b", 20)  # expires at 20
+
+    box[0] = 11.0  # past a's expiry (10), not yet b's (20)
+
+    # Store is at capacity (2): the expired-purge alone frees a slot, so nothing else is evicted.
+    await cache.set("c", b"c", 5)  # expires at 16
+
+    assert await cache.get("a") is None
+    assert await cache.get("b") == b"b"
+    assert await cache.get("c") == b"c"
+
+    # Store is at capacity again (b, c) and neither has expired at clock=11: the soonest-expiring
+    # survivor (c, at 16) is evicted to make room for d.
+    await cache.set("d", b"d", 100)  # expires at 111
+
+    assert await cache.get("c") is None
+    assert await cache.get("b") == b"b"
+    assert await cache.get("d") == b"d"
+
+
 def test_create_app_installs_in_memory_cache_by_default() -> None:
     app = create_app()
 

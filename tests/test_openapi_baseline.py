@@ -37,6 +37,12 @@ def test_export_script_is_deterministic(tmp_path: Path) -> None:
     """
     out_a = tmp_path / "a.json"
     out_b = tmp_path / "b.json"
+    # m3 task-02 review I4: a regression that also writes DEFAULT_OUT (the tracked file) would
+    # make the CI drift step (`--out /tmp/openapi.json && cmp ... api/openapi.json`) pass
+    # unconditionally forever, since the tracked file would be silently kept in sync with itself
+    # right before the comparison — mutation-tested: that exact regression left this test green
+    # when it only compared bytes. The mtime check below fails closed on that regression.
+    baseline_mtime_before = _OPENAPI_PATH.stat().st_mtime_ns
 
     subprocess.run(
         [sys.executable, str(_EXPORT_SCRIPT), "--out", str(out_a)], cwd=_REPO_ROOT, check=True
@@ -50,6 +56,7 @@ def test_export_script_is_deterministic(tmp_path: Path) -> None:
 
     assert first == second
     assert first == _OPENAPI_PATH.read_bytes()
+    assert _OPENAPI_PATH.stat().st_mtime_ns == baseline_mtime_before
 
 
 def test_export_script_default_out_is_the_tracked_baseline() -> None:

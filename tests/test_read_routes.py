@@ -24,6 +24,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.factory import create_app
+from api.routes.alerts_read import cache_key
 from core.cache import InMemoryTTLCache
 from core.config import Settings
 from core.schemas.verdict import Verdict, VerdictCategory
@@ -216,6 +217,61 @@ async def test_list_alerts_cache_key_normalizes_query_param_order(
     assert second.json()["total"] == 1
 
 
+async def test_list_alerts_undeclared_query_params_share_the_declared_key(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Controller ruling (m3 task-02 review I3): `cache_key` is built only from the route's
+    declared, validated params, so an undeclared query param (`?zzz=...`) can never mint a new
+    cache entry — the key space stays bounded by the declared parameter domain, not by whatever
+    an unauthenticated caller appends to the query string."""
+    app, _clock = _build_app(db_session_factory)
+    await _seed(db_session_factory, session_id="undeclared-1")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.get("/api/v1/alerts")
+        assert first.json()["total"] == 1
+
+        await _seed(db_session_factory, session_id="undeclared-2")
+
+        zzz1 = await client.get("/api/v1/alerts", params={"zzz": "1"})
+        zzz2 = await client.get("/api/v1/alerts", params={"zzz": "2"})
+
+    # Same declared-param key as the bare request -> both stay stale at 1, not a fresh 2.
+    assert zzz1.json()["total"] == 1
+    assert zzz2.json()["total"] == 1
+
+
+def test_cache_key_is_built_from_declared_params_only() -> None:
+    """DB-less unit test of `cache_key`'s new `(path, params)` shape (m3 task-02 review I3)."""
+    key = cache_key(
+        "/api/v1/alerts",
+        {
+            "page": 1,
+            "page_size": 25,
+            "severity_gte": None,
+            "since": datetime(2026, 9, 1, tzinfo=UTC),
+            "escalate": True,
+        },
+    )
+
+    assert key == (
+        "/api/v1/alerts?escalate=true&page=1&page_size=25&since=2026-09-01T00%3A00%3A00%2B00%3A00"
+    )
+    assert cache_key("/api/v1/stats", {}) == "/api/v1/stats"
+
+    reordered_key = cache_key(
+        "/api/v1/alerts",
+        {
+            "since": datetime(2026, 9, 1, tzinfo=UTC),
+            "page_size": 25,
+            "escalate": True,
+            "severity_gte": None,
+            "page": 1,
+        },
+    )
+    assert reordered_key == key
+
+
 async def test_list_alerts_cache_hit_keeps_json_content_type(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -232,16 +288,70 @@ async def test_list_alerts_cache_hit_keeps_json_content_type(
     assert second.json()["total"] == 1
 
 
-async def test_list_alerts_non_2xx_never_cached(
+class _SpyCache:
+    """A `TTLCache` that delegates to a real `InMemoryTTLCache` but records every `set` call
+    (m3 task-02 review I1: mutation testing showed a `cache.set` inserted *before* `produce()`
+    inside `_cached_json` was undetected by the previous version of this test, because that
+    version only ever drove a 422 raised during FastAPI's own dependency/query validation — a
+    path `_cached_json` never reaches at all. `spy.set_calls == []` catches any `set` regardless
+    of when in `_cached_json` it happens; the empty-`_entries` check below additionally proves
+    nothing reached the cache under *any* key, not just one hand-picked one)."""
+
+    def __init__(self) -> None:
+        self._inner = InMemoryTTLCache()
+        self.set_calls: list[tuple[str, bytes, int]] = []
+
+    async def get(self, key: str) -> bytes | None:
+        return await self._inner.get(key)
+
+    async def set(self, key: str, value: bytes, ttl_s: int) -> None:
+        self.set_calls.append((key, value, ttl_s))
+        await self._inner.set(key, value, ttl_s)
+
+
+async def test_list_alerts_non_2xx_never_cached() -> None:
+    spy = _SpyCache()
+    app = create_app(session_factory=None, cache=spy)
+
+    # `raise_app_exceptions=False`: the unwired-session `RuntimeError` is handled by the app's own
+    # registered handler into a real 500 response (`tests/test_app_factory.py
+    # ::test_get_session_raises_when_dbless` pins the same pattern) — without this, httpx re-raises
+    # it into the test instead of returning the response.
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/alerts")
+
+    # No `session_factory` wired -> `get_session` raises `RuntimeError("no session_factory
+    # wired")` (api/deps.py) while FastAPI is still resolving dependencies, before `list_alerts`'s
+    # body — and therefore `_cached_json` — ever runs; the bare-`Exception` handler
+    # (api/errors.py::_handle_unhandled_exception) envelopes it generically.
+    assert response.status_code == 500
+    assert response.json() == {"error": {"code": "internal_error", "message": "internal error"}}
+    assert spy.set_calls == []
+    assert spy._inner._entries == {}
+
+
+async def test_list_and_stats_cache_keys_do_not_collide(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """m3 task-02 review I2: mutation-tested — dropping `request.url.path` from `cache_key` left
+    the *entire* 329-test suite green, because no test GETs both `/api/v1/alerts` and
+    `/api/v1/stats` against the same app/cache instance. This one does."""
     app, _clock = _build_app(db_session_factory)
+    await _seed(db_session_factory, session_id="no-collide-1")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/v1/alerts", params={"page": "0"})
+        list_first = await client.get("/api/v1/alerts")
+        stats_response = await client.get("/api/v1/stats")
+        list_second = await client.get("/api/v1/alerts")
 
-    assert response.status_code == 422
-    assert await app.state.cache.get("/api/v1/alerts?page=0") is None
+    list_body_1 = list_first.json()
+    stats_body = stats_response.json()
+    list_body_2 = list_second.json()
+
+    assert "items" in list_body_1 and "total_alerts" not in list_body_1
+    assert "total_alerts" in stats_body and "items" not in stats_body
+    assert "items" in list_body_2 and "total_alerts" not in list_body_2
 
 
 async def test_get_alert_returns_detail_with_verdict_and_tool_calls(
