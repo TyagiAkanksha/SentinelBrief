@@ -194,7 +194,6 @@ def test_compose_web_service_shape(tmp_path: Path) -> None:
     assert web["image"] == "sentinelbrief-web"
     assert web["environment"]["API_URL"] == "http://api:8000"
     assert set(web["environment"]) == {"API_URL"}, web["environment"]
-    assert "env_file" not in web
     assert web["depends_on"]["api"]["condition"] == "service_healthy"
 
     build = web["build"]

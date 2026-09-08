@@ -53,6 +53,20 @@ describe("parseListQuery", () => {
     expect(query.severity_gte).toBeUndefined();
     expect(query.escalate).toBeUndefined();
   });
+
+  it("treats non-safe-integer page and page_size as invalid", () => {
+    // "1e23" is not parsed as scientific notation: `parseInt` reads only the leading "1" and
+    // stops at "e", so a prefix-based guard lets it through unnoticed. `Number("1e23")` is
+    // 1e23 — nowhere near a safe integer — so a `Number.isSafeInteger` guard is what actually
+    // catches it (controller ruling t4-M1 fix wave).
+    expect(parseListQuery({ page: "1e23" }).page).toBe(1);
+    expect(parseListQuery({ page_size: "1e23" }).page_size).toBe(25);
+
+    // A page number one above `Number.MAX_SAFE_INTEGER` rounds to a distinct double under
+    // `Number()`, but is still not a safe integer — same invalid-like-default treatment.
+    expect(parseListQuery({ page: "9007199254740993" }).page).toBe(1);
+    expect(parseListQuery({ page_size: "9007199254740993" }).page_size).toBe(25);
+  });
 });
 
 describe("toQueryString", () => {
@@ -60,6 +74,24 @@ describe("toQueryString", () => {
     const query: ListQuery = { page: 2, page_size: 25, severity_gte: 4 };
 
     expect(toQueryString(query)).toBe("page=2&page_size=25&severity_gte=4");
+  });
+
+  it("toQueryString orders all six keys by code point", () => {
+    // localeCompare and code-point order happen to agree on this exact key set (t4-M9 review
+    // note), so this pin is likely GREEN already — it still pins the exact wire format a
+    // locale-dependent comparator could silently reorder on a future key.
+    const query: ListQuery = {
+      page: 2,
+      page_size: 25,
+      severity_gte: 4,
+      category: "brute_force",
+      since: "2026-09-01T00:00:00Z",
+      escalate: true,
+    };
+
+    expect(toQueryString(query)).toBe(
+      "category=brute_force&escalate=true&page=2&page_size=25&severity_gte=4&since=2026-09-01T00%3A00%3A00Z",
+    );
   });
 });
 

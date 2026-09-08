@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 
 from api.factory import create_app
 from core.cache import InMemoryTTLCache
+from core.config import Settings
 
 
 async def test_in_memory_cache_miss_returns_none() -> None:
@@ -163,6 +165,30 @@ def test_create_app_installs_in_memory_cache_by_default() -> None:
     app = create_app()
 
     assert isinstance(app.state.cache, InMemoryTTLCache)
+
+
+async def test_create_app_cache_cap_comes_from_settings() -> None:
+    """N-M2 fix wave: `core/cache.py`'s `max_entries=1024` default must come from a documented
+    `Settings.alerts_cache_max_entries` field, not a hardcoded constructor default
+    (`.claude/rules/core.md`: "never hardcode a … cap"). DB-less: `create_app()` only needs
+    `settings=` wired, no `session_factory`. Three `set`s with long (60 s) TTLs, never a boundary
+    tick, so the only way the first key can be gone is capacity eviction, not expiry.
+    """
+    app = create_app(
+        settings=Settings(
+            ingest_hmac_secret=SecretStr("test-secret"),
+            alerts_cache_max_entries=2,  # type: ignore[call-arg]
+        )
+    )
+    cache = app.state.cache
+
+    await cache.set("a", b"a", 60)
+    await cache.set("b", b"b", 60)
+    await cache.set("c", b"c", 60)
+
+    assert await cache.get("a") is None
+    assert await cache.get("b") == b"b"
+    assert await cache.get("c") == b"c"
 
 
 async def test_get_cache_returns_injected_instance() -> None:

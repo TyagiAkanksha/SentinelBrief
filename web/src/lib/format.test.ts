@@ -37,6 +37,12 @@ describe("formatUsd", () => {
     expect(formatUsd(null)).toBe("—");
     expect(formatUsd("x")).toBe("—");
   });
+
+  it("formatUsd treats an empty string as missing", () => {
+    // `Number("")` is `0`, not `NaN` — the existing `Number.isNaN` guard lets an empty string
+    // through as "$0.000000" instead of the missing-value dash (t4-M2 fix wave).
+    expect(formatUsd("")).toBe("—");
+  });
 });
 
 describe("formatPercent", () => {
@@ -57,6 +63,19 @@ describe("formatTokens", () => {
   it("formatTokens uses thousands separators", () => {
     expect(formatTokens(1234)).toBe("1,234");
     expect(formatTokens(null)).toBe("—");
+  });
+});
+
+describe("total formatters on non-finite input", () => {
+  it("formatPercent, formatLatency and formatTokens are total on non-finite input", () => {
+    // None of the three treat `NaN`/`Infinity`/`-Infinity` as missing today — they format the
+    // JS-native "NaN%" / "∞ ms" / "-∞" strings instead of the em-dash every other missing-value
+    // path uses (t4-M3 fix wave).
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(formatPercent(bad)).toBe("—");
+      expect(formatLatency(bad)).toBe("—");
+      expect(formatTokens(bad)).toBe("—");
+    }
   });
 });
 

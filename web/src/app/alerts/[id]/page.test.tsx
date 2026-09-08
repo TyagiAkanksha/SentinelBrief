@@ -25,8 +25,10 @@ vi.mock("next/navigation", () => ({
 
 import AlertDetailPage from "@/app/alerts/[id]/page";
 import { ApiError, getJson } from "@/lib/api/server";
+import { notFound } from "next/navigation";
 
 const mockGetJson = vi.mocked(getJson);
+const mockNotFound = vi.mocked(notFound);
 
 function makeAlert(overrides: Partial<AlertDetail> = {}): AlertDetail {
   return {
@@ -63,6 +65,9 @@ function makeAlert(overrides: Partial<AlertDetail> = {}): AlertDetail {
 
 beforeEach(() => {
   mockGetJson.mockReset();
+  // `mockClear`, not `mockReset` — the latter would drop the throwing implementation
+  // `vi.mock("next/navigation", ...)` installs above, and the 404/422 tests need it intact.
+  mockNotFound.mockClear();
 });
 
 describe("AlertDetailPage", () => {
@@ -104,4 +109,20 @@ describe("AlertDetailPage", () => {
     expect(mockGetJson).toHaveBeenCalledTimes(1);
     expect(mockGetJson).toHaveBeenCalledWith("/api/v1/alerts/a%20b");
   });
+
+  it.each([429, 500])(
+    "renders the error state and does not call notFound for a non-404/422 ApiError",
+    async (status) => {
+      mockGetJson.mockRejectedValueOnce(new ApiError(status, null));
+
+      const element = await AlertDetailPage({
+        params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }),
+      });
+
+      render(element);
+
+      expect(screen.getByRole("alert")).toHaveTextContent(`API error ${status}`);
+      expect(mockNotFound).not.toHaveBeenCalled();
+    },
+  );
 });
