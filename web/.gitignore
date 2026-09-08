@@ -2,3 +2,7 @@
 next-env.d.ts
 out/
 *.tsbuildinfo
+
+# Next 16 agent-rules output (feature disabled in next.config.ts); belt-and-braces (review M9)
+AGENTS.md
+CLAUDE.md

@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.errors import (
     ConfigError,
@@ -114,6 +115,36 @@ async def _handle_validation_error(request: Request, exc: Exception) -> JSONResp
     return _envelope(422, "validation_error", message)
 
 
+async def _handle_http_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Envelope Starlette's built-in `HTTPException` (PRD §8 "one envelope everywhere").
+
+    FastAPI's own `HTTPException` subclasses `starlette.exceptions.HTTPException`, so
+    registering on the Starlette base covers both raise sites. Without this handler an unmatched
+    path (404) or a wrong-method request (405) answers Starlette's default `{"detail": ...}`
+    body instead of the PRD §8 envelope (task-03 review finding I2).
+
+    Args:
+        request: The request that triggered the error (unused; required by the handler shape).
+        exc: The raised `starlette.exceptions.HTTPException` (or `fastapi.HTTPException`).
+
+    Returns:
+        `{"error": {"code", "message"}}` at `exc.status_code`, with `exc.headers` copied onto
+        the response when present (405 keeps its `Allow` header). ≥ 500 responses never carry
+        the real detail on the wire — only `GENERIC_MESSAGE`; the real text is logged at `ERROR`.
+    """
+    assert isinstance(exc, StarletteHTTPException)
+    status_code = exc.status_code
+    code = {404: "not_found", 405: "method_not_allowed"}.get(status_code, "http_error")
+    message = str(exc.detail) if status_code < 500 else GENERIC_MESSAGE
+    if status_code >= 500:
+        logger.error("http exception code=%s status=%s detail=%s", code, status_code, exc.detail)
+    response = _envelope(status_code, code, message)
+    if exc.headers:
+        for key, value in exc.headers.items():
+            response.headers[key] = value
+    return response
+
+
 async def _handle_unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
     """Envelope any other exception as a generic 500; the traceback goes to the log only.
 
@@ -129,11 +160,12 @@ async def _handle_unhandled_exception(request: Request, exc: Exception) -> JSONR
 
 
 def register_error_handlers(app: FastAPI) -> None:
-    """Register the three error-handling tiers on `app`, exactly once.
+    """Register the four error-handling tiers on `app`, exactly once.
 
     Args:
         app: The `FastAPI` instance to register handlers on.
     """
     app.add_exception_handler(SentinelBriefError, _handle_sentinelbrief_error)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+    app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
     app.add_exception_handler(Exception, _handle_unhandled_exception)

@@ -14,6 +14,18 @@ export class ApiError extends Error {
   }
 }
 
+function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
+  if (typeof value !== "object" || value === null || !("error" in value)) {
+    return false;
+  }
+  const error: unknown = (value as { error: unknown }).error;
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const { code, message } = error as { code: unknown; message: unknown };
+  return typeof code === "string" && typeof message === "string";
+}
+
 export const DEFAULT_DEV_API_URL = "http://localhost:8000";
 
 export function apiUrl(): string {
@@ -35,13 +47,8 @@ export async function getJson<T>(path: string, init: RequestInit = {}): Promise<
   });
 
   if (!res.ok) {
-    let envelope: ErrorEnvelope | null = null;
-    try {
-      envelope = (await res.json()) as ErrorEnvelope;
-    } catch {
-      envelope = null;
-    }
-    throw new ApiError(res.status, envelope);
+    const body: unknown = await res.json().catch(() => null);
+    throw new ApiError(res.status, isErrorEnvelope(body) ? body : null);
   }
 
   return (await res.json()) as T;
