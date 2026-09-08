@@ -73,7 +73,9 @@ export function formatTokens(n: number | null): string {
 // value round-trips unchanged and a zoned value is converted rather than dropped.
 export function formatDatetimeLocalUtc(iso: string): string {
   const hasZoneDesignator = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(iso);
-  const hasTimePart = iso.includes("T");
+  // A time part is marked by "T" (ISO) or a plain space (e.g. "2026-09-01 00:00:00"); either
+  // spelling needs the UTC-as-naive handling below, not just the ISO-standard "T" form.
+  const hasTimePart = /[T ]/.test(iso);
   const normalized = hasZoneDesignator || !hasTimePart ? iso : `${iso}Z`;
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) {
