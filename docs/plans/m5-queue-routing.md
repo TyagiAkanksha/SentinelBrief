@@ -33,6 +33,7 @@ to Redis behind the Protocols introduced in M3/M4. `api/factory.py` gains a `red
 
 M0–M4 Global Constraints apply verbatim (branch `feat/m5-queue-routing`). Additionally:
 
+- **Terminal state on unexpected exceptions (M2 task-04 review M7).** `triage_alert` today catches only `VerdictValidationError | LLMCallError` and leaves the alert `pending` on anything else. The ARQ job brief decides the terminal state after the last retry (`failed`, with the exception class logged) and pins it with a test; `pending` must never be a resting state once the queue exists. Also remove the contract-3 `ignore_imports` lines (`api.main -> worker.*`) in the same task that replaces inline triage with `enqueue`.
 - **Remove the `api.main → worker.*` `ignore_imports` exception** in task-01; contract 3 is
   absolute from here on. `api/` enqueues by job name through ARQ and never imports `worker`.
 - Ingest latency is measured in a test with a fake queue (<100 ms budget asserted with margin)
