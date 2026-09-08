@@ -33,6 +33,8 @@ to Redis behind the Protocols introduced in M3/M4. `api/factory.py` gains a `red
 
 M0–M4 Global Constraints apply verbatim (branch `feat/m5-queue-routing`). Additionally:
 
+- **Enqueue only after the insert is committed (M2 final review M5-a).** `SessionDep` commits after the handler returns, so an `enqueue` inside the handler would run before the row is visible to the worker. Task-01 keeps the explicit route commit before `enqueue` (the M2 carve-out comment is reworded, not deleted) or enqueues from a post-commit hook — the brief says which and pins it. `TriageFn` becomes `EnqueueFn = Callable[[uuid.UUID], Awaitable[None]]` and the route answers `pending`; the `api.main -> worker.*` `ignore_imports` lines go in the same commit.
+- **Pins that move into the worker entrypoint (M5-b).** The settings→pipeline wiring pin moves from `tests/test_api_main.py` to the `worker/main.py` tests; the failure-path `logger.warning` gets a caplog pin; `alembic/env.py` raises `ConfigError("DATABASE_URL is not set")` on an empty URL (M2 final review M2) alongside the shared CLI helper extraction.
 - **Terminal state on unexpected exceptions (M2 task-04 review M7).** `triage_alert` today catches only `VerdictValidationError | LLMCallError` and leaves the alert `pending` on anything else. The ARQ job brief decides the terminal state after the last retry (`failed`, with the exception class logged) and pins it with a test; `pending` must never be a resting state once the queue exists.
 - **Remove the `api.main → worker.*` `ignore_imports` exception** in task-01; contract 3 is
   absolute from here on. `api/` enqueues by job name through ARQ and never imports `worker`.

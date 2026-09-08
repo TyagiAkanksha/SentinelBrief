@@ -37,6 +37,8 @@ over httpx with a 24 h cache — in-process dict until Redis lands at M5, behind
 
 M0–M3 Global Constraints apply verbatim (branch `feat/m4-tool-calling`). Additionally:
 
+- **Tool failures never raise out of `TriagePipeline.run` (M2 final review M4-a).** Inline triage persists until M5, so an exception from a tool inside `run` would 500 the ingest request and strand the alert `pending` (`worker/triage.py` catches only `VerdictValidationError | LLMCallError`). Every tool returns `{"unavailable": true, "reason": …}` (PRD §6.3/§13) instead of raising; the loop pins that with a test per tool.
+- **Outcome types move with the trace (M4-b).** When the tool trace is added, `TriageOutcome` relocates to `worker/outcome.py` so `worker/store.py` drops its `TYPE_CHECKING` import of `worker.triage`; `ToolCallRecord` stays a frozen dataclass and a test pins `frozen=True`.
 - **Tool tests use recorded fixtures, never live APIs** (`CLAUDE.md`); a `@pytest.mark.live`
   smoke per network tool is the only exception.
 - The loop cap, per-tool budgets and cache TTL are settings, never literals.
