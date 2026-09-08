@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.models import AlertRow, ToolCallRow, VerdictRow
 from core.schemas.alert import SessionAlert
@@ -67,13 +67,38 @@ def _make_outcome(**overrides: Any) -> TriageOutcome:
     return TriageOutcome(**defaults)
 
 
-async def test_persist_verdict_writes_row_and_sets_triaged(db_session: AsyncSession) -> None:
+async def test_persist_verdict_writes_row_and_sets_triaged(
+    db_session: AsyncSession,
+    db_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     alert_id = await _insert_alert(db_session, session_id="store-001")
     outcome = _make_outcome()
+
+    # (a) a commit spy: `persist_verdict` must never call `session.commit()` itself — the caller
+    # owns exactly one transaction (PRD §6.2). `db_session.in_transaction()` cannot pin this: it
+    # would report True regardless, since the `.get()` reads below autobegin a fresh transaction
+    # after any commit.
+    commit_calls: list[int] = []
+
+    async def _spy_commit() -> None:
+        commit_calls.append(1)
+
+    monkeypatch.setattr(db_session, "commit", _spy_commit)
 
     verdict_id = await persist_verdict(
         db_session, alert_id=alert_id, outcome=outcome, model_primary="fake-model"
     )
+
+    assert commit_calls == []
+
+    # (b) a second, independent session/connection must not see the verdict row yet — proves the
+    # write is genuinely still uncommitted, not just that our own session hasn't called commit().
+    async with db_session_factory() as other_session:
+        other_count = await other_session.scalar(
+            select(func.count()).select_from(VerdictRow).where(VerdictRow.alert_id == alert_id)
+        )
+    assert other_count == 0
 
     assert isinstance(verdict_id, uuid.UUID)
 
@@ -98,9 +123,6 @@ async def test_persist_verdict_writes_row_and_sets_triaged(db_session: AsyncSess
     alert_row = await db_session.get(AlertRow, alert_id)
     assert alert_row is not None
     assert alert_row.status == "triaged"
-
-    # Nothing committed here — the caller (`TriagePipeline.triage_alert`) owns the one commit.
-    assert db_session.in_transaction() is True
 
 
 async def test_persist_verdict_writes_tool_calls_in_seq_order(db_session: AsyncSession) -> None:

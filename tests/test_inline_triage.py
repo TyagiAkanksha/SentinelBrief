@@ -164,6 +164,11 @@ async def test_llm_call_error_marks_failed(
     assert response.json()["status"] == "failed"
     assert await _count_verdicts(db_session_factory) == 0
 
+    async with db_session_factory() as session:
+        row = await session.get(AlertRow, uuid.UUID(response.json()["id"]))
+    assert row is not None
+    assert row.status == "failed"
+
 
 async def test_duplicate_post_leaves_verdict_count_unchanged(
     db_session_factory: async_sessionmaker[AsyncSession], settings: Settings
@@ -205,6 +210,81 @@ async def test_triage_alert_direct_returns_triaged_and_commits(
         ).scalar_one()
     assert verdict.model_primary == "fake-model"
     assert verdict.prompt_version == "triage-v1"
+
+
+async def test_triage_alert_direct_failure_commits_failed_status(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """`triage_alert`'s failure-path `commit()` (`worker/triage.py:166`) is load-bearing on its
+    own — not merely masked by `get_session`'s dependency-level commit when called through the
+    route. Fix round 1 (m2 task-04, review I2)."""
+    alert = _load_alert(session_id="direct-failure-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    llm = FakeLLMClient([LLMCallError("boom")])
+    pipeline = TriagePipeline(llm=llm, model="fake-model", prompt_version="triage-v1")
+
+    status = await pipeline.triage_alert(db_session, result.alert_id)
+
+    assert status == "failed"
+
+    # A fresh session (not `db_session`) must already read "failed" and see no verdict row:
+    # `triage_alert` commits the failure-path status write itself.
+    async with db_session_factory() as fresh_session:
+        row = await fresh_session.get(AlertRow, result.alert_id)
+        assert row is not None
+        assert row.status == "failed"
+        verdict_count = await fresh_session.scalar(
+            select(func.count())
+            .select_from(VerdictRow)
+            .where(VerdictRow.alert_id == result.alert_id)
+        )
+    assert verdict_count == 0
+
+
+async def test_triage_alert_failure_rolls_back_dirty_session(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """`triage_alert`'s failure-path `rollback()` (`worker/triage.py:164`) is load-bearing: any
+    other uncommitted write sitting in the same session when triage fails must be discarded, not
+    just the (already-clean) `get_alert` load. Fix round 1 (m2 task-04, review I3)."""
+    alert_a = _load_alert(session_id="rollback-a-001")
+    result_a = await insert_alert(db_session, alert_a)
+    await db_session.commit()
+
+    # A second, still-uncommitted write in the *same* session: the failure path's rollback must
+    # discard this dirty row along with anything else pending, leaving only A's own
+    # already-committed row (now `failed`) behind.
+    alert_b = _load_alert(session_id="rollback-b-002")
+    db_session.add(
+        AlertRow(
+            fingerprint=alert_b.fingerprint(),
+            source=alert_b.source,
+            event_time=alert_b.connect_time,
+            raw=alert_b.model_dump(mode="json"),
+        )
+    )
+    await db_session.flush()
+
+    llm = FakeLLMClient(["{}", "{}"])
+    pipeline = TriagePipeline(llm=llm, model="fake-model", prompt_version="triage-v1")
+
+    status = await pipeline.triage_alert(db_session, result_a.alert_id)
+
+    assert status == "failed"
+
+    async with db_session_factory() as fresh_session:
+        row_a = await fresh_session.get(AlertRow, result_a.alert_id)
+        assert row_a is not None
+        assert row_a.status == "failed"
+
+        row_b = (
+            await fresh_session.execute(
+                select(AlertRow).where(AlertRow.fingerprint == alert_b.fingerprint())
+            )
+        ).scalar_one_or_none()
+    assert row_b is None
 
 
 async def test_triage_alert_unknown_alert_raises_not_found(db_session: AsyncSession) -> None:
