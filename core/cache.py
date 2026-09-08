@@ -27,17 +27,33 @@ class TTLCache(Protocol):
 
 
 class InMemoryTTLCache:
-    """A single-process `TTLCache` backed by a plain dict; never shared across workers."""
+    """A single-process `TTLCache` backed by a plain dict; never shared across workers.
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    Bounded by `max_entries` (M2/M3 review, plan finding I3): a public GET route must not be a
+    resource sink (PRD §10.1) — without a bound, an unauthenticated caller could mint an unbounded
+    number of distinct cache keys (e.g. via undeclared query params) and grow this dict without
+    limit until the process OOMs. At capacity, `set` first purges every expired entry; only if the
+    store is still full after that does it evict the soonest-`expires_at` survivor.
+    """
+
+    def __init__(
+        self, *, clock: Callable[[], float] = time.monotonic, max_entries: int = 1024
+    ) -> None:
         """Build an empty cache.
 
         Args:
             clock: A zero-arg callable returning the current time, defaulting to
                 `time.monotonic`. Injectable so expiry can be driven in tests without a real
                 sleep (CONVENTIONS.md §10: the clock is a seam).
+            max_entries: The maximum number of distinct keys held at once; must be > 0.
+
+        Raises:
+            ValueError: When `max_entries` is not positive.
         """
+        if max_entries <= 0:
+            raise ValueError("max_entries must be > 0")
         self._clock = clock
+        self._max_entries = max_entries
         self._entries: dict[str, tuple[float, bytes]] = {}
 
     async def get(self, key: str) -> bytes | None:
@@ -57,6 +73,10 @@ class InMemoryTTLCache:
     async def set(self, key: str, value: bytes, ttl_s: int) -> None:
         """Store `value` under `key`, expiring `ttl_s` seconds from now.
 
+        Overwriting an existing key never triggers eviction. A new key at capacity first purges
+        every expired entry; if the store is still full after that, the entry with the soonest
+        `expires_at` is evicted to make room.
+
         Args:
             key: The cache key.
             value: The bytes to store.
@@ -67,4 +87,12 @@ class InMemoryTTLCache:
         """
         if ttl_s <= 0:
             raise ValueError("ttl_s must be > 0")
+        if key not in self._entries and len(self._entries) >= self._max_entries:
+            now = self._clock()
+            expired_keys = [k for k, (expires_at, _) in self._entries.items() if now >= expires_at]
+            for expired_key in expired_keys:
+                del self._entries[expired_key]
+            if len(self._entries) >= self._max_entries:
+                soonest_key = min(self._entries, key=lambda k: self._entries[k][0])
+                del self._entries[soonest_key]
         self._entries[key] = (self._clock() + ttl_s, value)
