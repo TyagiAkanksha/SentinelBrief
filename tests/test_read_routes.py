@@ -20,11 +20,12 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.requests import Request
 
 from api.factory import create_app
-from api.routes.alerts_read import cache_key
+from api.routes.alerts_read import _cached_json, cache_key
 from core.cache import InMemoryTTLCache
 from core.config import Settings
 from core.schemas.verdict import Verdict, VerdictCategory
@@ -272,6 +273,49 @@ def test_cache_key_is_built_from_declared_params_only() -> None:
     assert reordered_key == key
 
 
+def test_cache_key_keeps_false_and_zero_values() -> None:
+    """m3 task-02 review N3: only `None` is dropped from the key — `False` and `0` must survive.
+    Changing the drop condition from `is None` to a truthiness check (`if not value`) would fold
+    `escalate=False`/a zero value into the unfiltered key without failing loudly here."""
+    assert (
+        cache_key("/api/v1/alerts", {"escalate": False, "page": 1})
+        == "/api/v1/alerts?escalate=false&page=1"
+    )
+    assert cache_key("/p", {"n": 0}) == "/p?n=0"
+
+
+async def test_list_alerts_escalate_false_is_a_distinct_cache_entry(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """m3 task-02 review N3, route-level: fails if `escalate=False` were dropped from the cache
+    key (both requests would then share the unfiltered key and return the same body) or if the
+    filter itself silently dropped a `False` value. `?escalate=false` on a public path returning
+    the *unfiltered* list would be a wrong-body wire bug, not just a cache-hygiene one."""
+    app, _clock = _build_app(db_session_factory)
+    escalated_id = await _seed(
+        db_session_factory,
+        session_id="escfalse-true",
+        verdict=_verdict(severity=4, escalate=True),
+    )
+    non_escalated_id = await _seed(
+        db_session_factory,
+        session_id="escfalse-false",
+        verdict=_verdict(severity=2, escalate=False),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        true_response = await client.get("/api/v1/alerts", params={"escalate": "true"})
+        false_response = await client.get("/api/v1/alerts", params={"escalate": "false"})
+
+    true_body = true_response.json()
+    false_body = false_response.json()
+
+    assert true_body["total"] == 1
+    assert true_body["items"][0]["id"] == str(escalated_id)
+    assert false_body["total"] == 1
+    assert false_body["items"][0]["id"] == str(non_escalated_id)
+
+
 async def test_list_alerts_cache_hit_keeps_json_content_type(
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -310,25 +354,32 @@ class _SpyCache:
 
 
 async def test_list_alerts_non_2xx_never_cached() -> None:
+    """m3 task-02 review I1, re-review round 2: the fix-round-1 rewrite still failed *before*
+    `_cached_json` ran — `create_app(session_factory=None)` raises inside FastAPI's own dependency
+    resolution (`api/deps.py::get_session`), so mutation A (`cache.set` inserted before
+    `produce()` inside `_cached_json`) still left the whole suite green. This is a DB-less unit
+    test of `_cached_json` itself, driving the ordering invariant directly: `produce()` raising
+    must propagate out of `_cached_json` (never swallowed) with `cache.set` never having been
+    reached."""
     spy = _SpyCache()
-    app = create_app(session_factory=None, cache=spy)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/alerts",
+            "query_string": b"",
+            "headers": [],
+        }
+    )
 
-    # `raise_app_exceptions=False`: the unwired-session `RuntimeError` is handled by the app's own
-    # registered handler into a real 500 response (`tests/test_app_factory.py
-    # ::test_get_session_raises_when_dbless` pins the same pattern) — without this, httpx re-raises
-    # it into the test instead of returning the response.
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/v1/alerts")
+    async def _produce() -> BaseModel:
+        raise RuntimeError("boom")
 
-    # No `session_factory` wired -> `get_session` raises `RuntimeError("no session_factory
-    # wired")` (api/deps.py) while FastAPI is still resolving dependencies, before `list_alerts`'s
-    # body — and therefore `_cached_json` — ever runs; the bare-`Exception` handler
-    # (api/errors.py::_handle_unhandled_exception) envelopes it generically.
-    assert response.status_code == 500
-    assert response.json() == {"error": {"code": "internal_error", "message": "internal error"}}
+    with pytest.raises(RuntimeError):
+        await _cached_json(request, spy, 15, _produce, {"page": 1})
+
     assert spy.set_calls == []
-    assert spy._inner._entries == {}
+    assert await spy.get(cache_key("/api/v1/alerts", {"page": 1})) is None
 
 
 async def test_list_and_stats_cache_keys_do_not_collide(

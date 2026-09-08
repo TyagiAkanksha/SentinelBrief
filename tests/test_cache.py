@@ -109,6 +109,52 @@ async def test_in_memory_cache_evicts_expired_then_soonest_expiring_at_capacity(
     assert await cache.get("d") == b"d"
 
 
+async def test_in_memory_cache_purges_all_expired_before_evicting_live() -> None:
+    """m3 task-02 review N1: the ruling's "purge *every* expired entry" step (not just the
+    soonest-expiring one) is unpinned through `get`/`set` alone — an expired entry is always the
+    soonest-expiring one, so "purge all" and "evict only the soonest-expiring" pick the same
+    single victim and differ only in *how many* slots they free, a difference a later `get`'s own
+    lazy eviction would otherwise mask. `len(cache._entries)` is checked immediately after `set`,
+    before any `get`, specifically to catch that."""
+    box = [0.0]
+    cache = InMemoryTTLCache(clock=lambda: box[0], max_entries=3)
+
+    await cache.set("a", b"a", 5)  # expires at 5
+    await cache.set("b", b"b", 5)  # expires at 5, tied with a
+    await cache.set("c", b"c", 50)  # expires at 50
+
+    box[0] = 10.0  # past a's and b's expiry, not c's
+
+    # Store is full (3/3): a purge-all-expired policy frees both a and b, so d fits with no
+    # further eviction. A soonest-expiring-only policy would evict just one of {a, b} (tied) and
+    # leave the other physically present in `_entries` until something else touches it.
+    await cache.set("d", b"d", 100)  # expires at 110
+
+    assert len(cache._entries) == 2
+    assert set(cache._entries) == {"c", "d"}
+
+    assert await cache.get("a") is None
+    assert await cache.get("b") is None
+    assert await cache.get("c") == b"c"
+    assert await cache.get("d") == b"d"
+
+
+async def test_in_memory_cache_overwrite_at_capacity_never_evicts() -> None:
+    """m3 task-02 review N2: overwriting an existing key at capacity must never evict a live
+    neighbour — only a genuinely new key ever competes for a slot."""
+    box = [0.0]
+    cache = InMemoryTTLCache(clock=lambda: box[0], max_entries=2)
+
+    await cache.set("a", b"a1", 10)  # expires at 10
+    await cache.set("b", b"b", 20)  # expires at 20; store now at capacity (2)
+
+    await cache.set("a", b"a2", 30)  # overwrite, not a new key -> must not evict b
+    assert await cache.get("b") == b"b"  # overwriting a never evicted b
+
+    box[0] = 25.0  # past a's *original* 10s TTL; well within its restarted 30s TTL
+    assert await cache.get("a") == b"a2"
+
+
 def test_create_app_installs_in_memory_cache_by_default() -> None:
     app = create_app()
 
