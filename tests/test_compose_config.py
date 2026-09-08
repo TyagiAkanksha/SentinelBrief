@@ -12,6 +12,10 @@ a `.env` next to the compose file's parent directory even though nothing in it i
 below renders the compose file the same way: copy it into a throwaway `tmp_path/infra/`, drop an
 empty `tmp_path/.env` beside it, and run `config` from `tmp_path` — never against the real repo
 root (which may or may not have a dev `.env`, and must never be mutated by a test run).
+
+m3 task-07 extends this module with the `web` service (`test_compose_web_service_shape`) and adds
+a `web` assertion to two of the m2-pinned tests below (`test_compose_config_validates`,
+`test_compose_publishes_loopback_only`); no other assertion in this file changes.
 """
 
 from __future__ import annotations
@@ -71,16 +75,19 @@ def rendered_compose_config(tmp_path: Path) -> dict[str, Any]:
 
 def test_compose_config_validates(rendered_compose_config: dict[str, Any]) -> None:
     """PRD §11 / brief Interfaces: `docker compose -f infra/docker-compose.yml config` exits 0
-    and declares both the `postgres` and `api` services — a reference error (e.g. a typo'd
-    service name in `depends_on`) fails `config` before `docker compose up` is ever attempted.
+    and declares the `postgres`, `api`, and `web` services (m3 task-07 adds `web`) — a reference
+    error (e.g. a typo'd service name in `depends_on`) fails `config` before `docker compose up`
+    is ever attempted.
     """
     assert "postgres" in rendered_compose_config["services"]
     assert "api" in rendered_compose_config["services"]
+    assert "web" in rendered_compose_config["services"]
 
 
 def test_compose_publishes_loopback_only(rendered_compose_config: dict[str, Any]) -> None:
     """`.claude/rules/infra.md`: dev compose publishes ports on 127.0.0.1 only — a bare
     `"8000:8000"` mapping would expose the API (and Postgres) on every interface of the dev host.
+    m3 task-07 adds the `web` service's port to this same check.
     """
     services = rendered_compose_config["services"]
     published_targets: dict[str, set[str]] = {}
@@ -93,6 +100,7 @@ def test_compose_publishes_loopback_only(rendered_compose_config: dict[str, Any]
 
     assert published_targets.get("api") == {"8000"}, published_targets.get("api")
     assert published_targets.get("postgres") == {"5432"}, published_targets.get("postgres")
+    assert published_targets.get("web") == {"3000"}, published_targets.get("web")
 
 
 def test_compose_api_depends_on_healthy_postgres(rendered_compose_config: dict[str, Any]) -> None:
@@ -139,6 +147,37 @@ def test_compose_api_build_context_is_repo_root(tmp_path: Path) -> None:
     )
     dockerfile = build["dockerfile"].replace("\\", "/")
     assert dockerfile.endswith("infra/Dockerfile.api"), dockerfile
+
+
+def test_compose_web_service_shape(tmp_path: Path) -> None:
+    """m3 task-07 brief Interfaces: the `web` service builds from the repo-root context with
+    `infra/Dockerfile.web`, bakes the browser-visible API origin in as a build `arg`, talks to
+    `api` over the compose network server-side (`API_URL=http://api:8000`), waits for a *healthy*
+    `api` before starting, and carries the same json-file log rotation as `postgres`/`api` — a
+    bare `depends_on: [api]` (started, not healthy) would let the web container's own healthcheck
+    race the API's boot. Rendered from its own `tmp_path` copy (not the shared
+    `rendered_compose_config` fixture), mirroring `test_compose_api_build_context_is_repo_root`,
+    so `context: ..` can be checked against the exact directory it resolves relative to.
+    """
+    config = _render_compose_config(tmp_path)
+    web = config["services"]["web"]
+
+    assert web["image"] == "sentinelbrief-web"
+    assert web["environment"]["API_URL"] == "http://api:8000"
+    assert web["depends_on"]["api"]["condition"] == "service_healthy"
+
+    build = web["build"]
+    context = build["context"]
+    assert Path(context).resolve() == tmp_path.resolve(), (
+        f"web build context does not resolve to the repo root stand-in {tmp_path}: {context}"
+    )
+    dockerfile = build["dockerfile"].replace("\\", "/")
+    assert dockerfile.endswith("infra/Dockerfile.web"), dockerfile
+    assert "NEXT_PUBLIC_API_URL" in build.get("args", {}), build.get("args")
+
+    logging = web["logging"]
+    assert logging["driver"] == "json-file"
+    assert logging["options"]["max-size"] == "10m"
 
 
 def test_compose_named_volume(rendered_compose_config: dict[str, Any]) -> None:
