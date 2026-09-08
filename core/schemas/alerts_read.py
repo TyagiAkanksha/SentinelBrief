@@ -124,8 +124,11 @@ class StatsOut(BaseModel):
 
 
 class ListFilters(BaseModel):
-    """The PRD §8 alert-list filters. Each verdict-field filter naturally excludes alerts
-    without a verdict yet (a `NULL` never satisfies a comparison)."""
+    """The PRD §8 alert-list filters.
+
+    Each verdict-field filter naturally excludes alerts without a verdict yet (a `NULL` never
+    satisfies a comparison).
+    """
 
     severity_gte: Annotated[int, Field(ge=1, le=5)] | None = None
     category: VerdictCategory | None = None

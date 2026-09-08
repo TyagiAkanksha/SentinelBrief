@@ -53,9 +53,13 @@ def create_app(
     app.state.session_factory = session_factory
     app.state.settings = settings
     app.state.triage = triage
-    app.state.cache = cache if cache is not None else InMemoryTTLCache()
 
     effective_settings = settings if settings is not None else Settings()
+    app.state.cache = (
+        cache
+        if cache is not None
+        else InMemoryTTLCache(max_entries=effective_settings.alerts_cache_max_entries)
+    )
     app.add_middleware(CORSMiddleware, allow_origins=effective_settings.cors_origin_list)
 
     register_error_handlers(app)

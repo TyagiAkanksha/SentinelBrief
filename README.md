@@ -72,6 +72,14 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
+`Settings` (`core/config.py`) never loads `.env` itself — only the compose `api` service does, via
+`env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
+triage_one`) reads plain environment variables, so load `.env` into your shell first:
+
+```sh
+set -a; . ./.env; set +a   # host-side commands read the environment only; Settings never loads .env
+```
+
 ### 2. Run the core loop
 
 ```sh
@@ -92,7 +100,8 @@ docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade h
 curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok"}
 curl -s localhost:3000/healthz                                              # {"status":"ok"}
 # Seed a browsable queue: 5 fixtures + 20 golden v1 sessions through the real pipeline with the fake LLM
-# (add --live to spend real tokens with the key in .env; a re-run creates nothing).
+# (add --live to spend real tokens with LLM_API_KEY / CHEAP_MODEL / MODEL_PRICES_JSON exported
+# (see step 1); a re-run creates nothing).
 uv run python scripts/seed_dev.py --database-url postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief   # created=25 skipped=0 failed=0
 # Open http://localhost:3000/alerts in a browser — the queue; click an IP for the detail page
 curl -s 'localhost:8000/api/v1/alerts?page_size=5' | python3 -m json.tool | head -30

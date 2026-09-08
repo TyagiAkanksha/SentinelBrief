@@ -39,7 +39,7 @@ export function formatAge(iso: string, now: Date): string {
 }
 
 export function formatUsd(value: string | null): string {
-  if (value === null) {
+  if (value === null || value.trim() === "") {
     return EM_DASH;
   }
   const parsed = Number(value);
@@ -50,18 +50,21 @@ export function formatUsd(value: string | null): string {
 }
 
 export function formatPercent(confidence: number): string {
+  if (!Number.isFinite(confidence)) {
+    return EM_DASH;
+  }
   return `${Math.round(confidence * 100)}%`;
 }
 
 export function formatLatency(ms: number | null): string {
-  if (ms === null) {
+  if (ms === null || !Number.isFinite(ms)) {
     return EM_DASH;
   }
   return `${ms.toLocaleString("en-US")} ms`;
 }
 
 export function formatTokens(n: number | null): string {
-  if (n === null) {
+  if (n === null || !Number.isFinite(n)) {
     return EM_DASH;
   }
   return n.toLocaleString("en-US");

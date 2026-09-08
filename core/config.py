@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     alerts_list_cache_ttl_s: int = 15
     stats_cache_ttl_s: int = 60
+    alerts_cache_max_entries: int = 1024
+    """Bound on the in-process list/stats cache; M5's Redis backend uses its own maxmemory."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

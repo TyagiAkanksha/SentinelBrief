@@ -65,12 +65,12 @@ jobs:
       # PRD §12 M2: the image must build and the compose file must validate; docker is present on
       # ubuntu-latest so tests/test_compose_config.py never skips here (the skip is for
       # docker-less dev machines).
-      - name: docker image builds; compose config validates
+      - name: docker images build (api, web); compose config validates
         shell: bash
         run: |
           cp .env.example .env
           docker compose -f infra/docker-compose.yml config > /dev/null
-          docker compose -f infra/docker-compose.yml build api
+          docker compose -f infra/docker-compose.yml build api web
 
       - name: pip-audit
         continue-on-error: true

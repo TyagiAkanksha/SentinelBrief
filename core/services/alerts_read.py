@@ -51,9 +51,11 @@ def _latest_verdicts_subquery() -> Subquery:
 async def list_alerts(
     session: AsyncSession, *, filters: ListFilters, page: int, page_size: int
 ) -> tuple[list[AlertSummary], int]:
-    """Page the alert list, latest verdict per alert, `severity DESC NULLS LAST, received_at DESC`
-    then `id DESC` (PRD §9) so pending/failed alerts (`verdict=None`) still list, after every
-    verdict-bearing row, and paging never drops or duplicates a row.
+    """Page the alert list, latest verdict per alert, ordered latest-first (PRD §9).
+
+    Ordered `severity DESC NULLS LAST, received_at DESC` then `id DESC` so pending/failed alerts
+    (`verdict=None`) still list, after every verdict-bearing row, and paging never drops or
+    duplicates a row.
 
     Args:
         session: The request-scoped `AsyncSession`.
@@ -134,8 +136,9 @@ async def list_alerts(
 
 
 async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertDetail:
-    """Return `alert_id`'s full detail: raw payload, latest verdict, and its tool calls in
-    `seq` order (PRD §5, §8).
+    """Return `alert_id`'s full detail: raw payload, latest verdict, and tool calls (PRD §5, §8).
+
+    Tool calls are returned in `seq` order.
 
     Args:
         session: The request-scoped `AsyncSession`.
@@ -205,7 +208,7 @@ async def get_stats(session: AsyncSession) -> StatsOut:
     status_rows = (
         await session.execute(select(AlertRow.status, func.count()).group_by(AlertRow.status))
     ).all()
-    by_status = {"pending": 0, "triaged": 0, "failed": 0}
+    by_status: dict[str, int] = {status: 0 for status in get_args(AlertStatus)}
     for status, count in status_rows:
         by_status[status] = count
 

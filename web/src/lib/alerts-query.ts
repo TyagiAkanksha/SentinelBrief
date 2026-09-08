@@ -17,14 +17,14 @@ function first(value: string | string[] | undefined): string | undefined {
 
 export function parseListQuery(sp: SearchParams): ListQuery {
   const rawPage = first(sp.page);
-  const parsedPage = rawPage === undefined ? NaN : parseInt(rawPage, 10);
-  const page = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
+  const parsedPage = rawPage === undefined ? NaN : Number(rawPage);
+  const page = Number.isSafeInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1;
 
   const rawPageSize = first(sp.page_size);
-  const parsedPageSize = rawPageSize === undefined ? NaN : parseInt(rawPageSize, 10);
-  const pageSize = Number.isNaN(parsedPageSize)
-    ? DEFAULT_PAGE_SIZE
-    : Math.min(100, Math.max(1, parsedPageSize));
+  const parsedPageSize = rawPageSize === undefined ? NaN : Number(rawPageSize);
+  const pageSize = Number.isSafeInteger(parsedPageSize)
+    ? Math.min(100, Math.max(1, parsedPageSize))
+    : DEFAULT_PAGE_SIZE;
 
   const query: ListQuery = { page, page_size: pageSize };
 
@@ -58,7 +58,7 @@ export function parseListQuery(sp: SearchParams): ListQuery {
 
 export function toQueryString(q: ListQuery): string {
   const params = new URLSearchParams();
-  const entries = Object.entries(q).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(q).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   for (const [key, value] of entries) {
     if (value !== undefined) {
       params.set(key, String(value));
