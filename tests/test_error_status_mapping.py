@@ -13,7 +13,7 @@ import inspect
 import logging
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient, Response
 from pydantic import BaseModel
 
@@ -209,7 +209,38 @@ async def test_method_not_allowed_405_uses_envelope() -> None:
         response = await client.post("/api/v1/stats")
 
     assert response.status_code == 405
-    assert "GET" in response.headers.get("allow", "")
+    assert response.headers["allow"] == "GET"
     body = response.json()
     assert set(body.keys()) == {"error"}
     assert body["error"] == {"code": "method_not_allowed", "message": "Method Not Allowed"}
+
+
+async def test_5xx_http_exception_uses_generic_message_and_logs_the_detail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """N1 (m3 task-03 re-review): `_handle_http_exception`'s >=500 branch shares the same
+    secret-hiding invariant M2's final review forced onto `_handle_sentinelbrief_error`
+    (`test_5xx_mapped_errors_use_generic_message_and_log_the_real_one` above), but had no
+    regression guard of its own — mutation R5 (an unconditional `str(exc.detail)`) leaked the
+    real detail on the wire while the whole suite still passed. This pins it: the real `detail`
+    never reaches the response body, only the log.
+    """
+    app = create_app()
+    _mount_raiser(
+        app,
+        "/_probe/http5xx",
+        "probe_http5xx",
+        HTTPException(status_code=503, detail="secret detail"),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        response = await _get(app, "/_probe/http5xx", raise_app_exceptions=False)
+
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": "http_error", "message": "internal error"}}
+    assert "secret detail" not in response.text
+    assert any(
+        record.name == "api.errors" and "secret detail" in record.message
+        for record in caplog.records
+    )
+    assert any(record.levelno >= logging.ERROR for record in caplog.records)
