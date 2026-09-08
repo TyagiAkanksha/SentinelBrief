@@ -11,20 +11,28 @@ all 7 rows means only the `id DESC` tiebreaker keeps paging deterministic.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import get_args
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.errors import NotFoundError
-from core.schemas.alerts_read import ListFilters
+from core.schemas.alerts_read import ListFilters, reasoning_excerpt
 from core.schemas.verdict import Verdict, VerdictCategory
 from core.services.alerts_read import get_alert_detail, get_stats, list_alerts
 from tests.helpers import add_verdict, load_alert, seed_alert
 from worker.store import ToolCallRecord
+
+# I1: `alerts.raw` must never appear in a compiled `list_alerts` statement except immediately
+# followed by ` ->>` (the JSONB extraction operator) — a whole-column selection anywhere else
+# would mean the list loads full session payloads instead of projecting two scalar fields
+# (verified against the actual rendered SQL — see the module docstring for `list_alerts`).
+_BARE_RAW_COLUMN = re.compile(r"alerts\.raw(?!\s*->>)")
 
 
 def _verdict(
@@ -33,13 +41,14 @@ def _verdict(
     category: VerdictCategory = "scanning",
     escalate: bool = False,
     confidence: float = 0.7,
+    reasoning: str = "test reasoning",
 ) -> Verdict:
     """A `Verdict` with sensible defaults, overridable per test."""
     return Verdict(
         severity=severity,
         category=category,
         confidence=confidence,
-        reasoning="test reasoning",
+        reasoning=reasoning,
         recommended_action="monitor",
         escalate=escalate,
     )
@@ -104,6 +113,8 @@ async def test_list_alerts_lists_pending_and_failed_with_null_verdict_last(
 
 async def test_list_alerts_uses_latest_verdict_per_alert(db_session: AsyncSession) -> None:
     t0 = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    newer_created_at = t0 + timedelta(hours=1)
+    long_reasoning = "attacker escalated privileges and exfiltrated data; " * 4  # 208 chars
     alert_id = await seed_alert(
         db_session,
         session_id="latest-verdict",
@@ -113,8 +124,8 @@ async def test_list_alerts_uses_latest_verdict_per_alert(db_session: AsyncSessio
     await add_verdict(
         db_session,
         alert_id,
-        _verdict(severity=5, escalate=True),
-        created_at=t0 + timedelta(hours=1),
+        _verdict(severity=5, escalate=True, reasoning=long_reasoning),
+        created_at=newer_created_at,
     )
     await db_session.commit()
 
@@ -125,6 +136,11 @@ async def test_list_alerts_uses_latest_verdict_per_alert(db_session: AsyncSessio
     assert items[0].id == alert_id
     assert items[0].verdict is not None
     assert items[0].verdict.severity == 5
+    # I2: pin the list row's VerdictSummary wiring, not just its severity — a hardcoded
+    # `reasoning_excerpt=""` or `created_at=row.received_at` swap left the whole suite green.
+    assert items[0].verdict.reasoning_excerpt == reasoning_excerpt(long_reasoning)
+    assert len(items[0].verdict.reasoning_excerpt) == 160
+    assert items[0].verdict.created_at == newer_created_at
 
 
 async def test_list_alerts_pagination_tiebreaker_never_drops_or_duplicates(
@@ -153,6 +169,10 @@ async def test_list_alerts_pagination_tiebreaker_never_drops_or_duplicates(
     seen_ids = [item.id for page in (page1, page2, page3) for item in page]
     assert len(seen_ids) == len(set(seen_ids)) == 7
     assert set(seen_ids) == ids
+    # Identical severity *and* received_at on every row means `id DESC` is the only remaining
+    # sort key: the concatenated page order must be pure descending id, not merely a disjoint
+    # partition (C1 — a stable-but-untiebroken partition could satisfy every assertion above).
+    assert seen_ids == sorted(ids, reverse=True)
 
 
 async def test_list_alerts_filter_severity_gte(db_session: AsyncSession) -> None:
@@ -255,6 +275,37 @@ async def test_list_alerts_src_ip_and_sensor_come_from_raw(db_session: AsyncSess
     expected = load_alert("alert4")
     assert item.src_ip == expected.src_ip
     assert item.sensor == expected.sensor
+
+
+async def test_list_alerts_projects_src_ip_and_sensor_in_sql_without_loading_raw(
+    db_session: AsyncSession,
+) -> None:
+    """I1: `src_ip`/`sensor` must come from a `raw ->> ...` SQL projection, never from a
+    Python-side `AlertRow.raw` load — asserting on the *values* alone (as the sibling test does)
+    is satisfied identically by a whole-payload implementation, which is exactly what
+    `core/services/alerts_read.py`'s Interfaces comment rules out."""
+    await seed_alert(db_session, "alert4", session_id="sql-raw-001")
+    await db_session.commit()
+
+    statements: list[str] = []
+
+    def _capture(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    # `AsyncSession.get_bind()` proxies the underlying sync `Session.get_bind()`, which for a
+    # session built by `async_sessionmaker(async_engine)` already returns the plain sync
+    # `Engine` (not the `AsyncEngine`) — confirmed empirically; it has no `.sync_engine`
+    # attribute of its own to unwrap further.
+    engine = db_session.get_bind()
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        await list_alerts(db_session, filters=ListFilters(), page=1, page_size=10)
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    assert statements, "no SQL captured — the listener/bind wiring is broken"
+    assert any("alerts.raw ->>" in stmt for stmt in statements)
+    assert not any(_BARE_RAW_COLUMN.search(stmt) for stmt in statements)
 
 
 async def test_get_alert_detail_returns_latest_verdict_and_tool_calls_in_seq_order(
@@ -398,6 +449,11 @@ async def test_get_stats_cost_totals_and_latency_percentiles(db_session: AsyncSe
     assert stats.latency_p95_ms == 100
     assert stats.cost_total_usd == Decimal("0.000500")
     assert stats.cost_mean_usd == Decimal("0.000100")
+    # I3: Decimal.__eq__ is numeric, so an unquantized average would still satisfy the line
+    # above (e.g. "0.00010000000000000000" == Decimal("0.000100")). cost_mean_usd serializes to
+    # a JSON string (same decision as VerdictOut.cost_usd), so the wire representation is the
+    # thing that must be pinned.
+    assert str(stats.cost_mean_usd) == "0.000100"
 
 
 async def test_get_stats_volume_by_day_groups_received_at_by_utc_date(
