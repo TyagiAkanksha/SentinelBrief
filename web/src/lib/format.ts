@@ -66,3 +66,18 @@ export function formatTokens(n: number | null): string {
   }
   return n.toLocaleString("en-US");
 }
+
+// HTML's <input type="datetime-local"> rejects any value carrying a zone suffix (the browser
+// blanks it), and the API reads a naive `since` as UTC (task-01 ruling Q7). This normalizes any
+// ISO input — zoned or naive — to the UTC wall clock in datetime-local's own format, so a naive
+// value round-trips unchanged and a zoned value is converted rather than dropped.
+export function formatDatetimeLocalUtc(iso: string): string {
+  const hasZoneDesignator = /[Zz]$|[+-]\d{2}:\d{2}$/.test(iso);
+  const date = new Date(hasZoneDesignator ? iso : `${iso}Z`);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+}

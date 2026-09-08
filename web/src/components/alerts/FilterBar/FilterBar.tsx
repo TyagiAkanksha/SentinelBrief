@@ -1,3 +1,5 @@
+import { formatDatetimeLocalUtc } from "@/lib/format";
+
 import { VERDICT_CATEGORIES } from "./interface";
 import type { FilterBarProps } from "./interface";
 
@@ -47,8 +49,12 @@ export function FilterBar({ query }: FilterBarProps) {
         </select>
       </label>
       <label>
-        Since
-        <input type="datetime-local" name="since" defaultValue={query.since ?? ""} />
+        Since (UTC)
+        <input
+          type="datetime-local"
+          name="since"
+          defaultValue={query.since ? formatDatetimeLocalUtc(query.since) : ""}
+        />
       </label>
       <input type="hidden" name="page_size" value={query.page_size} />
       <button type="submit">Apply</button>
