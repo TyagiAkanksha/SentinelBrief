@@ -193,6 +193,68 @@ def test_cmd_is_uvicorn_proxy_headers() -> None:
         )
 
 
+def _runtime_copy_from_builder(tail: list[str]) -> list[tuple[str, str, str]]:
+    """Returns `(source, dest, block)` for every `COPY --from=builder ...` instruction in `tail`,
+    tolerant of flag order (`--chown=...` before or after `--from=builder`) so the pin doesn't
+    over-fit incidental whitespace or flag ordering.
+    """
+    entries: list[tuple[str, str, str]] = []
+    for block in tail:
+        parts = block.split()
+        if not parts or parts[0].upper() != "COPY":
+            continue
+        if not any(part.startswith("--from=builder") for part in parts):
+            continue
+        positional = [part for part in parts[1:] if not part.startswith("--")]
+        if len(positional) != 2:
+            continue
+        source, dest = positional
+        entries.append((source, dest, block))
+    return entries
+
+
+def test_runtime_stage_has_uv_binary() -> None:
+    """Brief Interfaces: the runtime stage copies `/usr/local/bin/uv` from the builder — without
+    it, the documented migration command (`docker compose run --rm api uv run alembic upgrade
+    head`) has no `uv` binary to invoke inside the runtime image (task-05 review I2 / mutation
+    M11: deleting this line breaks the only sanctioned migration path with every other pin green).
+    """
+    instructions = _instructions()
+    from_indices = [i for i, block in enumerate(instructions) if block.split()[0].upper() == "FROM"]
+    tail = instructions[from_indices[-1] :]
+
+    entries = _runtime_copy_from_builder(tail)
+    assert any(source == "/usr/local/bin/uv" for source, _, _ in entries), (
+        "no `COPY --from=builder ... /usr/local/bin/uv ...` after the last FROM — "
+        "`uv run alembic upgrade head` would not work inside the runtime image"
+    )
+
+
+def test_runtime_stage_copies_venv_and_sources() -> None:
+    """Brief Interfaces: the runtime stage copies `.venv` plus each of the six sources from the
+    builder, every one `--chown=appuser:appuser` (task-05 review I2 / mutation M12: deleting the
+    runtime stage's source COPYs ships an image that cannot import `api.main` with every other
+    pin green, because `test_multistage_uv_builder` only ever looks at the builder stage).
+    """
+    instructions = _instructions()
+    from_indices = [i for i, block in enumerate(instructions) if block.split()[0].upper() == "FROM"]
+    tail = instructions[from_indices[-1] :]
+
+    entries = _runtime_copy_from_builder(tail)
+    required_sources = {f"/app/{name}" for name in _SOURCE_COPIES} | {"/app/.venv"}
+    found_sources = {source for source, _, _ in entries if source in required_sources}
+    missing = sorted(required_sources - found_sources)
+    assert found_sources == required_sources, (
+        f"runtime stage is missing COPY --from=builder for: {missing}"
+    )
+
+    for source, _dest, block in entries:
+        if source in required_sources:
+            assert "--chown=appuser:appuser" in block, (
+                f"runtime COPY of {source} is missing --chown=appuser:appuser: {block}"
+            )
+
+
 def test_prompts_not_dockerignored() -> None:
     """M1 review carry-over guard: `worker/prompts/*.md` must survive `.dockerignore`'s blanket
     `*.md` exclusion, or `worker.prompts.load_prompt` finds nothing inside the built image. This

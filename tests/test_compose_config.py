@@ -29,8 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _COMPOSE_FILE = _REPO_ROOT / "infra" / "docker-compose.yml"
 
 
-@pytest.fixture
-def rendered_compose_config(tmp_path: Path) -> dict[str, Any]:
+def _render_compose_config(tmp_path: Path) -> dict[str, Any]:
     """Renders `infra/docker-compose.yml` with `docker compose config --format json` from a
     throwaway `tmp_path` copy and returns the parsed config. Skips (by name, not a silent pass)
     when `docker` is not on PATH, so every compose test in this module skips together.
@@ -60,6 +59,14 @@ def rendered_compose_config(tmp_path: Path) -> dict[str, Any]:
     assert proc.returncode == 0, f"docker compose config failed:\n{proc.stdout}\n{proc.stderr}"
     config: dict[str, Any] = json.loads(proc.stdout)
     return config
+
+
+@pytest.fixture
+def rendered_compose_config(tmp_path: Path) -> dict[str, Any]:
+    """Thin fixture wrapper around `_render_compose_config` for the tests that only need the
+    parsed config, not the `tmp_path` it was rendered from.
+    """
+    return _render_compose_config(tmp_path)
 
 
 def test_compose_config_validates(rendered_compose_config: dict[str, Any]) -> None:
@@ -113,6 +120,25 @@ def test_compose_api_command_has_no_migration(rendered_compose_config: dict[str,
         return
     text = " ".join(command) if isinstance(command, list) else str(command)
     assert "alembic" not in text.lower(), f"api service command runs a migration: {text}"
+
+
+def test_compose_api_build_context_is_repo_root(tmp_path: Path) -> None:
+    """`.claude/rules/infra.md`: images build from the repo root context
+    (`build: {context: .., dockerfile: infra/...}`), never from `infra/` itself — a `context: .`
+    typo (task-05 review I2 / mutation M10) would break the build outright, since `COPY
+    pyproject.toml uv.lock ./` has no `pyproject.toml` to find one directory down. Rendered from
+    its own `tmp_path` copy (not the shared `rendered_compose_config` fixture) so `context: ..`
+    can be checked against the exact directory it resolves relative to.
+    """
+    config = _render_compose_config(tmp_path)
+    build = config["services"]["api"]["build"]
+
+    context = build["context"]
+    assert Path(context).resolve() == tmp_path.resolve(), (
+        f"api build context does not resolve to the repo root stand-in {tmp_path}: {context}"
+    )
+    dockerfile = build["dockerfile"].replace("\\", "/")
+    assert dockerfile.endswith("infra/Dockerfile.api"), dockerfile
 
 
 def test_compose_named_volume(rendered_compose_config: dict[str, Any]) -> None:
