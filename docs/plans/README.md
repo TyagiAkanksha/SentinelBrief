@@ -93,8 +93,8 @@ invalid.
 | Milestone | Spine | Scope | Depends on | Briefs | Status |
 |---|---|---|---|---|---|
 | M0 | [`m0-core-loop.md`](m0-core-loop.md) | Repo scaffold + gates + CI; Settings, Verdict/SessionAlert schemas, fixtures; LLM Protocol + client + fake; prompt v1 + summary + `TriagePipeline`; `worker.triage_one` CLI | — | written | **done** — tag `m0` (PR #1, 2026-09-07) |
-| M1 | [`m1-eval-v1.md`](m1-eval-v1.md) | Prompts package fix; golden v1 (20 synthetic, labeled, incl. injection kinds) + loader; scoring; `evals.run` CLI; prompt v2; two comparable rows | M0 | written (amended with M0 plan defects) | in progress |
-| M2 | [`m2-service-persistence.md`](m2-service-persistence.md) | Async DB + ORM rows + Alembic 0001 + DB fixtures; `create_app` + healthz + OpenAPI baseline; HMAC ingest + dedup; inline triage + one-transaction persistence; Dockerfile + compose | M1 | written | planned |
+| M1 | [`m1-eval-v1.md`](m1-eval-v1.md) | Prompts package fix; golden v1 (20 synthetic, labeled, incl. injection kinds) + loader; scoring; `evals.run` CLI; prompts v2/v3; two comparable rows | M0 | written | **done** — tag `m1` (PR #2, 2026-09-07) |
+| M2 | [`m2-service-persistence.md`](m2-service-persistence.md) | Async DB + ORM rows + Alembic 0001 + DB fixtures; `create_app` + healthz + OpenAPI baseline; HMAC ingest + dedup; inline triage + one-transaction persistence; Dockerfile + compose | M1 | written (amended with M1 plan defects) | in progress |
 | M3 | [`m3-read-path-dashboard.md`](m3-read-path-dashboard.md) | List/detail/stats endpoints; `web/` scaffold (Next 16, Tailwind, Vitest, codegen); `/alerts`, `/alerts/[id]`; seed script; web image | M2 | at M2 gate | planned |
 | M4 | [`m4-tool-calling.md`](m4-tool-calling.md) | Tool registry + truncation + recorded fixtures; all five §6.3 tools; loop cap; trace persistence; timeline on detail page | M3 | at M3 gate | planned |
 | M5 | [`m5-queue-routing.md`](m5-queue-routing.md) | Redis + ARQ worker container; <100 ms ingest; retry/poison; two-tier routing; idempotency; healthz Redis ping | M4 | at M4 gate | planned |

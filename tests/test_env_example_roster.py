@@ -21,13 +21,15 @@ _ENV_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / ".env.example"
 # after M1, or by non-Settings consumers (compose, the web container). Verified against the
 # tracked file's current uncommented `NAME=` lines as of m1 task-00. If a name here stops
 # appearing in .env.example, or a new uncommented name appears that isn't listed here, that is a
-# real drift the second test below must catch.
+# real drift the second test below must catch. A name graduates OUT of this set in the same
+# commit its field lands on `Settings` (m2 task-01 fix r1: `DATABASE_URL` graduated when
+# `core.config.Settings.database_url` shipped) — a stale entry here would silently stop guarding
+# against a typo in that name.
 _SCHEDULED = {
     "ESCALATE_SEVERITY_GTE",
     "ESCALATE_CONFIDENCE_LT",
     "TOOL_LOOP_MAX_ITER",
     "DAILY_TOKEN_BUDGET",
-    "DATABASE_URL",
     "REDIS_URL",
     "INGEST_HMAC_SECRET",
     "ADMIN_TOKEN",

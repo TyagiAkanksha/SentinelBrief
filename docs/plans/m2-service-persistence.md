@@ -31,8 +31,26 @@ write; `TriagePipeline.triage_alert(session, alert_id)` is the unit ARQ wraps at
 ## Global Constraints
 
 M0 and M1 Global Constraints apply verbatim (branch is `feat/m2-service-persistence`).
-Additionally:
+Additionally, from the M1 final review's plan defects:
 
+- **Every new directory is a package.** `core/models/`, `core/services/`, `api/routes/`,
+  `alembic/versions/` ship with `__init__.py` where Python imports them (Alembic's own
+  `versions/` needs none), and every Interfaces symbol names the file it lives in. The
+  module-vs-directory collision bit M0 (`worker/prompts`) and M1 (`evals/golden`); it must not
+  recur. (M1 defect 1.)
+- **A ruling that changes a path is followed by one docs commit** amending every brief that
+  cites it, before the next dispatch. (M1 defect 2.)
+- **Failure tables enumerate one row per flag validator** (types, bounds) as well as per error
+  path; the reviewer's report states "table rows == Interfaces lines". (M1 defect 3.)
+- **Failed triage records what is known.** When inline triage fails, `alerts.status='failed'`
+  is written even though usage is unknown in M2; M5's brief names the test that pins partial usage.
+  (M1 defect 7.)
+- **No third CLI copy.** M2 adds no CLI; the next one (M5 worker entrypoint) is briefed as an
+  extraction of `_Parser`/`UsageError`/`_fail` into a shared helper. (M1 defect 8.)
+- **Report hygiene.** When a report claims a discriminator came from the brief, it quotes the
+  brief line verbatim. (M1 defect 10.)
+- **CI's Postgres service** stays on `localhost:5432` inside the runner (its own network); the
+  local test DB is the container `sentinelbrief-test-db` on `127.0.0.1:5434`.
 - **The env-export line is part of every dispatch, verbatim:**
   `export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test`
   (a dedicated database, never the dev one). pytest evidence without it is invalid; `uv run

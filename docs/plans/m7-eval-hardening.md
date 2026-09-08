@@ -47,6 +47,11 @@ M0–M6 Global Constraints apply verbatim (branch `feat/m7-eval-hardening`). Add
   all §7.3 metrics; worse runs are published too.
 - Recorded tool fixtures are committed; a v2 case whose fixture is missing fails the eval loudly
   rather than going live.
+- **One category taxonomy** (M1 review carry-over): the labeling guide (`docs/labeling-guide.md`,
+  new in task-01), the `/cowrie-fixture` skill, and the active prompt's category definitions must
+  agree — including a `brute_force`-vs-`reconnaissance` tie-break for targeted-username sprays —
+  before the author labels a single v2 row. The judge's input is the summary and tool results,
+  never raw `reasoning` from another run (t4 I1).
 
 ## Tasks (briefs written at the M6 gate)
 

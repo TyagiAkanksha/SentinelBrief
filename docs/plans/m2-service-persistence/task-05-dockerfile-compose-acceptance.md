@@ -83,6 +83,8 @@ compose and `m2` is tagged.
   5. `curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:8000/api/v1/alerts -H
      'content-type: application/json' -d @fixtures/alerts/alert4.json` → `401`.
   6. `docker compose -f infra/docker-compose.yml config > /dev/null && echo ok` → `ok`.
+  7. `docker compose -f infra/docker-compose.yml run --rm api python -c "from worker.prompts import load_prompt; load_prompt('triage-v1'); print('prompts present')"`
+     → `prompts present` (M1 review carry-over: the prompt markdown must be inside the image; `.dockerignore` carries an explicit `!worker/prompts/*.md` guard).
 - [ ] **Step 7: Whole-branch review → fix wave → PR → merge → tag `m2`; then write the M3 briefs
   with `superpowers:writing-plans`.**
 

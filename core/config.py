@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     model_prices_json: Annotated[dict[str, ModelPrice], NoDecode] = Field(default_factory=dict)
     triage_prompt_version: str = "triage-v1"
     environment: str = "development"
+    database_url: SecretStr = SecretStr("")
+    ingest_hmac_secret: SecretStr = SecretStr("")
+    cors_origins: str = "http://localhost:3000"
 
     @field_validator("model_prices_json", mode="before")
     @classmethod
@@ -59,3 +62,8 @@ class Settings(BaseSettings):
     def is_dev(self) -> bool:
         """True unless `environment` is exactly "production" (case/whitespace-insensitive)."""
         return self.environment.strip().lower() != "production"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """`cors_origins` split on commas, blanks stripped (CONVENTIONS.md §5)."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

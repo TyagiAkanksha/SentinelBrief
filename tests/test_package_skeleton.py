@@ -4,6 +4,10 @@ Without this, the CI coverage gate (`--cov=api --cov=worker --cov=core --cov=eva
 --cov-fail-under=90`, CONVENTIONS.md §9) would report 0% — nothing else in this task's
 suite imports these placeholder modules in-process, since the other gates-as-tests only
 shell out to subprocesses.
+
+Since m2 task-02, `api.main` fails fast on empty required settings (CONVENTIONS.md §5) —
+importing it has side effects, so `tests/test_api_main.py` owns that module exclusively (m2
+task-04) and it is deliberately excluded from the module list below.
 """
 
 from __future__ import annotations
@@ -15,7 +19,6 @@ def test_all_scaffold_packages_import_cleanly() -> None:
     """PRD §4 / CONVENTIONS.md §2: every module named in the import-linter contracts exists."""
     modules = [
         "api",
-        "api.main",
         "core",
         "core.llm",
         "core.models",

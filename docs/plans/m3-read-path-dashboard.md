@@ -41,6 +41,13 @@ M0–M2 Global Constraints apply verbatim (branch `feat/m3-read-path-dashboard`)
 - Pagination envelope: `items, total, page, page_size` via one generic `PaginatedResponse[T]`;
   ordering has a deterministic tiebreaker (id) so pages never drop or duplicate rows.
 - Severity and category are never color-only in the UI.
+- **Read routes never share the signed ingest router.** `api/routes/alerts.py::router` is
+  `APIRouter(route_class=SignedRoute)` and holds exactly one route (`POST /alerts`); a structural
+  test pins that. List/detail/stats routes live on a separate unsigned router (e.g.
+  `api/routes/alerts_read.py`), included under the same `/api/v1` prefix. (M2 task-03 review I3.)
+- **`reasoning` is attacker-influenced text** (prompts v2/v3 ask the model to quote evidence): the
+  dashboard renders it as plain text, never as HTML/markdown, and a test pins that a `<script>`
+  fragment in `reasoning` reaches the DOM escaped. (M1 review carry-over, t4 I1.)
 
 ## Tasks (briefs written at the M2 gate with `superpowers:writing-plans`)
 

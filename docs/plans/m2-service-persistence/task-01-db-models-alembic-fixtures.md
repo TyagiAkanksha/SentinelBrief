@@ -26,7 +26,9 @@ skips by fixture name when `TEST_DATABASE_URL` is unset; CI runs a Postgres serv
 
 ## Files
 
-- Create: `core/db.py`, `core/models/base.py`, `core/models/alerts.py`,
+- Also: dev dep `pytest-timeout` with `timeout = 120` in `[tool.pytest.ini_options]` (a hung DB test must fail, never wedge CI — M1 review carry-over).
+
+- Create (packages — `core/models/` keeps its `__init__.py`; every symbol below names its file): `core/db.py`, `core/models/base.py`, `core/models/alerts.py`,
   `core/models/verdicts.py`, `core/models/tool_calls.py`, `core/models/eval_runs.py`,
   `alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`,
   `alembic/versions/0001_initial_schema.py`
@@ -85,7 +87,7 @@ skips by fixture name when `TEST_DATABASE_URL` is unset; CI runs a Postgres serv
 
   CI: service `postgres:16` (`POSTGRES_PASSWORD: postgres`, `POSTGRES_DB: sentinelbrief_test`,
   `pg_isready` healthcheck); env `TEST_DATABASE_URL:
-  postgresql://postgres:postgres@localhost:5432/sentinelbrief_test`.
+  postgresql://postgres:postgres@localhost:5432/sentinelbrief_test` (inside the runner; locally the test DB is `127.0.0.1:5434`).
 
 ## Steps (TDD)
 

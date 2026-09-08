@@ -24,6 +24,8 @@ paths: api/**
 - Public GET paths never compute: no LLM, no tool call, no retriage. `retriage` is admin-token
   gated and globally capped (M8).
 - Validation errors are enveloped as 422 with location and message only — never echo the input.
-- Services are called session-first; the `get_session` dependency owns commit/rollback. The one
+- Services are called session-first; the `get_session` dependency owns commit/rollback. Routes
+  take `session: SessionDep` (scope="function"), never bare `Depends(get_session)`, so the commit
+  completes before the response is sent. The one
   M2-only exception (committing the insert before awaiting inline triage) is documented in the
   route and disappears at M5.

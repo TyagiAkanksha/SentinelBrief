@@ -28,14 +28,15 @@ and calls the injected `TriageFn` only for created alerts (a fake in this task's
 
 - Create: `core/signing.py`, `core/services/alerts.py`, `core/schemas/ingest.py`,
   `api/routes/alerts.py`, `scripts/post_alert.py`
-- Create: `tests/test_signing.py`, `tests/test_alert_service.py`, `tests/test_ingest.py`
+- Create: `tests/test_signing.py`, `tests/test_alert_service.py`, `tests/test_ingest.py`,
+  `tests/test_post_alert.py`
 - Modify: `api/deps.py` (+ `require_signature`), `api/factory.py` (include the alerts router
   under `/api/v1`), `api/openapi.json` (regenerated)
 
 ## Interfaces
 
 - **Consumes:** `AlertRow`, `AlertStatus`, `SessionAlert`, `SignatureError`, `NotFoundError`,
-  `TriageFn`, `get_session`, `get_settings`, `get_triage`, `Settings.ingest_hmac_secret`.
+  `TriageFn`, `SessionDep` (the `Annotated[AsyncSession, Depends(get_session, scope="function")]` alias — never bare `Depends(get_session)`), `get_settings`, `get_triage`, `Settings.ingest_hmac_secret`.
 - **Produces (later tasks rely on — produce exactly):**
 
   ```python
@@ -66,7 +67,9 @@ and calls the injected `TriageFn` only for created alerts (a fake in this task's
 
   # api/routes/alerts.py — router = APIRouter(); POST "/alerts", operation_id="ingest_alert", response_model=IngestResponse
   async def ingest_alert(payload: SessionAlert, _sig: None = Depends(require_signature),
-                         session: AsyncSession = Depends(get_session), triage: TriageFn = Depends(get_triage)) -> JSONResponse: ...
+                         session: SessionDep, triage: TriageFn = Depends(get_triage)) -> JSONResponse: ...
+      # SessionDep (task-02 review ruling I5): scope="function" makes commit/rollback run before the response is built,
+      # so a failing commit is the 500 envelope, never a 2xx with the row rolled back.
       # require_signature is declared BEFORE payload parsing takes effect: FastAPI resolves dependencies in declaration order,
       # and require_signature reads the raw body itself, so a bad signature is 401 even when the body is invalid JSON.
       # result = await insert_alert(session, payload); if result.created: await session.commit(); status = await triage(session, result.alert_id)
@@ -75,6 +78,10 @@ and calls the injected `TriageFn` only for created alerts (a fake in this task's
   # scripts/post_alert.py — `uv run python scripts/post_alert.py <fixture.json> [--url http://127.0.0.1:8000]`:
   #   reads INGEST_HMAC_SECRET from the environment only (the README shows the `export` line; no dotenv dependency),
   #   signs with sign_body, POSTs with httpx, prints "<status> <body>"; exit 0 on 2xx, 1 otherwise
+  #   exposes main(argv: Sequence[str] | None = None, *, transport: httpx.BaseTransport | None = None) -> int
+  #   (transport injectable for tests; default = real network) — controller ruling, so the script has a test row
+  #   (tests/test_post_alert.py) like every other Interfaces line. No argparse helper copy (M1 defect 8): plain
+  #   argparse + sys.exit codes; the shared CLI helper extraction is M5's.
   ```
 
   Note on ordering: FastAPI evaluates `Depends` parameters before validating the body model
