@@ -152,4 +152,6 @@ async def test_config_error_maps_to_500_and_llm_errors_to_502(
     body = response.json()
     assert response.status_code == status_code
     assert body["error"]["code"] == error.code
-    assert body["error"]["message"] == str(error)
+    # M2 final review (M3): every >= 500 mapping hides its real message behind the generic
+    # "internal error" text on the wire; the real text goes to the log only (api/errors.py).
+    assert body["error"]["message"] == "internal error"
