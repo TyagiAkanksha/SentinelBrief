@@ -112,6 +112,9 @@ docker compose -f infra/docker-compose.yml down     # add -v to drop the databas
 Python (repo root):
 
 ```sh
+# One-time: a dedicated Postgres for the test DB (the DB suite skips without this URL and CI
+# fails on any skip).
+docker run -d --name sentinelbrief-test-db -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel -e POSTGRES_DB=sentinelbrief_test -p 127.0.0.1:5434:5432 postgres:16
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run ruff check --no-cache .
 uv run ruff format --check .

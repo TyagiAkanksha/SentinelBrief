@@ -59,6 +59,16 @@ jobs:
           # with skips proves nothing, so any skip fails CI (M2 task-01 review M7).
           if grep -qE '(^SKIPPED|[0-9]+ skipped)' pytest.log; then echo '::error::tests were skipped'; exit 1; fi
 
+      # PRD §12 M2: the image must build and the compose file must validate; docker is present on
+      # ubuntu-latest so tests/test_compose_config.py never skips here (the skip is for
+      # docker-less dev machines).
+      - name: docker image builds; compose config validates
+        shell: bash
+        run: |
+          cp .env.example .env
+          docker compose -f infra/docker-compose.yml config > /dev/null
+          docker compose -f infra/docker-compose.yml build api
+
       - name: pip-audit
         continue-on-error: true
         shell: bash
