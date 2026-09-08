@@ -24,7 +24,8 @@ COPY evals ./evals
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 
-# Install the project itself (non-editable) so the runtime stage needs the venv alone.
+# Install the project itself. `uv sync` here installs the project editable against /app, so the
+# runtime stage must copy the venv AND the sources it points at (see the COPY lines below).
 RUN uv sync --frozen --no-dev
 
 # ---------- Stage 2: runtime ----------

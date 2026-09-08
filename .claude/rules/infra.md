@@ -7,6 +7,8 @@ paths: infra/**, honeypot/**, docs/deployment.md
 - **No secret values anywhere in the repo** — not in compose files, Caddyfiles, scripts, docs,
   or examples. Secrets are named (env var, SSM parameter path) and described, never valued.
   `.env` and `*.mmdb` are gitignored and dockerignored; check `git status` before every commit.
+  The one exception is dev-only, non-production credentials that already appear in
+  `.env.example` (the compose `postgres` service's `sentinel`/`sentinel`).
 - Dev compose (`infra/docker-compose.yml`) publishes ports on `127.0.0.1` only. Production compose
   (`infra/deploy/prod/docker-compose.yml`) never host-publishes `api`, `worker`, `postgres` or
   `redis` — only Caddy's 80/443 are exposed.
@@ -31,4 +33,7 @@ paths: infra/**, honeypot/**, docs/deployment.md
   criticality, never hostnames' real credentials or internal addresses beyond what the honeypot
   already exposes.
 - Never commit a raw Cowrie log or `honeypot/data/`.
-- `docker compose ... config` interpolates `.env` into its output. Always redirect it (`> /dev/null`, or `--format json` piped only into a parser that never echoes); never paste its output into a report, ledger, or transcript. (M2 task-05: an agent's first `config` call printed real secrets into its transcript; the local dev secrets were rotated.)
+- `docker compose ... config` interpolates `.env` into its output. Always redirect it
+  (`> /dev/null`, or `--format json` piped only into a parser that never echoes); never paste
+  its output into a report, ledger, or transcript. (M2 task-05: an agent's first `config` call
+  printed real secrets into its transcript; the local dev secrets were rotated.)

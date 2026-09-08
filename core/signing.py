@@ -1,6 +1,6 @@
 """HMAC-SHA256 request signing (PRD §6.1) — stdlib only, shared by the API, the shipper, and
 `scripts/`. `verify_signature` is fail-closed: it never raises, and it never treats an empty
-secret, a missing header, or a malformed header as "signing disabled".
+secret, a missing header, a malformed header, or a non-ASCII header as "signing disabled".
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ def verify_signature(secret: str, body: bytes, header: str | None) -> bool:
     """Verify `header` is a valid HMAC-SHA256 signature of `body` under `secret`.
 
     Fails closed — returns `False`, never raises — for an empty secret, a missing header, a
-    malformed header (no `"sha256="` prefix, non-hex digest, wrong length), or a mismatched
-    digest.
+    malformed header (no `"sha256="` prefix, non-hex digest, wrong length, non-ASCII characters),
+    or a mismatched digest.
 
     Args:
         secret: The shared HMAC secret.
@@ -45,5 +45,7 @@ def verify_signature(secret: str, body: bytes, header: str | None) -> bool:
     if not secret or header is None or not header.startswith(_PREFIX):
         return False
     candidate = header[len(_PREFIX) :]
+    if not candidate.isascii():
+        return False
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(candidate, expected)

@@ -5,7 +5,8 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** pre-M0. The build plan lives in [`docs/plans/`](docs/plans/README.md); the spec is
+**Status:** M2 complete (service + persistence); M3 (read path + dashboard) next. The build plan
+lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md). The dev stack (`docker compose` + Postgres) is runnable from M2; sections
 below marked *(from M3)* still describe commands that exist once that milestone lands.
 
@@ -91,7 +92,8 @@ still fails validation after its one retry.
 docker compose -f infra/docker-compose.yml up -d --build
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 curl -s localhost:8000/healthz                       # {"status":"ok","db":"ok"}
-export INGEST_HMAC_SECRET=<value from .env>          # read from the environment only, no dotenv
+# keeps the secret out of shell history and out of this file
+export INGEST_HMAC_SECRET=$(grep '^INGEST_HMAC_SECRET=' .env | cut -d= -f2-)
 uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 202 {..., "status":"triaged", "created":true}
 uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # duplicate → 200 {..., "created":false}
 docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sentinelbrief \

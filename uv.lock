@@ -1187,7 +1187,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic" },
-    { name = "fastapi", specifier = ">=0.115" },
+    { name = "fastapi", specifier = ">=0.121" },
     { name = "httpx" },
     { name = "openai", specifier = ">=2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3" },
