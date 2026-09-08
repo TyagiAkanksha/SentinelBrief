@@ -289,7 +289,7 @@ and never edits a pinned file — it stops and asks the controller if a pinned t
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
 uv run pytest -q tests/test_read_schemas.py tests/test_alerts_read_service.py tests/test_helpers.py   # 36 passed
 uv run pytest -q tests/test_ingest.py tests/test_inline_triage.py tests/test_store.py tests/test_alert_service.py   # 28 passed
-grep -rn "_signed_headers\|_count_alerts\|_count_verdicts\|def _load_alert\|def _insert_alert" tests/   # no output — no private helper copy remains
+grep -rnE "^(async )?def _(signed_headers|count_alerts|count_verdicts|load_alert|insert_alert)\b" tests/   # no output — no private helper definition remains
 uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q   # all clean; "Contracts: 5 kept, 0 broken"
 ```
 
