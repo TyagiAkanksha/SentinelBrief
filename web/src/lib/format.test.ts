@@ -66,6 +66,7 @@ describe("formatDatetimeLocalUtc", () => {
     expect(formatDatetimeLocalUtc("2026-09-01T05:30:00+05:30")).toBe("2026-09-01T00:00");
     expect(formatDatetimeLocalUtc("2026-09-01T00:00:00-05:00")).toBe("2026-09-01T05:00");
     expect(formatDatetimeLocalUtc("2026-09-01T00:00")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01 00:00:00")).toBe("2026-09-01T00:00");
     expect(formatDatetimeLocalUtc("2026-09-01")).toBe("2026-09-01T00:00");
     expect(formatDatetimeLocalUtc("nope")).toBe("");
     // Basic-format offset (no colon) — asserted last so a single run proves every case above
