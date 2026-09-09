@@ -50,6 +50,18 @@ class Settings(BaseSettings):
     """Character budget every tool result is truncated to before it is fed back to the model or
     persisted (PRD §6.3, m4 task-01). One backstop for every tool, not a per-tool setting — see
     the comment in `.env.example`."""
+    assets_yaml_path: str = "honeypot/assets.yaml"
+    """Path to the static fleet description `get_asset_info` reads (PRD §6.3, m4 task-02).
+    Relative paths resolve from the process cwd: the repo root on the host, `/app` (the image's
+    `WORKDIR`) in the container — the same string works in both."""
+    tool_session_commands_max: Annotated[int, Field(ge=1)] = 40
+    """Max commands `get_session_commands` returns from a session; the rest are only reflected in
+    `command_count` (PRD §6.3's own example, m4 task-02)."""
+    tool_session_downloads_max: Annotated[int, Field(ge=1)] = 10
+    """Max downloads `get_session_commands` returns from a session; the rest are only reflected in
+    `download_count` (m4 task-02)."""
+    tool_command_max_chars: Annotated[int, Field(ge=1)] = 200
+    """Max characters each command `get_session_commands` returns is clipped to (m4 task-02)."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

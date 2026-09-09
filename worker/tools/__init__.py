@@ -5,6 +5,7 @@ for the "tools never raise" contract and the fixture-replay seam this package bu
 
 from __future__ import annotations
 
+from worker.tools.asset_info import AssetInfoTool, AssetRecord, AssetsFile
 from worker.tools.base import Tool, ToolContext, spec_for, unavailable
 from worker.tools.recorder import (
     FIXTURE_KEY_CHARS,
@@ -16,11 +17,16 @@ from worker.tools.recorder import (
     write_fixture,
 )
 from worker.tools.registry import ToolExecution, ToolRegistry, truncate_result
+from worker.tools.session_commands import SessionCommandsTool
 
 __all__ = [
     "FIXTURE_KEY_CHARS",
+    "AssetInfoTool",
+    "AssetRecord",
+    "AssetsFile",
     "LiveToolRecorder",
     "ReplayToolRecorder",
+    "SessionCommandsTool",
     "Tool",
     "ToolContext",
     "ToolExecution",

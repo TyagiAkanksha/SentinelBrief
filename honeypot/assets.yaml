@@ -1,0 +1,87 @@
+# honeypot/assets.yaml — the static fleet description `get_asset_info` (PRD §6.3) reads
+# once at construction: one entry per honeypot sensor hostname naming its role, network
+# exposure, and criticality. Holds roles and criticality only — never credentials or
+# internal addresses beyond what the honeypot already exposes (.claude/rules/infra.md).
+# M6 re-checks this file against the real deployed fleet before the public dashboard ships.
+
+assets:
+  hp-use-01:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-use-02:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-use-03:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-use-04:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-usw-01:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-usw-02:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-usw-03:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-usw-04:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-eu-01:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-eu-02:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-eu-03:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-eu-04:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-sgp-01:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-sgp-02:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-sgp-03:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-sgp-04:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-apac-01:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-apac-02:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-apac-03:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
+  hp-apac-04:
+    role: ssh-honeypot
+    exposure: internet
+    criticality: low
