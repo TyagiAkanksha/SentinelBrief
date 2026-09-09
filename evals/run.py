@@ -217,13 +217,16 @@ def _case_payload(result: CaseResult) -> dict[str, Any]:
     return payload
 
 
-def _run(
+async def _run_all(
     args: argparse.Namespace, settings: Settings, *, llm: LLMClient | None, http: httpx.AsyncClient
 ) -> int:
     """The rest of `main`, once argv is parsed and `Settings()` has validated.
 
-    Split out so `main` can guarantee `http.aclose()` on every exit path below this point via a
-    single `try/finally` (N-M5) — every early-return in this function is one such exit path.
+    Runs the whole `--prompt` loop inside ONE coroutine, itself run through ONE `asyncio.run`
+    call in `main` (M7): every `TriagePipeline` run and `http.aclose()` share a single event
+    loop, rather than `http` crossing several separate `asyncio.run`-created loops. The `finally`
+    below guarantees `http.aclose()` on every exit path — every early-return in this function is
+    one such exit path.
 
     Args:
         args: The parsed CLI arguments.
@@ -236,84 +239,88 @@ def _run(
     Returns:
         `0` on success, `1` on any failure path (see `main`'s own docstring).
     """
-    model: str = args.model if args.model is not None else settings.cheap_model
-
-    # Price before spend for the flag itself: a fake never prices, so this only applies to the
-    # real client, and it must fail here rather than mid-run inside `TriagePipeline`/
-    # `complete_structured` (`worker/llm_client.py`), which price-checks per call, deep inside
-    # `run_golden`'s `asyncio.gather` — too late to keep every case from starting.
-    if llm is None and model not in settings.model_prices_json:
-        return _fail("config_error", f"model {model!r} has no entry in MODEL_PRICES_JSON")
-
     try:
-        cases = load_golden(args.golden)
-    except (ValueError, OSError) as e:
-        return _fail("invalid_golden", str(e))
+        model: str = args.model if args.model is not None else settings.cheap_model
 
-    try:
-        client: LLMClient = (
-            llm if llm is not None else OpenAICompatibleLLMClient.from_settings(settings)
-        )
-    except ConfigError as e:
-        return _fail(e.code, str(e))
+        # Price before spend for the flag itself: a fake never prices, so this only applies to
+        # the real client, and it must fail here rather than mid-run inside `TriagePipeline`/
+        # `complete_structured` (`worker/llm_client.py`), which price-checks per call, deep
+        # inside `run_golden`'s `asyncio.gather` — too late to keep every case from starting.
+        if llm is None and model not in settings.model_prices_json:
+            return _fail("config_error", f"model {model!r} has no entry in MODEL_PRICES_JSON")
 
-    # One registry per run (N-M5), over the shared `http` client — never one per prompt version.
-    registry = build_registry(settings, recorder=ReplayToolRecorder(args.tool_fixtures), http=http)
-
-    git_sha = _git_sha()
-    rows: list[ResultRow] = []
-    any_case_succeeded = False
-    for prompt_version in args.prompt:
         try:
-            pipeline = TriagePipeline(
-                llm=client,
-                model=model,
-                prompt_version=prompt_version,
-                tools=registry,
-                tool_loop_max_iter=settings.tool_loop_max_iter,
+            cases = load_golden(args.golden)
+        except (ValueError, OSError) as e:
+            return _fail("invalid_golden", str(e))
+
+        try:
+            client: LLMClient = (
+                llm if llm is not None else OpenAICompatibleLLMClient.from_settings(settings)
             )
         except ConfigError as e:
             return _fail(e.code, str(e))
 
-        # Captured before the run, not after: this is the run's *start* time, not its finish
-        # time — a downstream consumer correlating this JSON against logs or computing elapsed
-        # wall-clock time needs the former.
-        started_at = datetime.now(UTC)
-        try:
-            results = asyncio.run(
-                run_golden(cases, pipeline=pipeline, concurrency=args.concurrency)
-            )
-        except (ConfigError, LLMCallError) as e:
-            # Backstop: `_run_one` already captures a per-case `VerdictValidationError`/
-            # `LLMCallError` as `CaseResult.error`, so a `ConfigError`/`LLMCallError` should
-            # never actually escape `run_golden` today. Mirrors `worker/triage_one.py`'s
-            # `asyncio.run(pipeline.run(...))` guard at no cost.
-            return _fail(e.code, str(e))
-        metrics = score(results)
-        rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
-        if any(r.error is None for r in results):
-            any_case_succeeded = True
+        # One registry per run (N-M5), over the shared `http` client — never one per prompt
+        # version.
+        registry = build_registry(
+            settings, recorder=ReplayToolRecorder(args.tool_fixtures), http=http
+        )
 
-        payload = {
-            "prompt_version": prompt_version,
-            "model": model,
-            "git_sha": git_sha,
-            "started_at": started_at.isoformat(),
-            "metrics": _metrics_payload(metrics),
-            "cases": [_case_payload(r) for r in results],
-        }
-        filename = f"{started_at.strftime('%Y%m%dT%H%M%SZ')}-{prompt_version}.json"
-        try:
-            args.output_dir.mkdir(parents=True, exist_ok=True)
-            (args.output_dir / filename).write_text(json.dumps(payload, indent=2))
-        except OSError as e:
-            return _fail("output_error", str(e))
+        git_sha = _git_sha()
+        rows: list[ResultRow] = []
+        any_case_succeeded = False
+        for prompt_version in args.prompt:
+            try:
+                pipeline = TriagePipeline(
+                    llm=client,
+                    model=model,
+                    prompt_version=prompt_version,
+                    tools=registry,
+                    tool_loop_max_iter=settings.tool_loop_max_iter,
+                )
+            except ConfigError as e:
+                return _fail(e.code, str(e))
 
-    if not any_case_succeeded:
-        return _fail("all_cases_failed", "every case failed in every prompt run")
+            # Captured before the run, not after: this is the run's *start* time, not its finish
+            # time — a downstream consumer correlating this JSON against logs or computing
+            # elapsed wall-clock time needs the former.
+            started_at = datetime.now(UTC)
+            try:
+                results = await run_golden(cases, pipeline=pipeline, concurrency=args.concurrency)
+            except (ConfigError, LLMCallError) as e:
+                # Backstop: `_run_one` already captures a per-case `VerdictValidationError`/
+                # `LLMCallError` as `CaseResult.error`, so a `ConfigError`/`LLMCallError` should
+                # never actually escape `run_golden` today. Mirrors `worker/triage_one.py`'s
+                # `asyncio.run(pipeline.run(...))` guard at no cost.
+                return _fail(e.code, str(e))
+            metrics = score(results)
+            rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
+            if any(r.error is None for r in results):
+                any_case_succeeded = True
 
-    print(format_table(rows))
-    return 0
+            payload = {
+                "prompt_version": prompt_version,
+                "model": model,
+                "git_sha": git_sha,
+                "started_at": started_at.isoformat(),
+                "metrics": _metrics_payload(metrics),
+                "cases": [_case_payload(r) for r in results],
+            }
+            filename = f"{started_at.strftime('%Y%m%dT%H%M%SZ')}-{prompt_version}.json"
+            try:
+                args.output_dir.mkdir(parents=True, exist_ok=True)
+                (args.output_dir / filename).write_text(json.dumps(payload, indent=2))
+            except OSError as e:
+                return _fail("output_error", str(e))
+
+        if not any_case_succeeded:
+            return _fail("all_cases_failed", "every case failed in every prompt run")
+
+        print(format_table(rows))
+        return 0
+    finally:
+        await http.aclose()
 
 
 def main(
@@ -362,10 +369,7 @@ def main(
         return _fail("config_error", str(e))
 
     http_client = http or httpx.AsyncClient(timeout=settings.abuseipdb_timeout_s)
-    try:
-        return _run(args, settings, llm=llm, http=http_client)
-    finally:
-        asyncio.run(http_client.aclose())
+    return asyncio.run(_run_all(args, settings, llm=llm, http=http_client))
 
 
 if __name__ == "__main__":

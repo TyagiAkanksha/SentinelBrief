@@ -501,7 +501,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Duplicate session: existing alert returned, triage not re-run. */
+            /** @description Duplicate session: existing alert returned. A still-`pending` duplicate is re-enqueued (idempotent at the queue by job id); a triaged/failed one is not. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -539,6 +539,15 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Triage queue unavailable; the alert row is committed and stays `pending`. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

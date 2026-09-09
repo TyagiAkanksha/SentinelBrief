@@ -41,7 +41,7 @@ core/
 api/
   factory.py       # create_app() — DB-less constructible
   main.py          # wiring ONLY: settings, engine, session factory, triage seam; nothing imports main
-  deps.py          # get_settings / get_session / get_triage / require_signature
+  deps.py          # get_settings / get_session / get_enqueue / require_signature
   errors.py        # register_error_handlers(app) — the one place the §8 envelope is produced
   routes/          # FastAPI routers (health, alerts, stats, stream)
 worker/
@@ -80,9 +80,9 @@ Hard rules, declared as import-linter contracts in `pyproject.toml` and enforced
 2. `core` never imports `api`, `worker`, or `evals`.
 3. `api` never imports `worker` or `core.llm` (PRD §10.1). `allow_indirect_imports = true` — the
    contract is about what `api` reaches for, not about transitive chains through `core`.
-   **Exception (M2 only):** `api.main` imports `worker.triage` and `worker.llm_client` to wire
-   inline triage, declared via `ignore_imports` with the comment "M2 inline triage; remove at M5".
-   The route layer never sees more than a `TriageFn` callable.
+   **No exceptions.** The M2 `ignore_imports` entries were deleted at m5 task-01; re-adding them
+   fails `lint-imports` with "No matches for ignored import". The route layer never sees more than
+   an `EnqueueFn` callable (`api/deps.py`).
 4. `worker` and `evals` never import `api`.
 5. Nothing imports `api.main` or `worker.main` — they are entrypoints, not modules.
 
@@ -132,13 +132,13 @@ no contract forbids the import.
   truncating its result), logs the tool name and argument keys only, and returns
   `{"unavailable": true, "reason": "<ExceptionClass>: tool raised"}` or
   `{"unavailable": true, "reason": "<ExceptionClass>: result not serializable"}` respectively, so
-  an inline triage can never 500 the ingest request.
+  a tool failure can never fail the triage job.
 
 ## 5. App construction
 
-- `api/factory.py::create_app(*, session_factory=None, settings=None, triage=None) -> FastAPI` —
+- `api/factory.py::create_app(*, session_factory=None, settings=None, enqueue=None, redis=None, cache=None) -> FastAPI` —
   no module-level globals; everything request-scoped lives on `app.state` and is read back through
-  `api/deps.py` (`get_session`, `get_settings`, `get_triage`, `require_signature`). Routes never write
+  `api/deps.py` (`get_session`, `get_settings`, `get_enqueue`, `require_signature`). Routes never write
   `Depends(get_session)` directly: they take `session: SessionDep`, the
   `Annotated[AsyncSession, Depends(get_session, scope="function")]` alias, so the dependency's
   commit/rollback runs before the response is sent and a failing commit surfaces as a 500.

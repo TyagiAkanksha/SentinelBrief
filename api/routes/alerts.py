@@ -64,11 +64,18 @@ router = APIRouter(route_class=SignedRoute)
     responses={
         200: {
             "model": IngestResponse,
-            "description": "Duplicate session: existing alert returned, triage not re-run.",
+            "description": "Duplicate session: existing alert returned. A still-`pending` "
+            "duplicate is re-enqueued (idempotent at the queue by job id); a triaged/failed one "
+            "is not.",
         },
         401: {"model": ErrorEnvelope, "description": "Missing or invalid X-Signature."},
         422: {"model": ErrorEnvelope, "description": "Invalid session payload."},
         500: {"model": ErrorEnvelope},
+        503: {
+            "model": ErrorEnvelope,
+            "description": "Triage queue unavailable; the alert row is committed and stays "
+            "`pending`.",
+        },
     },
 )
 async def ingest_alert(

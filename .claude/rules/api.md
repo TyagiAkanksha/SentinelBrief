@@ -5,8 +5,8 @@ paths: api/**
 # Rules for `api/` (FastAPI request path)
 
 - **No LLM here.** `api/` never imports `worker` or `core.llm` (import-linter contract 3; PRD
-  §10.1). The only exception is `api/main.py` wiring the inline-triage seam during M2, declared
-  via `ignore_imports` and removed at M5. Route modules only ever see a `TriageFn` callable.
+  §10.1). There are no exceptions as of m5 task-01. Route modules only ever see an `EnqueueFn`
+  callable.
 - **Routes contain no `try/except`.** Raise the typed errors from `core/errors.py`; the envelope
   is produced once by `api/errors.py::register_error_handlers`. The single carve-out is
   `GET /healthz` answering `503 degraded` on DB/Redis failure.
@@ -26,6 +26,6 @@ paths: api/**
 - Validation errors are enveloped as 422 with location and message only — never echo the input.
 - Services are called session-first; the `get_session` dependency owns commit/rollback. Routes
   take `session: SessionDep` (scope="function"), never bare `Depends(get_session)`, so the commit
-  completes before the response is sent. The one
-  M2-only exception (committing the insert before awaiting inline triage) is documented in the
-  route and disappears at M5.
+  completes before the response is sent. The route commits the insert **before** awaiting
+  `enqueue` (spine M5-a: the row must be durable before a worker can pick the job up); the comment
+  in `api/routes/alerts.py` says so.
