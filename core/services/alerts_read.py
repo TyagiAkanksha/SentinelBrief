@@ -90,26 +90,24 @@ async def list_alerts(
     latest = latest_verdicts_subquery()
     geo = geo_country_subquery()
 
-    base = (
-        select(
-            AlertRow.id,
-            AlertRow.source,
-            func.coalesce(AlertRow.raw["src_ip"].astext, "").label("src_ip"),
-            func.coalesce(AlertRow.raw["sensor"].astext, "").label("sensor"),
-            AlertRow.event_time,
-            AlertRow.received_at,
-            AlertRow.status,
-            latest.c.severity,
-            latest.c.category,
-            latest.c.confidence,
-            latest.c.escalate,
-            latest.c.reasoning,
-            latest.c.created_at,
-            geo.c.country,
-        )
-        .outerjoin(latest, latest.c.alert_id == AlertRow.id)
-        .outerjoin(geo, geo.c.verdict_id == latest.c.id)
-    )
+    # `geo` is joined only into `items_stmt`, never into `base`/the COUNT statement: it cannot
+    # change the row count (1:0..1 on `latest.id`), so joining it there would only add an unused
+    # `tool_calls` scan to the dashboard's hot public path (m4 task-07 fix-1 M2).
+    base = select(
+        AlertRow.id,
+        AlertRow.source,
+        func.coalesce(AlertRow.raw["src_ip"].astext, "").label("src_ip"),
+        func.coalesce(AlertRow.raw["sensor"].astext, "").label("sensor"),
+        AlertRow.event_time,
+        AlertRow.received_at,
+        AlertRow.status,
+        latest.c.severity,
+        latest.c.category,
+        latest.c.confidence,
+        latest.c.escalate,
+        latest.c.reasoning,
+        latest.c.created_at,
+    ).outerjoin(latest, latest.c.alert_id == AlertRow.id)
 
     if filters.severity_gte is not None:
         base = base.where(latest.c.severity >= filters.severity_gte)
@@ -124,7 +122,9 @@ async def list_alerts(
     assert total is not None
 
     items_stmt = (
-        base.order_by(
+        base.add_columns(geo.c.country)
+        .outerjoin(geo, geo.c.verdict_id == latest.c.id)
+        .order_by(
             latest.c.severity.desc().nulls_last(),
             AlertRow.received_at.desc(),
             AlertRow.id.desc(),

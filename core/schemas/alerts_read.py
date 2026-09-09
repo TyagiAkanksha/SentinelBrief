@@ -21,7 +21,7 @@ from core.schemas.verdict import VerdictCategory
 
 REASONING_EXCERPT_CHARS = 160
 
-COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
+COUNTRY_CODE_RE = re.compile(r"[A-Z]{2}")
 
 
 def reasoning_excerpt(reasoning: str) -> str:
@@ -30,8 +30,12 @@ def reasoning_excerpt(reasoning: str) -> str:
 
 
 def normalize_country(value: object) -> str | None:
-    """`value` if it is a two-uppercase-letter ISO 3166-1 alpha-2 code, else `None`."""
-    return value if isinstance(value, str) and COUNTRY_CODE_RE.match(value) else None
+    """`value` if it is a two-uppercase-letter ISO 3166-1 alpha-2 code, else `None`.
+
+    `fullmatch` (not `match` + `$`): Python's `$` matches at the end of the string or immediately
+    before a trailing newline, so `"DE\\n"` would otherwise wrongly survive (m4 task-07 fix-1 M1).
+    """
+    return value if isinstance(value, str) and COUNTRY_CODE_RE.fullmatch(value) else None
 
 
 class VerdictOut(BaseModel):
