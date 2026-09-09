@@ -352,6 +352,16 @@ async def test_malformed_bodies_are_malformed_response() -> None:
                 }
             },
         ),
+        # Controller ruling (m4 task-04 fix-2, finding N1): the M2 fix moved `data.get(...)`
+        # ahead of the first subscript (`data["abuseConfidenceScore"]`), so a 200 body whose
+        # `data` is not a JSON object now raises `AttributeError` out of `run` instead of
+        # returning `malformed_response` — a regression on the "tools never raise" contract
+        # (`worker/tools/base.py`; brief Interfaces line 89) reachable by any vendor response
+        # whose `data` isn't an object (an interception proxy, a CDN/WAF error page, `null`).
+        httpx.Response(200, json={"data": [1, 2]}),
+        httpx.Response(200, json={"data": None}),
+        httpx.Response(200, json={"data": "oops"}),
+        httpx.Response(200, json={"data": 7}),
     ]
 
     for body in bodies:
@@ -570,7 +580,6 @@ async def test_recorded_fixtures_replay_for_the_five_fixture_ips() -> None:
         "55230db792e5f6bf.json",
     }
 
-    seen_file_names: set[str] = set()
     for ip, expected_score in expected_scores.items():
         arguments = {"ip": ip}
 
@@ -582,6 +591,9 @@ async def test_recorded_fixtures_replay_for_the_five_fixture_ips() -> None:
 
         path = fixture_path(_FIXTURES_ROOT, tool.name, arguments)
         assert path.exists()
-        seen_file_names.add(path.name)
 
-    assert seen_file_names == expected_file_names
+    # Controller ruling (m4 task-04 fix-2, finding N2): a set built from computed `fixture_path`
+    # results proves "the five expected keys map to the five expected names", not "the fixture
+    # directory contains exactly these five files and nothing else" — a stray sixth file (e.g.
+    # left behind by a re-record) would be invisible to it. A directory listing catches it.
+    assert {p.name for p in (_FIXTURES_ROOT / tool.name).iterdir()} == expected_file_names
