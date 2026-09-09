@@ -1,6 +1,146 @@
 {
   "components": {
     "schemas": {
+      "AlertDetail": {
+        "description": "The single-alert view (PRD \u00a78): full raw payload, latest verdict, and its tool calls.",
+        "properties": {
+          "event_time": {
+            "format": "date-time",
+            "title": "Event Time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "raw": {
+            "additionalProperties": true,
+            "title": "Raw",
+            "type": "object"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "sensor": {
+            "title": "Sensor",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "triaged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCallOut"
+            },
+            "title": "Tool Calls",
+            "type": "array"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerdictOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "src_ip",
+          "sensor",
+          "event_time",
+          "received_at",
+          "status",
+          "raw",
+          "verdict",
+          "tool_calls"
+        ],
+        "title": "AlertDetail",
+        "type": "object"
+      },
+      "AlertSummary": {
+        "description": "One list row (PRD \u00a78): the latest verdict's summary, or `None` for pending/failed alerts.",
+        "properties": {
+          "event_time": {
+            "format": "date-time",
+            "title": "Event Time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "sensor": {
+            "title": "Sensor",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "src_ip": {
+            "title": "Src Ip",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "triaged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerdictSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "src_ip",
+          "sensor",
+          "event_time",
+          "received_at",
+          "status",
+          "verdict"
+        ],
+        "title": "AlertSummary",
+        "type": "object"
+      },
       "CowrieEvent": {
         "additionalProperties": true,
         "description": "One raw Cowrie JSON event; unlisted fields survive via `extra=\"allow\"` for forensics.",
@@ -130,6 +270,86 @@
         "title": "CowrieEvent",
         "type": "object"
       },
+      "DayVolume": {
+        "description": "One day's alert count, for the stats view's `volume_by_day` series.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "count"
+        ],
+        "title": "DayVolume",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "description": "The `error` object inside a PRD \u00a78 error envelope: a stable code plus a human message.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "description": "The PRD \u00a78 error envelope: `{\"error\": {\"code\", \"message\"}}` exactly.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "The `/healthz` liveness body: overall status plus the database's own state.",
+        "properties": {
+          "db": {
+            "enum": [
+              "ok",
+              "error",
+              "unconfigured"
+            ],
+            "title": "Db",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "db"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
       "IngestResponse": {
         "description": "The `POST /api/v1/alerts` response body: the alert's id, current status, and whether this\nrequest is the one that created it (as opposed to a fingerprint duplicate).",
         "properties": {
@@ -158,6 +378,37 @@
           "created"
         ],
         "title": "IngestResponse",
+        "type": "object"
+      },
+      "PaginatedResponse_AlertSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AlertSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "PaginatedResponse[AlertSummary]",
         "type": "object"
       },
       "SessionAlert": {
@@ -199,18 +450,463 @@
         ],
         "title": "SessionAlert",
         "type": "object"
+      },
+      "StatsOut": {
+        "description": "The dashboard stats view (PRD \u00a78): volume by day, distributions, cost, and latency.",
+        "properties": {
+          "by_category": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Category",
+            "type": "object"
+          },
+          "by_severity": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Severity",
+            "type": "object"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "cost_mean_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Mean Usd",
+            "type": "string"
+          },
+          "cost_total_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Total Usd",
+            "type": "string"
+          },
+          "escalated_count": {
+            "title": "Escalated Count",
+            "type": "integer"
+          },
+          "last_alert_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Alert At"
+          },
+          "latency_p50_ms": {
+            "title": "Latency P50 Ms",
+            "type": "integer"
+          },
+          "latency_p95_ms": {
+            "title": "Latency P95 Ms",
+            "type": "integer"
+          },
+          "total_alerts": {
+            "title": "Total Alerts",
+            "type": "integer"
+          },
+          "volume_by_day": {
+            "items": {
+              "$ref": "#/components/schemas/DayVolume"
+            },
+            "title": "Volume By Day",
+            "type": "array"
+          }
+        },
+        "required": [
+          "total_alerts",
+          "by_status",
+          "by_severity",
+          "by_category",
+          "escalated_count",
+          "volume_by_day",
+          "cost_total_usd",
+          "cost_mean_usd",
+          "latency_p50_ms",
+          "latency_p95_ms",
+          "last_alert_at"
+        ],
+        "title": "StatsOut",
+        "type": "object"
+      },
+      "ToolCallOut": {
+        "description": "One `tool_calls` row, as returned in an alert's detail view.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "result": {
+            "additionalProperties": true,
+            "title": "Result",
+            "type": "object"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "tool_name",
+          "arguments",
+          "result",
+          "latency_ms"
+        ],
+        "title": "ToolCallOut",
+        "type": "object"
+      },
+      "VerdictOut": {
+        "description": "Every `verdicts` column except `alert_id` (the row's parent is implicit in its context).",
+        "properties": {
+          "category": {
+            "enum": [
+              "scanning",
+              "brute_force",
+              "successful_intrusion",
+              "malware_delivery",
+              "persistence_attempt",
+              "reconnaissance",
+              "other"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "escalate": {
+            "title": "Escalate",
+            "type": "boolean"
+          },
+          "escalated_model": {
+            "title": "Escalated Model",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "model_final": {
+            "title": "Model Final",
+            "type": "string"
+          },
+          "model_primary": {
+            "title": "Model Primary",
+            "type": "string"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "reasoning": {
+            "title": "Reasoning",
+            "type": "string"
+          },
+          "recommended_action": {
+            "title": "Recommended Action",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "confidence",
+          "reasoning",
+          "recommended_action",
+          "escalate",
+          "model_primary",
+          "model_final",
+          "escalated_model",
+          "prompt_version",
+          "input_tokens",
+          "output_tokens",
+          "cost_usd",
+          "latency_ms",
+          "created_at"
+        ],
+        "title": "VerdictOut",
+        "type": "object"
+      },
+      "VerdictSummary": {
+        "description": "The list-row projection of a verdict: enough to sort/filter/render a summary line.",
+        "properties": {
+          "category": {
+            "enum": [
+              "scanning",
+              "brute_force",
+              "successful_intrusion",
+              "malware_delivery",
+              "persistence_attempt",
+              "reconnaissance",
+              "other"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "escalate": {
+            "title": "Escalate",
+            "type": "boolean"
+          },
+          "reasoning_excerpt": {
+            "title": "Reasoning Excerpt",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "severity",
+          "category",
+          "confidence",
+          "escalate",
+          "reasoning_excerpt",
+          "created_at"
+        ],
+        "title": "VerdictSummary",
+        "type": "object"
       }
     }
   },
   "info": {
-    "title": "FastAPI",
+    "title": "SentinelBrief API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
     "/api/v1/alerts": {
+      "get": {
+        "description": "Page the alert list, latest verdict per alert, cached for `ALERTS_LIST_CACHE_TTL_S`.",
+        "operationId": "list_alerts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity_gte",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 5,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity Gte"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "scanning",
+                    "brute_force",
+                    "successful_intrusion",
+                    "malware_delivery",
+                    "persistence_attempt",
+                    "reconnaissance",
+                    "other"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "escalate",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Escalate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_AlertSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "List Alerts"
+      },
       "post": {
-        "description": "Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.\n\nArgs:\n    payload: The parsed session alert body.\n    session: The request-scoped session (`SessionDep`); its commit/rollback runs before the\n        response is sent.\n    triage: The wired triage callable, invoked only for newly created alerts. It persists\n        the status it returns (verdict + status in one transaction, PRD \u00a76.2) \u2014 this route\n        never writes `alerts.status` itself.\n\nReturns:\n    `202` with the new alert's id/status when this request created it; `200` with the\n    existing alert's id/current status on a fingerprint duplicate.",
+        "description": "Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.",
         "operationId": "ingest_alert",
         "requestBody": {
           "content": {
@@ -244,27 +940,153 @@
             "description": "Successful Response"
           },
           "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
             "description": "Missing or invalid X-Signature."
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
             "description": "Invalid session payload."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
         "summary": "Ingest Alert"
       }
     },
+    "/api/v1/alerts/{alert_id}": {
+      "get": {
+        "description": "Return `alert_id`'s full detail: raw payload, latest verdict, and its tool calls.",
+        "operationId": "get_alert",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alert_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Alert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Get Alert"
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "description": "The whole-database dashboard stats view, cached for `STATS_CACHE_TTL_S`.",
+        "operationId": "get_stats",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Get Stats"
+      }
+    },
     "/healthz": {
       "get": {
-        "description": "Report DB liveness by running `SELECT 1` through the wired session factory.\n\nArgs:\n    request: The current request, used to reach `app.state.session_factory`.\n\nReturns:\n    `200 {\"status\": \"ok\", \"db\": \"ok\"}` when the database answers;\n    `503 {\"status\": \"degraded\", \"db\": \"unconfigured\"}` when no session factory is wired;\n    `503 {\"status\": \"degraded\", \"db\": \"error\"}` when the database is unreachable.",
+        "description": "Report DB liveness by running `SELECT 1` through the wired session factory.",
         "operationId": "healthz",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Degraded: database unconfigured or unreachable."
           }
         },
         "summary": "Healthz"

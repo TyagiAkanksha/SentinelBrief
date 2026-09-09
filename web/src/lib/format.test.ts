@@ -1,0 +1,95 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  formatAge,
+  formatDatetimeLocalUtc,
+  formatLatency,
+  formatPercent,
+  formatTokens,
+  formatUsd,
+  formatUtc,
+} from "@/lib/format";
+
+describe("formatUtc", () => {
+  it("formatUtc renders UTC with seconds and a Z suffix", () => {
+    expect(formatUtc("2026-09-06T01:00:00.000Z")).toBe("2026-09-06 01:00:00Z");
+    expect(formatUtc("nope")).toBe("—");
+  });
+});
+
+describe("formatAge", () => {
+  it("formatAge buckets seconds, minutes, hours and days", () => {
+    const now = new Date("2026-09-06T01:00:00.000Z");
+
+    expect(formatAge(new Date(now.getTime() - 30_000).toISOString(), now)).toBe("<1m ago");
+    expect(formatAge(new Date(now.getTime() - 3 * 60_000).toISOString(), now)).toBe("3m ago");
+    expect(formatAge(new Date(now.getTime() - 2 * 60 * 60_000).toISOString(), now)).toBe("2h ago");
+    expect(formatAge(new Date(now.getTime() - 5 * 24 * 60 * 60_000).toISOString(), now)).toBe(
+      "5d ago",
+    );
+    expect(formatAge(new Date(now.getTime() + 60_000).toISOString(), now)).toBe("—");
+  });
+});
+
+describe("formatUsd", () => {
+  it("formatUsd formats the decimal string with six places", () => {
+    expect(formatUsd("0.000228")).toBe("$0.000228");
+    expect(formatUsd(null)).toBe("—");
+    expect(formatUsd("x")).toBe("—");
+  });
+
+  it("formatUsd treats an empty string as missing", () => {
+    // `Number("")` is `0`, not `NaN` — the existing `Number.isNaN` guard lets an empty string
+    // through as "$0.000000" instead of the missing-value dash (t4-M2 fix wave).
+    expect(formatUsd("")).toBe("—");
+  });
+});
+
+describe("formatPercent", () => {
+  it("formatPercent rounds to a whole percent", () => {
+    expect(formatPercent(0.9)).toBe("90%");
+    expect(formatPercent(0.955)).toBe("96%");
+  });
+});
+
+describe("formatLatency", () => {
+  it("formatLatency uses thousands separators and a ms suffix", () => {
+    expect(formatLatency(1234)).toBe("1,234 ms");
+    expect(formatLatency(null)).toBe("—");
+  });
+});
+
+describe("formatTokens", () => {
+  it("formatTokens uses thousands separators", () => {
+    expect(formatTokens(1234)).toBe("1,234");
+    expect(formatTokens(null)).toBe("—");
+  });
+});
+
+describe("total formatters on non-finite input", () => {
+  it("formatPercent, formatLatency and formatTokens are total on non-finite input", () => {
+    // None of the three treat `NaN`/`Infinity`/`-Infinity` as missing today — they format the
+    // JS-native "NaN%" / "∞ ms" / "-∞" strings instead of the em-dash every other missing-value
+    // path uses (t4-M3 fix wave).
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(formatPercent(bad)).toBe("—");
+      expect(formatLatency(bad)).toBe("—");
+      expect(formatTokens(bad)).toBe("—");
+    }
+  });
+});
+
+describe("formatDatetimeLocalUtc", () => {
+  it("formatDatetimeLocalUtc normalizes any ISO value to a UTC datetime-local string", () => {
+    expect(formatDatetimeLocalUtc("2026-09-01T00:00:00Z")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01T05:30:00+05:30")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01T00:00:00-05:00")).toBe("2026-09-01T05:00");
+    expect(formatDatetimeLocalUtc("2026-09-01T00:00")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01 00:00:00")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("2026-09-01")).toBe("2026-09-01T00:00");
+    expect(formatDatetimeLocalUtc("nope")).toBe("");
+    // Basic-format offset (no colon) — asserted last so a single run proves every case above
+    // passes before this one fails (N2: the extended-format-only zone regex blanks the control).
+    expect(formatDatetimeLocalUtc("2026-09-01T05:30:00+0530")).toBe("2026-09-01T00:00");
+  });
+});

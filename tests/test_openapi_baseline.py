@@ -10,8 +10,8 @@ loudly instead of silently diverging from `web/`'s codegen.
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,20 +29,45 @@ def test_committed_baseline_matches_app() -> None:
     assert _OPENAPI_PATH.read_bytes() == expected.encode()
 
 
-def test_export_script_is_deterministic() -> None:
-    subprocess.run([sys.executable, str(_EXPORT_SCRIPT)], cwd=_REPO_ROOT, check=True)
-    first = _OPENAPI_PATH.read_bytes()
+def test_export_script_is_deterministic(tmp_path: Path) -> None:
+    """`--out` writes to an explicit path, never the tracked baseline (M2 final review, plan
+    defect 5): two independent exports into `tmp_path` are byte-identical to each other and to
+    the committed `api/openapi.json` — proving determinism without the test itself ever writing
+    the tracked file (unlike the superseded version of this test, which re-exported in place).
+    """
+    out_a = tmp_path / "a.json"
+    out_b = tmp_path / "b.json"
+    # m3 task-02 review I4: a regression that also writes DEFAULT_OUT (the tracked file) would
+    # make the CI drift step (`--out /tmp/openapi.json && cmp ... api/openapi.json`) pass
+    # unconditionally forever, since the tracked file would be silently kept in sync with itself
+    # right before the comparison — mutation-tested: that exact regression left this test green
+    # when it only compared bytes. The mtime check below fails closed on that regression.
+    baseline_mtime_before = _OPENAPI_PATH.stat().st_mtime_ns
 
-    subprocess.run([sys.executable, str(_EXPORT_SCRIPT)], cwd=_REPO_ROOT, check=True)
-    second = _OPENAPI_PATH.read_bytes()
+    subprocess.run(
+        [sys.executable, str(_EXPORT_SCRIPT), "--out", str(out_a)], cwd=_REPO_ROOT, check=True
+    )
+    subprocess.run(
+        [sys.executable, str(_EXPORT_SCRIPT), "--out", str(out_b)], cwd=_REPO_ROOT, check=True
+    )
+
+    first = out_a.read_bytes()
+    second = out_b.read_bytes()
 
     assert first == second
+    assert first == _OPENAPI_PATH.read_bytes()
+    assert _OPENAPI_PATH.stat().st_mtime_ns == baseline_mtime_before
 
-    git = shutil.which("git")
-    if git is not None:
-        result = subprocess.run(
-            [git, "diff", "--exit-code", "--", "api/openapi.json"],
-            cwd=_REPO_ROOT,
-            check=False,
-        )
-        assert result.returncode == 0, "re-exporting must reproduce the committed baseline exactly"
+
+def test_export_script_default_out_is_the_tracked_baseline() -> None:
+    """`DEFAULT_OUT` (used when `--out` is omitted) is exactly `api/openapi.json` — loaded via
+    `importlib.util.spec_from_file_location`, the `scripts/`-has-no-`__init__.py` import pattern
+    `tests/test_post_alert.py` already uses, so this never re-runs the script against the tracked
+    file (the module's own `if __name__ == "__main__":` guard never fires under this loader).
+    """
+    spec = importlib.util.spec_from_file_location("export_openapi", _EXPORT_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.DEFAULT_OUT == _OPENAPI_PATH

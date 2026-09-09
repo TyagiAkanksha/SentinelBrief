@@ -12,13 +12,25 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.schemas.health import HealthResponse
+
 router = APIRouter()
 
 
-@router.get("/healthz", operation_id="healthz")
+@router.get(
+    "/healthz",
+    operation_id="healthz",
+    response_model=HealthResponse,
+    responses={
+        503: {
+            "model": HealthResponse,
+            "description": "Degraded: database unconfigured or unreachable.",
+        }
+    },
+)
 async def healthz(request: Request) -> JSONResponse:
     """Report DB liveness by running `SELECT 1` through the wired session factory.
-
+    \f
     Args:
         request: The current request, used to reach `app.state.session_factory`.
 

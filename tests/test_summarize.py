@@ -12,22 +12,14 @@ Fixture counts below were derived by hand-counting `fixtures/alerts/alert5.json`
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from core.schemas.alert import SessionAlert
+from tests.helpers import load_alert
 from worker.summarize import summarize_session
 
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "alerts"
-
 _BASE_TS = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-def _load_alert(name: str) -> SessionAlert:
-    data = json.loads((FIXTURES_DIR / name).read_text())
-    return SessionAlert.model_validate(data)
 
 
 def _event(eventid: str, ts: datetime, **fields: Any) -> dict[str, Any]:
@@ -54,7 +46,7 @@ def _alert(events: list[dict[str, Any]]) -> SessionAlert:
 
 
 def test_counts_logins_commands_downloads() -> None:
-    summary = summarize_session(_load_alert("alert5.json"))
+    summary = summarize_session(load_alert("alert5"))
 
     assert summary.login_failed == 1
     assert summary.login_success == 1
@@ -81,19 +73,19 @@ def test_usernames_sample_capped_at_five_distinct() -> None:
 
 
 def test_first_success_credential() -> None:
-    summary = summarize_session(_load_alert("alert4.json"))
+    summary = summarize_session(load_alert("alert4"))
 
     assert summary.first_success_credential == ("root", "123456")
 
 
 def test_first_success_credential_none_without_success() -> None:
-    summary = summarize_session(_load_alert("alert2.json"))
+    summary = summarize_session(load_alert("alert2"))
 
     assert summary.first_success_credential is None
 
 
 def test_duration_from_closed_event() -> None:
-    alert = _load_alert("alert1.json")
+    alert = load_alert("alert1")
 
     summary = summarize_session(alert)
 
@@ -101,7 +93,7 @@ def test_duration_from_closed_event() -> None:
 
 
 def test_client_version_from_client_version_event() -> None:
-    summary = summarize_session(_load_alert("alert4.json"))
+    summary = summarize_session(load_alert("alert4"))
 
     assert summary.client_version == "SSH-2.0-libssh2_1.10.0"
 

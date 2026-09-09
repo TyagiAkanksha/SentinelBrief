@@ -45,6 +45,15 @@ M0–M2 Global Constraints apply verbatim (branch `feat/m3-read-path-dashboard`)
   `APIRouter(route_class=SignedRoute)` and holds exactly one route (`POST /alerts`); a structural
   test pins that. List/detail/stats routes live on a separate unsigned router (e.g.
   `api/routes/alerts_read.py`), included under the same `/api/v1` prefix. (M2 task-03 review I3.)
+- **Read routes take `session: SessionDep`, never bare `Depends(get_session)`** (M2 task-02 ruling I5);
+  task-02 adds a structural test that greps `api/routes/*.py` for `Depends(get_session)` and fails on any hit.
+- **Coverage is real.** `[tool.coverage.run] concurrency = ["greenlet", "thread"]` landed in the M2 fix wave;
+  async DB routes must show real line coverage and no report may carry a "greenlet artifact" footnote.
+- **CORS is not touched in M3.** RSC pages fetch server-side via `API_URL` over the compose network;
+  `CORS_ORIGINS` matters only for the browser SSE hook at M8.
+- **Attacker-controlled text is rendered escaped, everywhere.** `reasoning`, `recommended_action`, and the
+  collapsible raw JSON (usernames, commands, banners) are plain text in the DOM; tests pin a `<script>` fragment
+  in each reaching the DOM escaped.
 - **`reasoning` is attacker-influenced text** (prompts v2/v3 ask the model to quote evidence): the
   dashboard renders it as plain text, never as HTML/markdown, and a test pins that a `<script>`
   fragment in `reasoning` reaches the DOM escaped. (M1 review carry-over, t4 I1.)
@@ -53,25 +62,29 @@ M0–M2 Global Constraints apply verbatim (branch `feat/m3-read-path-dashboard`)
 
 | # | Task | File | Depends on |
 |---|------|------|-----------|
-| 1 | Read services + list/detail/stats routes + in-process TTL cache + OpenAPI baseline | `m3-read-path-dashboard/task-01-read-services-routes-cache.md` | M2 tag |
-| 2 | `web/` scaffold: pnpm workspace, Next 16, Tailwind tokens, Vitest, ESLint/Prettier, codegen, CI web job | `m3-read-path-dashboard/task-02-web-scaffold-codegen-ci.md` | task-01 |
-| 3 | `/alerts` queue page (RSC), primitives `Badge`/`DataTable`, empty + error states | `m3-read-path-dashboard/task-03-alerts-queue-page.md` | task-02 |
-| 4 | `/alerts/[id]` detail page: reasoning, action, confidence, routing, cost/latency, raw JSON, timeline placeholder | `m3-read-path-dashboard/task-04-alert-detail-page.md` | task-03 |
-| 5 | `scripts/seed_dev.py`: load fixtures + golden v1 through the real pipeline with `FakeLLMClient` or a live key | `m3-read-path-dashboard/task-05-seed-script.md` | task-01 |
-| 6 | `infra/Dockerfile.web` (standalone), `web` compose service, README quickstart update | `m3-read-path-dashboard/task-06-web-image-compose.md` | task-04, task-05 |
+| 1 | Read DTOs (`PaginatedResponse[T]`, `ErrorEnvelope`, alert/verdict/stats views), read services with the latest-verdict query and stable tiebreaker, `tests/helpers.py` consolidation | `m3-read-path-dashboard/task-01-read-schemas-services.md` | M2 tag |
+| 2 | `core/cache.py` TTL cache seam, unsigned read router (`list_alerts`, `get_alert`, `get_stats`), error-handler MRO/≥500 hardening, OpenAPI hygiene (title/version, `\f`, `HealthResponse`, envelope models), `export_openapi.py --out`, CI drift step, `SessionDep` structural test | `m3-read-path-dashboard/task-02-cache-read-routes-openapi.md` | task-01 |
+| 3 | `web/` scaffold: pnpm workspace, Next 16, Tailwind tokens, Vitest, ESLint/Prettier, codegen from `api/openapi.json`, CI web job | `m3-read-path-dashboard/task-03-web-scaffold-codegen-ci.md` | task-02 |
+| 4 | `/alerts` queue page (RSC), primitives `Badge`/`DataTable`, empty + error states | `m3-read-path-dashboard/task-04-alerts-queue-page.md` | task-03 |
+| 5 | `/alerts/[id]` detail page: reasoning, action, confidence, routing, cost/latency, raw JSON, timeline placeholder | `m3-read-path-dashboard/task-05-alert-detail-page.md` | task-04 |
+| 6 | `scripts/seed_dev.py`: fixtures + golden v1 through `insert_alert` + `triage_alert` with `FakeLLMClient` (`--live` opt-in) | `m3-read-path-dashboard/task-06-seed-script.md` | task-02 |
+| 7 | `infra/Dockerfile.web` (standalone), `web` compose service, README quickstart update, M3 acceptance + tag | `m3-read-path-dashboard/task-07-web-image-compose-acceptance.md` | task-05, task-06 |
 
-Order: 1 → 2 → 3 → 4 → 6, with 5 parallel to 2–4. Rationale: the API contract (task-01) must be
-frozen and baselined before codegen (task-02) consumes it; pages follow the primitives; the seed
-script only needs task-01; the image comes last so the acceptance walk runs through compose.
+Order: 1 → 2 → 3 → 4 → 5 → 7, with 6 parallel to 3–5. Rationale: DTOs and services first (the
+API contract is frozen by their types); the routes and OpenAPI baseline (task-02) must exist before
+codegen (task-03) consumes them; pages follow the primitives; the seed script only needs task-02;
+the image comes last so the acceptance walk runs through compose. (Split of the spine's original
+task-01 into 1+2 ruled at the M2 gate: one reviewer gate could not meaningfully cover services,
+cache, routes and the error-handler refactor together.)
 
 ## Acceptance walk (PRD §12 M3)
 
 | Clause | Demonstrated by |
 |---|---|
-| List/detail/stats endpoints | task-01 route tests (filters, pagination tiebreaker, cache TTL, 404 envelope) |
-| Next.js `/alerts` and `/alerts/[id]` incl. reasoning display | task-03/04 component tests + a live browser pass at the user checkpoint |
-| Seeded DB renders a browsable queue locally | task-05 seed → `docker compose up` (api, postgres, web) → screenshot/curl pasted into the ledger |
+| List/detail/stats endpoints | task-01 service tests (filters, latest verdict, tiebreaker) + task-02 route tests (cache TTL, 404 envelope, OpenAPI) |
+| Next.js `/alerts` and `/alerts/[id]` incl. reasoning display | task-04/05 component tests + a live browser pass at the user checkpoint |
+| Seeded DB renders a browsable queue locally | task-06 seed → task-07 `docker compose up` (api, postgres, web) → screenshot/curl pasted into the ledger |
 
 ## Status
 
-planned — briefs pending (written at the M2 gate).
+in progress — briefs written at the M2 gate (2026-09-07); git history and the ledger are authoritative.

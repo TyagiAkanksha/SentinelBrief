@@ -5,10 +5,9 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M2 complete (service + persistence); M3 (read path + dashboard) next. The build plan
+**Status:** M3 complete (read path + dashboard v0); M4 (tool calling) next. The build plan
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
-[`PRD.md`](PRD.md). The dev stack (`docker compose` + Postgres) is runnable from M2; sections
-below marked *(from M3)* still describe commands that exist once that milestone lands.
+[`PRD.md`](PRD.md).
 
 ## What it does
 
@@ -54,7 +53,6 @@ host except one HMAC secret. Deployment topology: [`docs/deployment.md`](docs/de
 - Docker + Docker Compose v2 (developed with Docker 29 / Compose v5)
 - [uv](https://docs.astral.sh/uv/) — for running the Python gates outside a container
 - Node 24 + [pnpm](https://pnpm.io/) via corepack (`corepack enable`) — for the dashboard gates
-  *(from M3)*
 
 ### 1. Configure environment
 
@@ -74,6 +72,14 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
+`Settings` (`core/config.py`) never loads `.env` itself — only the compose `api` service does, via
+`env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
+triage_one`) reads plain environment variables, so load `.env` into your shell first:
+
+```sh
+set -a; . ./.env; set +a   # host-side commands read the environment only; Settings never loads .env
+```
+
 ### 2. Run the core loop
 
 ```sh
@@ -89,15 +95,21 @@ still fails validation after its one retry.
 ### 3. Run the stack
 
 ```sh
-docker compose -f infra/docker-compose.yml up -d --build
+docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
-curl -s localhost:8000/healthz                       # {"status":"ok","db":"ok"}
+curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok"}
+curl -s localhost:3000/healthz                                              # {"status":"ok"}
+# Seed a browsable queue: 5 fixtures + 20 golden v1 sessions through the real pipeline with the fake LLM
+# (add --live to spend real tokens with LLM_API_KEY / CHEAP_MODEL / MODEL_PRICES_JSON exported
+# (see step 1); a re-run creates nothing).
+uv run python scripts/seed_dev.py --database-url postgresql://sentinel:sentinel@127.0.0.1:5432/sentinelbrief   # created=25 skipped=0 failed=0
+# Open http://localhost:3000/alerts in a browser — the queue; click an IP for the detail page
+curl -s 'localhost:8000/api/v1/alerts?page_size=5' | python3 -m json.tool | head -30
 # keeps the secret out of shell history and out of this file
 export INGEST_HMAC_SECRET=$(grep '^INGEST_HMAC_SECRET=' .env | cut -d= -f2-)
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 202 {..., "status":"triaged", "created":true}
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # duplicate → 200 {..., "created":false}
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 200 {"created": false} — already seeded; dedup by fingerprint (a session with a new session_id gets 202 and is triaged inline)
 docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sentinelbrief \
-  -c "select count(*) from alerts; select count(*) from verdicts;"   # 1 and 1
+  -c "select count(*) from alerts; select count(*) from verdicts;"   # 25 and 25
 ```
 
 Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
@@ -125,7 +137,7 @@ uv run lint-imports
 uv run pytest -q
 ```
 
-Frontend *(from M3)*:
+Frontend:
 
 ```sh
 pnpm -C web lint

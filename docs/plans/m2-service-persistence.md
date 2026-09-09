@@ -98,4 +98,4 @@ them.
 
 ## Status
 
-planned — snapshot only; git history and the ledger are authoritative.
+done — merged via PR #3, tag `m2` on f041632 (2026-09-07); PRD §12 M2 acceptance walk pasted in the ledger; whole-branch review clean after one fix wave.

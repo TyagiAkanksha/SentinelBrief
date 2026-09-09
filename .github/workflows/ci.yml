@@ -50,6 +50,9 @@ jobs:
       - name: import-linter
         run: uv run lint-imports
 
+      - name: OpenAPI baseline drift (CONVENTIONS §8)
+        run: uv run python scripts/export_openapi.py --out /tmp/openapi.json && cmp /tmp/openapi.json api/openapi.json
+
       - name: pytest with coverage (no skips allowed)
         shell: bash
         run: |
@@ -62,14 +65,31 @@ jobs:
       # PRD §12 M2: the image must build and the compose file must validate; docker is present on
       # ubuntu-latest so tests/test_compose_config.py never skips here (the skip is for
       # docker-less dev machines).
-      - name: docker image builds; compose config validates
+      - name: docker images build (api, web); compose config validates
         shell: bash
         run: |
           cp .env.example .env
           docker compose -f infra/docker-compose.yml config > /dev/null
-          docker compose -f infra/docker-compose.yml build api
+          docker compose -f infra/docker-compose.yml build api web
 
       - name: pip-audit
         continue-on-error: true
         shell: bash
         run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: corepack enable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: codegen drift (CONVENTIONS §8)
+        run: pnpm -C web codegen && git diff --exit-code -- web/src/types/generated
+      - run: pnpm -C web lint
+      - run: pnpm -C web type-check
+      - run: pnpm -C web format:check
+      - run: pnpm -C web test

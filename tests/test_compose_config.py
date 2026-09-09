@@ -12,6 +12,10 @@ a `.env` next to the compose file's parent directory even though nothing in it i
 below renders the compose file the same way: copy it into a throwaway `tmp_path/infra/`, drop an
 empty `tmp_path/.env` beside it, and run `config` from `tmp_path` — never against the real repo
 root (which may or may not have a dev `.env`, and must never be mutated by a test run).
+
+m3 task-07 extends this module with the `web` service (`test_compose_web_service_shape`) and adds
+a `web` assertion to two of the m2-pinned tests below (`test_compose_config_validates`,
+`test_compose_publishes_loopback_only`); no other assertion in this file changes.
 """
 
 from __future__ import annotations
@@ -29,10 +33,19 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _COMPOSE_FILE = _REPO_ROOT / "infra" / "docker-compose.yml"
 
 
-def _render_compose_config(tmp_path: Path) -> dict[str, Any]:
+def _render_compose_config(tmp_path: Path, *, env_text: str = "") -> dict[str, Any]:
     """Renders `infra/docker-compose.yml` with `docker compose config --format json` from a
     throwaway `tmp_path` copy and returns the parsed config. Skips (by name, not a silent pass)
     when `docker` is not on PATH, so every compose test in this module skips together.
+
+    `env_text` seeds the throwaway `.env` this copy renders against; every existing caller relies
+    on the empty default. `test_compose_web_service_shape` (m3 task-07 fix-1, review I3) passes a
+    synthetic, non-secret canary line instead: `docker compose config` resolves a service's
+    `env_file:` directive into its rendered `environment` dict and *never* renders the `env_file`
+    key itself (verified empirically — see that test's docstring), so against an empty `.env` a
+    stray `env_file: ../.env` on `web` would add zero keys and go undetected by an
+    `environment`-shape assertion. The canary makes a leaked `env_file` observable without ever
+    exercising a real secret.
     """
     if shutil.which("docker") is None:
         pytest.skip("docker not on PATH")
@@ -46,7 +59,7 @@ def _render_compose_config(tmp_path: Path) -> dict[str, Any]:
     tmp_infra.mkdir()
     tmp_compose = tmp_infra / "docker-compose.yml"
     shutil.copy(_COMPOSE_FILE, tmp_compose)
-    (tmp_path / ".env").write_text("")
+    (tmp_path / ".env").write_text(env_text)
 
     proc = subprocess.run(
         ["docker", "compose", "-f", str(tmp_compose), "config", "--format", "json"],
@@ -71,16 +84,19 @@ def rendered_compose_config(tmp_path: Path) -> dict[str, Any]:
 
 def test_compose_config_validates(rendered_compose_config: dict[str, Any]) -> None:
     """PRD §11 / brief Interfaces: `docker compose -f infra/docker-compose.yml config` exits 0
-    and declares both the `postgres` and `api` services — a reference error (e.g. a typo'd
-    service name in `depends_on`) fails `config` before `docker compose up` is ever attempted.
+    and declares the `postgres`, `api`, and `web` services (m3 task-07 adds `web`) — a reference
+    error (e.g. a typo'd service name in `depends_on`) fails `config` before `docker compose up`
+    is ever attempted.
     """
     assert "postgres" in rendered_compose_config["services"]
     assert "api" in rendered_compose_config["services"]
+    assert "web" in rendered_compose_config["services"]
 
 
 def test_compose_publishes_loopback_only(rendered_compose_config: dict[str, Any]) -> None:
     """`.claude/rules/infra.md`: dev compose publishes ports on 127.0.0.1 only — a bare
     `"8000:8000"` mapping would expose the API (and Postgres) on every interface of the dev host.
+    m3 task-07 adds the `web` service's port to this same check.
     """
     services = rendered_compose_config["services"]
     published_targets: dict[str, set[str]] = {}
@@ -93,6 +109,7 @@ def test_compose_publishes_loopback_only(rendered_compose_config: dict[str, Any]
 
     assert published_targets.get("api") == {"8000"}, published_targets.get("api")
     assert published_targets.get("postgres") == {"5432"}, published_targets.get("postgres")
+    assert published_targets.get("web") == {"3000"}, published_targets.get("web")
 
 
 def test_compose_api_depends_on_healthy_postgres(rendered_compose_config: dict[str, Any]) -> None:
@@ -139,6 +156,58 @@ def test_compose_api_build_context_is_repo_root(tmp_path: Path) -> None:
     )
     dockerfile = build["dockerfile"].replace("\\", "/")
     assert dockerfile.endswith("infra/Dockerfile.api"), dockerfile
+
+
+_ENV_FILE_LEAK_CANARY = "SENTINELBRIEF_TEST_CANARY=canary\n"
+"""Synthetic, non-secret `.env` content for `test_compose_web_service_shape` only (review I3) —
+see `_render_compose_config`'s `env_text` docstring for why a non-empty `.env` is required to
+make a leaked `env_file: ../.env` on the `web` service observable at all."""
+
+
+def test_compose_web_service_shape(tmp_path: Path) -> None:
+    """m3 task-07 brief Interfaces: the `web` service builds from the repo-root context with
+    `infra/Dockerfile.web`, bakes the browser-visible API origin in as a build `arg`, talks to
+    `api` over the compose network server-side (`API_URL=http://api:8000`), waits for a *healthy*
+    `api` before starting, and carries the same json-file log rotation as `postgres`/`api` — a
+    bare `depends_on: [api]` (started, not healthy) would let the web container's own healthcheck
+    race the API's boot. Rendered from its own `tmp_path` copy (not the shared
+    `rendered_compose_config` fixture), mirroring `test_compose_api_build_context_is_repo_root`,
+    so `context: ..` can be checked against the exact directory it resolves relative to.
+
+    Review I3 (m3 task-07 fix-1): `web` is the one internet-facing SSR surface (PRD §9/§11 —
+    Caddy fronts it); copy-pasting `api`'s `env_file: ../.env` onto `web` would put
+    `LLM_API_KEY`/`INGEST_HMAC_SECRET`/`ADMIN_TOKEN`/`DATABASE_URL` into a Node process whose error
+    pages and SSR bugs are reachable from the public internet. `set(web["environment"])` pins that
+    `API_URL` is the *only* rendered environment key. Rendered against
+    `_ENV_FILE_LEAK_CANARY` (a synthetic, non-secret line) rather than the module's usual empty
+    `.env`: `docker compose config` folds a service's `env_file:` variables into its rendered
+    `environment` dict but never renders an `env_file` key at all (verified empirically — see
+    `_render_compose_config`'s docstring), so against an empty `.env` a leaked `env_file: ../.env`
+    on `web` would add zero observable keys and this assertion would not catch it. The
+    `"env_file" not in web` assertion below is therefore not load-bearing on its own (compose
+    never renders that key, mutated or not) — it is kept as source-adjacent documentation of the
+    same intent, not as the catch.
+    """
+    config = _render_compose_config(tmp_path, env_text=_ENV_FILE_LEAK_CANARY)
+    web = config["services"]["web"]
+
+    assert web["image"] == "sentinelbrief-web"
+    assert web["environment"]["API_URL"] == "http://api:8000"
+    assert set(web["environment"]) == {"API_URL"}, web["environment"]
+    assert web["depends_on"]["api"]["condition"] == "service_healthy"
+
+    build = web["build"]
+    context = build["context"]
+    assert Path(context).resolve() == tmp_path.resolve(), (
+        f"web build context does not resolve to the repo root stand-in {tmp_path}: {context}"
+    )
+    dockerfile = build["dockerfile"].replace("\\", "/")
+    assert dockerfile.endswith("infra/Dockerfile.web"), dockerfile
+    assert "NEXT_PUBLIC_API_URL" in build.get("args", {}), build.get("args")
+
+    logging = web["logging"]
+    assert logging["driver"] == "json-file"
+    assert logging["options"]["max-size"] == "10m"
 
 
 def test_compose_named_volume(rendered_compose_config: dict[str, Any]) -> None:

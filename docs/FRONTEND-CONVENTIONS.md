@@ -17,8 +17,8 @@ read-only app with no login anywhere (PRD §9).
 - Pinned dev ports: **web 3000, API 8000** — matching `CORS_ORIGINS` and `NEXT_PUBLIC_API_URL` in
   `.env.example`.
 - The app exposes these scripts, and **every script is a gate**: a red result is the failing test
-  telling you what to fix. `dev` · `build` · `lint` · `lint:fix` · `format` · `format:check` ·
-  `type-check` · `test` · `test:watch` · `codegen`.
+  telling you what to fix. `dev` · `build` · `start` · `lint` · `lint:fix` · `format` ·
+  `format:check` · `type-check` · `test` · `test:watch` · `codegen`.
 - TypeScript `strict: true` plus `noUncheckedIndexedAccess: true`. `any` is banned; document any
   exception inline with the reason.
 - **Run `type-check` (tsc) after every implementation or significant change** — not only before
@@ -27,9 +27,12 @@ read-only app with no login anywhere (PRD §9).
 
 ## 2. UI stack: Tailwind (no component library)
 
-- Tailwind CSS with the design tokens defined **once**: CSS variables in `src/app/globals.css`
-  (colors, spacing scale, radii, the severity palette) and mapped in `tailwind.config.ts`. Both
-  files are the design-token system; no hex value appears in a component.
+- Tailwind CSS v4 (CSS-first) with the design tokens declared **once** in `src/app/globals.css`
+  under `@theme`: colors (`--color-sev-1`…`--color-sev-5`, `--color-surface`, `--color-muted`,
+  the rest of the severity/surface palette) and the font stacks (`--font-sans`, `--font-mono`).
+  Spacing and radii use Tailwind v4's built-in defaults rather than a separate token set; there
+  is no `tailwind.config.ts`. `globals.css` is the design-token system; no hex value appears in a
+  component.
 - Look: **dark, dense, legible** (PRD §9). One font stack, a tight vertical rhythm, tabular
   numbers for timestamps and costs, severity communicated by text *and* color (§9 accessibility).
 - A style used twice becomes a primitive in `src/components/ui/` (`Badge`, `Card`, `DataTable`,

@@ -11,10 +11,8 @@ since none of them roll back).
 
 from __future__ import annotations
 
-import json
 import uuid
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,23 +21,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.models import AlertRow, ToolCallRow, VerdictRow
-from core.schemas.alert import SessionAlert
 from core.schemas.verdict import Verdict
-from core.services.alerts import insert_alert
+from tests.helpers import seed_alert
 from worker.store import ToolCallRecord, persist_verdict
 from worker.triage import TriageOutcome
-
-_FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "alerts" / "alert4.json"
-
-
-async def _insert_alert(session: AsyncSession, *, session_id: str) -> uuid.UUID:
-    """Insert a fresh `AlertRow` (distinct `session_id` -> distinct fingerprint), flush only."""
-    data = json.loads(_FIXTURE.read_text())
-    data["session_id"] = session_id
-    alert = SessionAlert.model_validate(data)
-    result = await insert_alert(session, alert)
-    await session.flush()
-    return result.alert_id
 
 
 def _make_outcome(**overrides: Any) -> TriageOutcome:
@@ -72,7 +57,7 @@ async def test_persist_verdict_writes_row_and_sets_triaged(
     db_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    alert_id = await _insert_alert(db_session, session_id="store-001")
+    alert_id = await seed_alert(db_session, session_id="store-001")
     outcome = _make_outcome()
 
     # (a) a commit spy: `persist_verdict` must never call `session.commit()` itself — the caller
@@ -126,7 +111,7 @@ async def test_persist_verdict_writes_row_and_sets_triaged(
 
 
 async def test_persist_verdict_writes_tool_calls_in_seq_order(db_session: AsyncSession) -> None:
-    alert_id = await _insert_alert(db_session, session_id="store-002")
+    alert_id = await seed_alert(db_session, session_id="store-002")
     outcome = _make_outcome()
     tool_calls = (
         ToolCallRecord(
@@ -176,7 +161,7 @@ async def test_persist_verdict_writes_tool_calls_in_seq_order(db_session: AsyncS
 
 
 async def test_persist_verdict_is_all_or_nothing(db_session: AsyncSession) -> None:
-    alert_id = await _insert_alert(db_session, session_id="store-003")
+    alert_id = await seed_alert(db_session, session_id="store-003")
     # Commit the alert's own insert first: a real caller always loads an already-committed
     # alert, so the rollback below must undo only persist_verdict's own write, not this row.
     await db_session.commit()
@@ -212,7 +197,7 @@ async def test_persist_verdict_is_all_or_nothing(db_session: AsyncSession) -> No
 
 
 async def test_persist_verdict_escalated_model_flag(db_session: AsyncSession) -> None:
-    alert_id = await _insert_alert(db_session, session_id="store-004")
+    alert_id = await seed_alert(db_session, session_id="store-004")
     outcome = _make_outcome(model="strong-model")
 
     verdict_id = await persist_verdict(

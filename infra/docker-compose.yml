@@ -1,12 +1,11 @@
 # infra/docker-compose.yml — SentinelBrief local orchestration (PRD §11; CONVENTIONS.md §11).
 #
-# Two services for now: `postgres` (a first-class compose service — self-hosted is the deployed
-# target too, PRD §11) and `api`. `worker` and `redis` arrive at M5, `web` at M3.
+# Three services: postgres, api, web; worker and redis arrive at M5.
 #
 # Migrations are never run at container startup (CONVENTIONS.md §11) — run them explicitly:
 #   docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 #
-# Both services publish ports on 127.0.0.1 only (`.claude/rules/infra.md`) and use json-file log
+# All services publish ports on 127.0.0.1 only (`.claude/rules/infra.md`) and use json-file log
 # rotation from day one (docs/deployment.md).
 
 name: sentinelbrief
@@ -47,6 +46,23 @@ services:
       - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000     # the browser-visible API origin for local dev (SSE hook, M8)
+        API_URL: http://api:8000
+    image: sentinelbrief-web
+    environment:
+      API_URL: http://api:8000                          # server-side origin over the compose network (FRONTEND-CONVENTIONS §6)
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
         condition: service_healthy
     logging: *default-logging
 

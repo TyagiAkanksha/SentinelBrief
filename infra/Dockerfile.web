@@ -1,0 +1,26 @@
+# infra/Dockerfile.web — build context is the REPO ROOT (compose: context: .., dockerfile: infra/Dockerfile.web).
+# Runtime config is env-only; NEXT_PUBLIC_API_URL is inlined at build (PRD §11) — a new public API origin means a rebuild.
+FROM node:24-slim AS builder
+WORKDIR /repo
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json ./web/package.json
+RUN pnpm install --frozen-lockfile
+COPY web ./web
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG API_URL=http://api:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL API_URL=$API_URL NEXT_TELEMETRY_DISABLED=1
+RUN pnpm -C web build
+
+FROM node:24-slim
+RUN groupadd --gid 1001 nodejs && useradd --uid 1001 --gid nodejs --create-home nextjs
+WORKDIR /app
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NEXT_TELEMETRY_DISABLED=1
+COPY --from=builder --chown=nextjs:nodejs /repo/web/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /repo/web/.next/static ./web/.next/static
+COPY --from=builder --chown=nextjs:nodejs /repo/web/public ./web/public
+USER nextjs
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+CMD ["node", "web/server.js"]
