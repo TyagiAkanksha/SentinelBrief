@@ -76,7 +76,8 @@ so the compose stack can answer the tool. A wrong `session_id` is `unavailable("
           # session_id != ctx.alert.session_id         -> unavailable("unknown_session")      (no separate session store: PRD §6.3)
           # commands  = [e.input for e in ctx.alert.events if e.eventid == "cowrie.command.input" and e.input is not None]   (event order)
           # downloads = [{"url": e.url, "outfile": e.outfile, "shasum": e.shasum} for e in events if e.eventid == "cowrie.session.file_download"]
-          # each command clipped to max_command_chars (plain slice, no ellipsis); clipped_commands = how many were clipped
+          # each command clipped to max_command_chars (plain slice, no ellipsis); clipped_commands = how many of ALL the session's
+          #   commands (session-wide, not just the kept slice) exceeded max_command_chars — M4 task-02 review I3 ruling
           # -> {"session_id": sid,
           #     "commands": commands[:max_commands], "command_count": len(commands), "commands_truncated": len(commands) > max_commands,
           #     "clipped_commands": clipped_commands,
@@ -145,7 +146,7 @@ so the compose stack can answer the tool. A wrong `session_id` is `unavailable("
 | invalid arguments | `tests/test_asset_info_tool.py::test_missing_or_non_string_hostname_is_invalid_arguments` | `{}` / `{"hostname": 1}` → `invalid_arguments` |
 | missing file degrades + logs once | `tests/test_asset_info_tool.py::test_missing_file_is_unavailable_and_logs_once` | `from_path(tmp_path / "none.yaml")` → every `run` returns `unavailable("assets_file_missing")`; `caplog` has exactly one WARNING after construction + two runs; fails when it raises or logs per call |
 | malformed file | `tests/test_asset_info_tool.py::test_malformed_yaml_or_wrong_shape_is_unavailable` | `"assets: [1, 2"` (YAMLError) and `assets: {x: {role: 1}}` (ValidationError) → `unavailable("assets_file_invalid")` |
-| safe loader | `tests/test_asset_info_tool.py::test_yaml_tags_are_not_constructed` | a `!!python/object/apply:os.system` document → `unavailable("assets_file_invalid")` (safe_load raises), never executes; fails when `yaml.load` is used |
+| safe loader | `tests/test_asset_info_tool.py::test_yaml_tags_are_not_constructed` | an `assets:` value tagged `!!python/object/apply:dict` that would deserialize into a VALID `AssetsFile` under an unsafe loader (e.g. `assets: !!python/object/apply:dict [[[hp-eu-01, {role: ssh-honeypot, exposure: internet, criticality: low}]]]`) → `unavailable("assets_file_invalid")` because `safe_load` refuses every `!!python/` tag; fails when `yaml.load`/`UnsafeLoader` is used (the tool would then answer `hp-eu-01` normally). No side-effecting payload (M4 task-02 review C1: an `os.system` payload ends in `assets_file_invalid` under BOTH loaders and pins nothing) |
 | extra keys ignored | `tests/test_asset_info_tool.py::test_extra_record_keys_are_ignored` | a record with `region: eu-west-1` still loads |
 | settings + env lines | `tests/test_asset_info_tool.py::test_tool_settings_defaults_and_bounds` | defaults `40 / 10 / 200 / "honeypot/assets.yaml"`; `Settings(tool_session_commands_max=0)` → `ValidationError`; roster test green with `ASSETS_YAML_PATH` removed from `_SCHEDULED` |
 | image ships the YAML | `tests/test_asset_info_tool.py::test_api_image_copies_assets_yaml` | `infra/Dockerfile.api` text contains `COPY honeypot/assets.yaml ./honeypot/assets.yaml` and a runtime-stage `COPY --from=builder … /app/honeypot ./honeypot`; fails when either line is missing |
