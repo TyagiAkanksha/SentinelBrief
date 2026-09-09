@@ -21,11 +21,13 @@ from worker.tools.recorder import (
 )
 from worker.tools.registry import ToolExecution, ToolRegistry, truncate_result
 from worker.tools.session_commands import SessionCommandsTool
+from worker.tools.wiring import TOOL_NAMES, build_registry
 
 __all__ = [
     "ABUSEIPDB_CHECK_URL",
     "CACHE_KEY_PREFIX",
     "FIXTURE_KEY_CHARS",
+    "TOOL_NAMES",
     "AlertHistoryTool",
     "AssetInfoTool",
     "AssetRecord",
@@ -41,6 +43,7 @@ __all__ = [
     "ToolExecution",
     "ToolRecorder",
     "ToolRegistry",
+    "build_registry",
     "fixture_key",
     "fixture_path",
     "open_reader",

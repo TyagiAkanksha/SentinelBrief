@@ -4,8 +4,18 @@ The one place that wires every tool's `Settings` fields together, in the PRD §6
 (`TOOL_NAMES`). `cache` and `http` are the two external seams `api.main`/M5 and the test suite
 override: a missing `cache` builds an in-process `InMemoryTTLCache` sized from
 `abuseipdb_cache_max_entries`; a missing `http` builds an `httpx.AsyncClient` timed from
-`abuseipdb_timeout_s`. Neither is ever built twice — passing them in means the caller owns their
-lifecycle (M5's `RedisTTLCache`, a shared `httpx.AsyncClient` across the process).
+`abuseipdb_timeout_s`.
+
+Ownership (m4 task-06 fix-1, I4): the default `httpx.AsyncClient` this function builds — and the
+GeoIP `.mmdb` readers `GeoAsnTool.from_settings` opens — are **process-lifetime** objects owned
+by whoever calls `build_registry`. `api/main.py` calls it once at module import and keeps the
+result for the life of the process, which is the standard "one client per process" pattern and
+not a leak on its own, but nothing currently drains the connection pool or closes the `.mmdb`
+file handles on shutdown — there is no `aclose()` call anywhere yet. M5's ARQ worker is expected
+to own an explicit shutdown hook that calls `aclose()` on the client it passes in via `http=`;
+until then, every caller must build (and keep) at most one registry per process — never build a
+fresh one per unit of work (`scripts/seed_dev.py::seed` builds exactly one and reuses it across
+every seeded alert, not one per alert).
 """
 
 from __future__ import annotations

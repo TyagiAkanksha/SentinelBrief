@@ -87,7 +87,7 @@ def test_prints_verdict_json_exit_zero(capsys: pytest.CaptureFixture[str]) -> No
     }
     assert 1 <= out["verdict"]["severity"] <= 5
     assert out["model"] == "fake-model"
-    assert out["prompt_version"] == "triage-v1"
+    assert out["prompt_version"] == "triage-v4"
     assert isinstance(out["cost_usd"], str)
 
 

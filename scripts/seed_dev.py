@@ -280,6 +280,12 @@ async def seed(
     Returns:
         Counts of created, skipped, and failed-triage alerts.
     """
+    # Built once, not per alert (m4 task-06 fix-1, I3): the registry is stateless w.r.t. the
+    # alert being triaged — the alert travels in `ToolContext`, not in any tool's constructor —
+    # so a fresh `httpx.AsyncClient`, YAML parse and pair of `.mmdb` file handles per alert would
+    # be 25 unclosed resources for nothing.
+    registry = build_registry(settings, recorder=recorder)
+
     engine = make_engine(database_url, schema=schema)
     factory = make_session_factory(engine)
     created = 0
@@ -308,7 +314,7 @@ async def seed(
                     llm=client,
                     model=model,
                     prompt_version=prompt_version,
-                    tools=build_registry(settings, recorder=recorder),
+                    tools=registry,
                     tool_loop_max_iter=settings.tool_loop_max_iter,
                 )
                 status = await pipeline.triage_alert(session, result.alert_id)

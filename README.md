@@ -162,8 +162,8 @@ Live-API smoke tests are opt-in: `uv run pytest -m live`.
 ## Evaluation
 
 ```sh
-uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v2
 # external tools replay tests/fixtures/tools (override with --tool-fixtures DIR)
+uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v2
 ```
 
 Each `--prompt` value runs the full pipeline over the golden set and produces one comparable row

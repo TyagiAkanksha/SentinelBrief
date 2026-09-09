@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # validator below do the json.loads itself, so malformed input surfaces as a pydantic
     # ValidationError instead (CONVENTIONS.md §7).
     model_prices_json: Annotated[dict[str, ModelPrice], NoDecode] = Field(default_factory=dict)
-    triage_prompt_version: str = "triage-v1"
+    triage_prompt_version: str = "triage-v4"
     environment: str = "development"
     database_url: SecretStr = SecretStr("")
     ingest_hmac_secret: SecretStr = SecretStr("")
