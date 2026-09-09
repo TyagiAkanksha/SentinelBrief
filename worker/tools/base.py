@@ -24,7 +24,7 @@ class ToolContext:
     """The context a tool runs with: the session being triaged, plus deterministic time/DB seams.
 
     `session` is `None` outside `triage_alert` (the CLI, evals) — a tool that reads the DB
-    (`get_asset_info`, `get_org_alert_history`) must handle that case itself.
+    (`get_org_alert_history`) must handle that case itself.
     """
 
     alert: SessionAlert  # the session being triaged — get_session_commands reads it

@@ -87,15 +87,15 @@ class AssetInfoTool:
             exactly one WARNING naming the path (never the file's contents) in either case.
         """
         try:
-            text = path.read_text()
+            raw_bytes = path.read_bytes()
         except OSError:
             logger.warning("assets file missing path=%s", path)
             return cls({}, load_error="assets_file_missing")
 
         try:
-            raw = yaml.safe_load(text)
+            raw = yaml.safe_load(raw_bytes.decode("utf-8"))
             parsed = AssetsFile.model_validate(raw)
-        except (yaml.YAMLError, ValidationError):
+        except (UnicodeDecodeError, yaml.YAMLError, ValidationError):
             logger.warning("assets file invalid path=%s", path)
             return cls({}, load_error="assets_file_invalid")
 
