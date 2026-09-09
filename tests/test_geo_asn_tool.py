@@ -13,6 +13,14 @@ on a malformed address without ever touching a real database file.
 `test_recorded_fixtures_replay_for_the_five_fixture_ips` exercises the five synthetic geo
 fixtures (task-03's own deliverable) through `ReplayToolRecorder`, the same seam the triage loop
 and the seed script (task-06) use.
+
+Fix round 1 (review Findings I1/I2/M4): adds
+`test_from_settings_wires_country_path_to_country_reader_and_asn_path_to_asn_reader` (I1 — the
+prior `from_settings` test could not distinguish a swapped path→reader wiring), extends
+`test_record_without_iso_code_gives_null_country` with a populated `registered_country` (I2 —
+that field must never be a fallback), and extends
+`test_recorded_fixtures_replay_for_the_five_fixture_ips` to assert each fixture's full result
+body, not just `country` (M4).
 """
 
 from __future__ import annotations
@@ -169,7 +177,17 @@ async def test_unknown_ip_gives_null_fields_not_unavailable() -> None:
 
 
 async def test_record_without_iso_code_gives_null_country() -> None:
-    tool = GeoAsnTool(country=FakeGeoReader({"203.0.113.10": {"country": {}}}), asn=None)
+    """Also pins that `registered_country` is never consulted as a fallback (Interfaces line 94,
+    review Finding I2): the record here carries a *populated* `registered_country.iso_code` next
+    to an empty `country`, so a `record["registered_country"]` fallback would answer `"RU"` where
+    the correct, brief-mandated answer is `None`.
+    """
+    tool = GeoAsnTool(
+        country=FakeGeoReader(
+            {"203.0.113.10": {"country": {}, "registered_country": {"iso_code": "RU"}}}
+        ),
+        asn=None,
+    )
 
     result = await tool.run({"ip": "203.0.113.10"}, _ctx())
 
@@ -238,6 +256,42 @@ async def test_from_settings_uses_both_paths() -> None:
     assert result == unavailable("geoip_db_not_configured")
 
 
+async def test_from_settings_wires_country_path_to_country_reader_and_asn_path_to_asn_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review Finding I1: `Settings(geoip_db_path="", geoip_asn_db_path="")` (the only prior
+    `from_settings` test) cannot distinguish which path feeds which reader — both inputs are
+    identical. Monkeypatches `worker.tools.geo_asn.open_reader` with a recorder that both proves
+    the call ORDER (`geoip_db_path` opened before `geoip_asn_db_path`, per Interfaces line 90)
+    and returns a distinguishable fake per path, so a swap (`country` fed the ASN path and vice
+    versa) is caught by the `run()` result, not just the call order.
+    """
+    calls: list[str] = []
+    country_reader = FakeGeoReader({"203.0.113.10": {"country": {"iso_code": "NL"}}})
+    asn_reader = FakeGeoReader(
+        {
+            "203.0.113.10": {
+                "autonomous_system_number": 64496,
+                "autonomous_system_organization": "Example",
+            }
+        }
+    )
+    readers_by_path = {"c.mmdb": country_reader, "a.mmdb": asn_reader}
+
+    def fake_open(path: str) -> FakeGeoReader:
+        calls.append(path)
+        return readers_by_path[path]
+
+    monkeypatch.setattr("worker.tools.geo_asn.open_reader", fake_open)
+
+    tool = GeoAsnTool.from_settings(Settings(geoip_db_path="c.mmdb", geoip_asn_db_path="a.mmdb"))
+    result = await tool.run({"ip": "203.0.113.10"}, _ctx())
+
+    assert calls == ["c.mmdb", "a.mmdb"]
+    assert result["country"] == "NL"
+    assert result["asn"] == 64496
+
+
 def test_tool_is_external() -> None:
     assert GeoAsnTool(country=None, asn=None).external is True
 
@@ -254,24 +308,54 @@ def test_geo_settings_and_secret_repr() -> None:
 
 
 async def test_recorded_fixtures_replay_for_the_five_fixture_ips() -> None:
+    """Review Finding M4: asserts each fixture's FULL result body (`ip`/`country`/`asn`/`org`),
+    not just `country` — the brief's table pins these exact values (RFC 5398 documentation ASNs,
+    chosen so no real ASN ever leaks into the repo) and a drifted `asn`/`org` previously shipped
+    green.
+    """
     recorder = ReplayToolRecorder(_FIXTURES_ROOT)
     tool = GeoAsnTool(country=None, asn=None)  # never called: replay never runs an external tool
     ctx = _ctx()
 
-    expected_countries = {
-        "203.0.113.10": "NL",
-        "198.51.100.23": "US",
-        "203.0.113.77": "SG",
-        "192.0.2.55": "DE",
-        "198.51.100.140": "BR",
+    expected_results = {
+        "203.0.113.10": {
+            "ip": "203.0.113.10",
+            "country": "NL",
+            "asn": 64496,
+            "org": "Example Scanning BV",
+        },
+        "198.51.100.23": {
+            "ip": "198.51.100.23",
+            "country": "US",
+            "asn": 64497,
+            "org": "Example Cloud LLC",
+        },
+        "203.0.113.77": {
+            "ip": "203.0.113.77",
+            "country": "SG",
+            "asn": 64498,
+            "org": "Example Hosting Pte",
+        },
+        "192.0.2.55": {
+            "ip": "192.0.2.55",
+            "country": "DE",
+            "asn": 64499,
+            "org": "Example Hosting GmbH",
+        },
+        "198.51.100.140": {
+            "ip": "198.51.100.140",
+            "country": "BR",
+            "asn": 64500,
+            "org": "Example Telecom SA",
+        },
     }
 
-    for ip, country in expected_countries.items():
+    for ip, expected in expected_results.items():
         arguments = {"ip": ip}
 
         result = await recorder.execute(tool, arguments, ctx)
 
-        assert result["country"] == country
+        assert result == expected
 
         path = fixture_path(_FIXTURES_ROOT, tool.name, arguments)
         assert path.name == f"{fixture_key(arguments)}.json"

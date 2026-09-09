@@ -13,6 +13,14 @@ MaxMind endpoint is never touched (CONVENTIONS.md §10, `@pytest.mark.live` is r
 
 The literal license key used throughout is the synthetic `"test-key"` — a real key never appears
 anywhere in this file, a fixture, or test output.
+
+Fix round 1 (review Findings M2/M3/M5) adds three RED tests against HEAD's `dd9b2d7` behavior:
+`test_non_regular_member_is_bad_archive` (a directory-typed archive member trips a bare `assert`
+into an uncaught `AssertionError`), `test_symlink_member_is_bad_archive_and_writes_nothing` (a
+dangling-symlink member is mislabeled `no .mmdb in archive` via a `LookupError`/`KeyError`
+coincidence), and `test_main_restores_httpx_logger_levels` (the `httpx`/`httpcore` logger-level
+mutation `main()` makes to close the MUT-2 key leak is never restored, leaking across the pytest
+session).
 """
 
 from __future__ import annotations
@@ -294,6 +302,125 @@ def test_edition_flag_limits_downloads(
             transport=_forbidden_transport(),
         )
     assert exc_info.value.code == 2
+
+
+def test_non_regular_member_is_bad_archive(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Review Finding M2: a member matching the edition rule whose type is not a regular file
+    (here a `tarfile.DIRTYPE` directory entry) makes `tar.extractfile()` return `None`; at HEAD an
+    unguarded `assert extracted is not None` turns that into an uncaught `AssertionError`
+    escaping `main()` — this test pins the documented contract instead (every failure is an
+    `error: ...` line and exit 1, never a raw traceback) and fails at HEAD with that
+    `AssertionError` propagating out of the `main()` call below rather than a clean exit code.
+    """
+    monkeypatch.setenv("MAXMIND_LICENSE_KEY", "test-key")
+    out_dir = tmp_path / "out"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="GeoLite2-Country_20260901/GeoLite2-Country.mmdb")
+            info.type = tarfile.DIRTYPE
+            tar.addfile(info)
+        return httpx.Response(200, content=buffer.getvalue())
+
+    exit_code = fetch_geoip.main(
+        ["--out-dir", str(out_dir), "--edition", "GeoLite2-Country"],
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    stderr_lines = captured.err.strip().splitlines()
+    assert stderr_lines == ["error: download_failed: GeoLite2-Country: bad archive"]
+    assert "Traceback" not in captured.err
+    assert not out_dir.exists() or list(out_dir.iterdir()) == []
+
+
+def test_symlink_member_is_bad_archive_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Review Finding M3: a member matching the edition rule whose type is a dangling symlink
+    (`tarfile.SYMTYPE`, target not present in the archive) makes `tar.extractfile()` raise a
+    `KeyError` — itself a `LookupError` subclass — which at HEAD is caught by the same
+    `except LookupError` used for "no matching member at all", mislabeling a real (if unusable)
+    `.mmdb`-named member as `no .mmdb in archive`. This test pins the distinct, honest reason
+    `bad archive` and fails at HEAD because the actual message is `no .mmdb in archive`.
+    """
+    monkeypatch.setenv("MAXMIND_LICENSE_KEY", "test-key")
+    out_dir = tmp_path / "out"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="GeoLite2-Country_20260901/GeoLite2-Country.mmdb")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../../../../etc/passwd"
+            tar.addfile(info)
+        return httpx.Response(200, content=buffer.getvalue())
+
+    exit_code = fetch_geoip.main(
+        ["--out-dir", str(out_dir), "--edition", "GeoLite2-Country"],
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert exit_code == 1
+    assert (
+        capsys.readouterr().err.strip() == "error: download_failed: GeoLite2-Country: bad archive"
+    )
+    assert not out_dir.exists() or list(out_dir.iterdir()) == []
+
+
+def test_main_restores_httpx_logger_levels(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Review Finding M5: `main()` sets both the `httpx` and `httpcore` loggers to `WARNING` as a
+    process-global side effect (closing the real key-leak MUT-2 proves — see
+    `test_license_key_is_sent_in_the_query_and_never_printed`) but never restores the prior level,
+    so calling `main()` in-process (as every test in this file does) leaks the mutation across the
+    whole pytest session. Both loggers are reset to a known baseline (`NOTSET`) immediately before
+    each call so this test's own "restored" assertion is meaningful regardless of what earlier
+    tests in the session already did to them; a `finally` restores that baseline again after the
+    test regardless of outcome, so this test does not itself leak into later ones. Fails at HEAD:
+    the level is `WARNING`, not `NOTSET`, after the very first successful call.
+    """
+    monkeypatch.setenv("MAXMIND_LICENSE_KEY", "test-key")
+    httpx_logger = logging.getLogger("httpx")
+    httpcore_logger = logging.getLogger("httpcore")
+
+    def ok_handler(request: httpx.Request) -> httpx.Response:
+        edition = request.url.params["edition_id"]
+        body = _make_tar_gz({f"{edition}_20260901/{edition}.mmdb": b"x" * 16})
+        return httpx.Response(200, content=body)
+
+    def error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="forbidden")
+
+    try:
+        httpx_logger.setLevel(logging.NOTSET)
+        httpcore_logger.setLevel(logging.NOTSET)
+
+        exit_code = fetch_geoip.main(
+            ["--out-dir", str(tmp_path)], transport=httpx.MockTransport(ok_handler)
+        )
+
+        assert exit_code == 0
+        assert httpx_logger.level == logging.NOTSET
+        assert httpcore_logger.level == logging.NOTSET
+
+        httpx_logger.setLevel(logging.NOTSET)
+        httpcore_logger.setLevel(logging.NOTSET)
+
+        exit_code_err = fetch_geoip.main(
+            ["--out-dir", str(tmp_path), "--edition", "GeoLite2-Country"],
+            transport=httpx.MockTransport(error_handler),
+        )
+
+        assert exit_code_err == 1
+        assert httpx_logger.level == logging.NOTSET
+        assert httpcore_logger.level == logging.NOTSET
+    finally:
+        httpx_logger.setLevel(logging.NOTSET)
+        httpcore_logger.setLevel(logging.NOTSET)
 
 
 def test_mmdb_is_gitignored_and_dockerignored() -> None:
