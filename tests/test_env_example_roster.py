@@ -23,13 +23,12 @@ _ENV_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / ".env.example"
 # appearing in .env.example, or a new uncommented name appears that isn't listed here, that is a
 # real drift the second test below must catch. A name graduates OUT of this set in the same
 # commit its field lands on `Settings` (m2 task-01 fix r1: `DATABASE_URL` graduated when
-# `core.config.Settings.database_url` shipped) — a stale entry here would silently stop guarding
-# against a typo in that name.
+# `core.config.Settings.database_url` shipped; m5 task-01: `REDIS_URL` graduates the same way) —
+# a stale entry here would silently stop guarding against a typo in that name.
 _SCHEDULED = {
     "ESCALATE_SEVERITY_GTE",
     "ESCALATE_CONFIDENCE_LT",
     "DAILY_TOKEN_BUDGET",
-    "REDIS_URL",
     "ADMIN_TOKEN",
     "RETRIAGE_PER_DAY",
     "PUBLIC_RATE_LIMIT_PER_MIN",

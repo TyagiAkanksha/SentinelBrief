@@ -1,4 +1,5 @@
-"""Shared test fixtures: throwaway-schema DB fixtures and the skip-by-fixture-name hook.
+"""Shared test fixtures: throwaway-schema DB fixtures, dedicated-Redis fixtures, and the
+skip-by-fixture-name hook.
 
 CONVENTIONS.md §10: DB tests run against a fresh Postgres schema
 (`sentinelbrief_test_<hex8>`), migrated to head through the production engine factory
@@ -7,9 +8,14 @@ unset, any test that requests `tmp_schema`, `db_engine`, `db_session_factory` or
 is skipped **by fixture name** in collection — a skip is recorded (visible in `-q` output),
 never a silent omission (m2 task-01).
 
-`core.db`, `psycopg` and `alembic` are imported **lazily inside the fixtures**, not at module
-top, so this file (and every non-DB test in the suite) can be collected before task-01's
-implementation lands those packages/modules.
+m5 task-01 adds the Redis half of the same pattern: `redis_url`/`arq_redis` skip by fixture name
+when `TEST_REDIS_URL` is unset. `arq_redis` `flushdb`s before AND after the test, which is why
+`TEST_REDIS_URL` must point at a DEDICATED Redis (the `sentinelbrief-test-redis` container on
+127.0.0.1:6380) — never the dev compose Redis on 6379, whose queue a flush would destroy.
+
+`core.db`/`core.queue`, `psycopg`, `alembic` and `arq` are imported **lazily inside the
+fixtures**, not at module top, so this file (and every non-DB/non-Redis test in the suite) can be
+collected before task-01's implementation lands those packages/modules.
 """
 
 from __future__ import annotations
@@ -27,28 +33,38 @@ from pydantic import SecretStr
 from core.config import ModelPrice, Settings
 
 if TYPE_CHECKING:
+    from arq.connections import ArqRedis
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 # Fixture names that require a real database — any test requesting one of these is skipped
 # (not silently dropped) when TEST_DATABASE_URL is unset.
 _DB_FIXTURE_NAMES = {"tmp_schema", "db_engine", "db_session_factory", "db_session"}
 
+# Fixture names that require a real, dedicated Redis — any test requesting one of these is
+# skipped (not silently dropped) when TEST_REDIS_URL is unset. Mirrors _DB_FIXTURE_NAMES above.
+_REDIS_FIXTURE_NAMES = {"redis_url", "arq_redis"}
+
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip DB-fixture tests when `TEST_DATABASE_URL` is unset (CONVENTIONS.md §10).
+    """Skip DB-fixture and Redis-fixture tests when their env var is unset (CONVENTIONS.md §10).
 
     Skips **by fixture name** rather than by test module/marker, so any present or future test
-    that merely requests one of `_DB_FIXTURE_NAMES` is covered automatically. A skip is recorded
-    in `-q` output — a green run without the env var exported must never look like DB coverage.
+    that merely requests one of `_DB_FIXTURE_NAMES`/`_REDIS_FIXTURE_NAMES` is covered
+    automatically. A skip is recorded in `-q` output — a green run without both env vars exported
+    must never look like DB/Redis coverage.
     """
-    if os.environ.get("TEST_DATABASE_URL"):
-        return
+    has_db = bool(os.environ.get("TEST_DATABASE_URL"))
+    has_redis = bool(os.environ.get("TEST_REDIS_URL"))
     skip_no_db = pytest.mark.skip(reason="TEST_DATABASE_URL unset")
+    skip_no_redis = pytest.mark.skip(reason="TEST_REDIS_URL unset")
     for item in items:
-        if _DB_FIXTURE_NAMES.intersection(getattr(item, "fixturenames", ())):
+        fixturenames = getattr(item, "fixturenames", ())
+        if not has_db and _DB_FIXTURE_NAMES.intersection(fixturenames):
             item.add_marker(skip_no_db)
+        if not has_redis and _REDIS_FIXTURE_NAMES.intersection(fixturenames):
+            item.add_marker(skip_no_redis)
 
 
 def _require_test_database_url() -> str:
@@ -61,6 +77,18 @@ def _require_test_database_url() -> str:
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL unset")
+    return url
+
+
+def _require_test_redis_url() -> str:
+    """Return `TEST_REDIS_URL`, or skip the current test if it is unset.
+
+    Belt-and-suspenders alongside `pytest_collection_modifyitems`, mirroring
+    `_require_test_database_url` above.
+    """
+    url = os.environ.get("TEST_REDIS_URL")
+    if not url:
+        pytest.skip("TEST_REDIS_URL unset")
     return url
 
 
@@ -134,6 +162,32 @@ async def db_session(
     """One `AsyncSession` per test, closed after the test."""
     async with db_session_factory() as session:
         yield session
+
+
+@pytest.fixture
+def redis_url() -> str:
+    """The dedicated test Redis's URL (`TEST_REDIS_URL`), or a skip when it is unset."""
+    return _require_test_redis_url()
+
+
+@pytest.fixture
+async def arq_redis(redis_url: str) -> AsyncIterator[ArqRedis]:
+    """An `ArqRedis` client bound to `redis_url`, `flushdb`'d before AND after the test.
+
+    The pre-test flush guarantees a clean queue even after a previous test crashed mid-assertion
+    without reaching its own teardown; the post-test flush leaves the dedicated Redis clean for
+    whatever runs next. Never point `TEST_REDIS_URL` at the dev compose Redis (6379) — this
+    fixture destroys its queue on every single test.
+    """
+    from core.queue import make_redis
+
+    client = make_redis(redis_url, socket_timeout_s=2.0)
+    await client.flushdb()
+    try:
+        yield client
+    finally:
+        await client.flushdb()
+        await client.aclose()
 
 
 @pytest.fixture

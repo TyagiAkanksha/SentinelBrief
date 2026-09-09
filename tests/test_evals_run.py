@@ -25,6 +25,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from core.schemas.alert import SessionAlert
@@ -640,3 +641,66 @@ def test_main_usage_error_on_nonpositive_concurrency(
     assert lines[0].startswith("error: usage:")
     assert "Traceback" not in captured.err
     assert fake.calls == []
+
+
+# --- m5 task-01 (N-M5): one registry per run, over an injected http= client main always closes ---
+
+
+def test_main_closes_the_injected_http_client_on_success_and_failure(tmp_path: Path) -> None:
+    """`evals.run.main` builds `build_registry(...)` exactly once per run — above the
+    `--prompt` loop, never once per prompt version — over an injected `http=` client it always
+    closes in a `finally`: on the success path (`rc == 0`, two prompt runs over the same
+    registry) and on the `all_cases_failed` path (`rc == 1`), so a batch of prompt-version runs
+    never leaks a connection pool. (`build_registry(` appearing exactly once in `evals/run.py`,
+    above `for prompt_version in args.prompt`, is a review item with `file:line` — not something
+    this black-box test can assert on its own.)
+    """
+    golden_path = _write_golden(
+        tmp_path / "golden.jsonl", [_golden_case("alert1.json"), _golden_case("alert2.json")]
+    )
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+
+    ok_client = httpx.AsyncClient()
+    fake_ok = FakeLLMClient([VALID_VERDICT_JSON] * 4)  # 2 cases x 2 prompt runs
+
+    rc_ok = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake_ok,
+        http=ok_client,
+    )
+
+    assert rc_ok == 0
+    assert ok_client.is_closed
+
+    failing_client = httpx.AsyncClient()
+    fake_failing = FakeLLMClient(["{}", "{}", "{}", "{}"])  # both cases fail every attempt
+
+    rc_failed = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake_failing,
+        http=failing_client,
+    )
+
+    assert rc_failed == 1
+    assert failing_client.is_closed

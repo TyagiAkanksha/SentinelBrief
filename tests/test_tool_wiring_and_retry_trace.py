@@ -1,13 +1,28 @@
-"""Fix round 1 for m4 task-06 (review findings I1, I2, I3, M5).
+"""Everything this file hosts, in order (fix round 1 for m4 task-06 review findings I1, I2, I3,
+M5; extended at m5 task-01 — M4 re-review N2 asked for this list to stay current as the file
+grows):
 
-Four independent gaps the review found: `build_registry`'s `Settings` consumption was almost
-entirely unpinned (I1); the tool trace on the PRD §6.5 retry path was unpinned (I2); `seed_dev`
-built a fresh five-tool registry inside the per-alert loop instead of once (I3); and
-`delimit_attacker_data`'s key-side neutralization (as opposed to value-side) was untested (M5).
+- `test_tool_names_matches_the_prd_6_3_table_order` — `TOOL_NAMES` against the PRD §6.3 table
+  order itself, not `wiring.py`'s own constant (task-06 review M1).
+- `test_build_registry_consumes_every_wired_settings_field` (I1) — `build_registry`'s `Settings`
+  consumption was almost entirely unpinned; this threads every documented field into the tool it
+  configures.
+- `test_retry_path_preserves_the_tool_trace_in_persistence` (I2) — the tool-call trace survives
+  the PRD §6.5 structured-output retry path and is persisted (`ToolCallRow`), not silently
+  dropped.
+- `test_seed_builds_the_registry_exactly_once` (I3) — `scripts/seed_dev.py` builds one five-tool
+  registry for the whole run, never one per seeded alert (a genuine regression, RED until Part
+  B's implementer fix hoists the registry above `seed()`'s per-alert loop).
+- `test_tool_result_message_neutralizes_key_side_forged_markers` (M5) — `delimit_attacker_data`
+  neutralizes a forged marker on the *key* side of a tool result too, not just the value side.
+- `test_from_settings_passes_the_http_client_to_the_registry` (m5 task-01) — `TriagePipeline
+  .from_settings`'s new `http=` seam (M4 task-06 fix-1 I4 ownership: the caller owns `aclose()`)
+  reaches the registry's `lookup_ip_reputation` tool unchanged, so `worker/main.py`'s single
+  process-lifetime `httpx.AsyncClient` really is what every tool call in the worker uses.
 
-I1/I2/M5 pin *existing, correct* behavior (mutation-proofed below, pasted into the test-author
-report — never mocking our own code, `.claude/rules/tests.md`); I3 is a genuine regression and is
-RED here until Part B's implementer fix hoists the registry above `seed()`'s per-alert loop.
+I1/I2/M5 and the http-seam test pin *existing, correct* behavior (mutation-proofed, pasted into
+the test-author report — never mocking our own code, `.claude/rules/tests.md`); I3 is a genuine
+regression and stays RED here until Part B's implementer fix lands.
 """
 
 from __future__ import annotations
@@ -19,6 +34,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -315,3 +331,23 @@ def test_tool_result_message_neutralizes_key_side_forged_markers() -> None:
     body = content.removeprefix(f"{ALERT_DATA_BEGIN}\n").removesuffix(f"\n{ALERT_DATA_END}")
     assert "<<<" not in body
     assert body.count("‹‹‹") == 2
+
+
+# --- m5 task-01: TriagePipeline.from_settings threads its new http= seam through -----------------
+
+
+async def test_from_settings_passes_the_http_client_to_the_registry() -> None:
+    client = httpx.AsyncClient(timeout=3.25)
+    settings = Settings()
+
+    try:
+        pipeline = TriagePipeline.from_settings(settings, llm=FakeLLMClient([]), http=client)
+
+        # Private-attribute access is accepted for a wiring pin (task-06 fix-1 brief, I1):
+        # neither the registry nor the tool expose a public accessor for their configured http
+        # client.
+        tools = pipeline._tools  # type: ignore[attr-defined]
+        reputation_tool = tools._by_name["lookup_ip_reputation"]
+        assert reputation_tool._http is client  # type: ignore[attr-defined]
+    finally:
+        await client.aclose()

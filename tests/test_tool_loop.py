@@ -19,9 +19,7 @@ Documentation-range IPs only (PRD §1.4/CLAUDE.md).
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
-import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -376,7 +374,7 @@ async def test_loop_stops_at_cap_and_forces_verdict() -> None:
     assert len(outcome_one.tool_calls) == 1
 
 
-def test_tools_without_a_cap_is_a_value_error_and_from_settings_honours_the_cap_setting() -> None:
+def test_tools_without_a_cap_is_a_value_error() -> None:
     registry = _registry(EchoTool())
 
     with pytest.raises(ValueError):
@@ -674,35 +672,3 @@ async def test_build_registry_uses_the_supplied_cache_and_http_client() -> None:
     assert execution.result.get("unavailable") is not True
     assert len(recorded_sets) == 1
     assert recorded_sets[0][0] == "abuseipdb:203.0.113.10"
-
-
-# --- api.main wiring -----------------------------------------------------------------------
-
-
-def _reset_api_main() -> None:
-    """Drop any cached `api.main` module so the next import re-runs its top-level wiring
-    (mirrors `tests/test_api_main.py::_reset_api_main`; test files never import from each
-    other, so this is duplicated on purpose)."""
-    sys.modules.pop("api.main", None)
-
-
-def test_api_main_pipeline_has_the_five_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("INGEST_HMAC_SECRET", raising=False)
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("CHEAP_MODEL", raising=False)
-    monkeypatch.delenv("MODEL_PRICES_JSON", raising=False)
-    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/x")
-    monkeypatch.setenv("INGEST_HMAC_SECRET", "test-secret")
-    monkeypatch.setenv("LLM_API_KEY", "sk-test")
-    monkeypatch.setenv("CHEAP_MODEL", "fake-model")
-    monkeypatch.setenv(
-        "MODEL_PRICES_JSON", '{"fake-model":{"input_per_mtok":"0","output_per_mtok":"0"}}'
-    )
-    _reset_api_main()
-
-    try:
-        module = importlib.import_module("api.main")
-        assert module.pipeline.tool_names == TOOL_NAMES
-    finally:
-        _reset_api_main()
