@@ -132,6 +132,8 @@ class IpReputationTool:
 
         try:
             data = response.json()["data"]
+            if not isinstance(data, dict):
+                raise TypeError("data is not an object")
             last_seen = data.get("lastReportedAt")
             if last_seen is not None and not isinstance(last_seen, str):
                 raise TypeError
