@@ -60,7 +60,12 @@ class AlertHistoryTool:
         self._max_window_hours = max_window_hours
 
     async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
-        """Answer `{ip, window_hours, count, first_seen, categories}`; never raises."""
+        """Answer `{ip, window_hours, count, first_seen, categories}`; never raises.
+
+        `ip` is canonicalized (`str(ipaddress.ip_address(ip))`) after validation, matching
+        `lookup_ip_reputation` (m4 task-04); the canonical spelling is what reaches the service's
+        `src_ip` predicate and `result["ip"]`, not the caller's original string.
+        """
         ip = arguments.get("ip")
         if not isinstance(ip, str):
             return unavailable("invalid_arguments")

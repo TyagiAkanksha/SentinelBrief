@@ -59,7 +59,7 @@ async def get_alert_history(
     Raises:
         ValueError: When `since` is a naive datetime — raised before any SQL is issued.
     """
-    if since.tzinfo is None:
+    if since.tzinfo is None or since.tzinfo.utcoffset(since) is None:
         raise ValueError("since must be timezone-aware")
 
     predicates = [AlertRow.raw["src_ip"].astext == src_ip, AlertRow.received_at >= since]
