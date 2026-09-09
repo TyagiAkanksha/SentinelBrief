@@ -88,9 +88,11 @@ class LiveToolRecorder:
     """Always executes `tool.run` live; optionally records a fixture of the result."""
 
     def __init__(self, *, record_dir: Path | None = None) -> None:
-        """Args:
-        record_dir: When set, every `execute` call also writes a fixture under this root
-            (`LiveToolRecorder(record_dir=Path("tests/fixtures/tools"))` mints fixtures).
+        """Build a recorder that always runs live, optionally minting fixtures as it goes.
+
+        Args:
+            record_dir: When set, every `execute` call also writes a fixture under this root
+                (`LiveToolRecorder(record_dir=Path("tests/fixtures/tools"))` mints fixtures).
         """
         self._record_dir = record_dir
 
@@ -108,10 +110,13 @@ class ReplayToolRecorder:
     """Serves an external tool's result from a recorded fixture; runs local tools live."""
 
     def __init__(self, fixtures_dir: Path) -> None:
-        """Args:
-        fixtures_dir: The fixtures directory root (e.g. `tests/fixtures/tools`).
+        """Build a recorder that replays fixtures from `fixtures_dir`.
+
+        Args:
+            fixtures_dir: The fixtures directory root (e.g. `tests/fixtures/tools`).
         """
         self._fixtures_dir = fixtures_dir
+        self._warned: set[Path] = set()  # per-path missing-fixture warning guard (I5)
 
     async def execute(
         self, tool: Tool, arguments: Mapping[str, Any], ctx: ToolContext
@@ -119,20 +124,29 @@ class ReplayToolRecorder:
         """Replay `tool`'s fixture if `tool.external`, else run it live.
 
         Never calls `tool.run` for an external tool — that is the whole point (PRD §7.2,
-        CLAUDE.md "never live APIs"). A missing/mismatched/unreadable fixture is reported via
-        `unavailable(...)`, never raised.
+        CLAUDE.md "never live APIs"). A missing/mismatched/unreadable/wrong-shaped fixture is
+        reported via `unavailable(...)`, never raised.
         """
         if not tool.external:
             return await tool.run(arguments, ctx)
 
         path = fixture_path(self._fixtures_dir, tool.name, arguments)
         if not path.exists():
-            logger.warning("tool fixture missing tool=%s path=%s", tool.name, path)
+            if path not in self._warned:
+                logger.warning("tool fixture missing tool=%s path=%s", tool.name, path)
+                self._warned.add(path)
             return unavailable("fixture_missing")
 
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
+            return unavailable("fixture_unreadable")
+
+        if (
+            not isinstance(data, dict)
+            or not {"tool", "arguments", "result"} <= data.keys()
+            or not isinstance(data["result"], dict)
+        ):
             return unavailable("fixture_unreadable")
 
         if data["tool"] != tool.name or data["arguments"] != dict(arguments):

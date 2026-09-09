@@ -185,6 +185,12 @@ class OpenAICompatibleLLMClient:
             raise LLMCallError(f"LLM call failed: {e}") from e
         latency_ms = int((perf_counter() - start) * 1000)
 
+        # Guards both callers' `response.choices[0]` access below — an empty `choices` list is
+        # neither an `openai.OpenAIError` nor an `httpx.HTTPError`, so it would otherwise escape
+        # unmapped as an `IndexError` (m4 task-01 fix-1, M6).
+        if not response.choices:
+            raise LLMCallError("provider returned no choices")
+
         if response.usage is None:
             raise LLMCallError("provider returned no usage")
         usage = LLMUsage(

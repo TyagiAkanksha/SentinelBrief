@@ -1,12 +1,14 @@
 """`ToolRegistry`: looks tools up by name, executes them through a `ToolRecorder`, and enforces
 the one character-budget backstop every tool result is truncated to (PRD §6.3).
 
-`ToolRegistry.execute` **never raises** — an unknown tool name or a tool (or recorder) that raises
-becomes `unavailable(...)` instead (spine constraint M4-a). Its one `except Exception` is the
-single deliberate backstop in this codebase (controller ruling Q6, CONVENTIONS.md §4): inline
-triage (until M5) runs inside the ingest request, so an exception escaping here would 500 the
-request and strand the alert `pending`. The exception's message is logged; the attacker-influenced
-argument *values* never are — only the argument keys (PRD §10.6).
+`ToolRegistry.execute` **never raises** — an unknown tool name, a tool (or recorder) that raises,
+or a tool result that can't be JSON-serialized all become `unavailable(...)` instead (spine
+constraint M4-a). Two guarded regions inside `execute` — one around running the tool, one around
+truncating its result — are the deliberate `except Exception` backstops in this codebase
+(controller ruling Q6, CONVENTIONS.md §4): inline triage (until M5) runs inside the ingest
+request, so an exception escaping here would 500 the request and strand the alert `pending`. The
+exception's message is logged; the attacker-influenced argument *values* never are — only the
+argument keys (PRD §10.6).
 """
 
 from __future__ import annotations
@@ -29,8 +31,8 @@ logger = logging.getLogger(__name__)
 class ToolExecution:
     """The outcome of one `ToolRegistry.execute` call."""
 
-    result: dict[str, Any]  # already truncated — exactly what the model will see and what is
-    # persisted
+    # Already truncated — exactly what the model will see and what is persisted.
+    result: dict[str, Any]
     latency_ms: int
 
 
@@ -68,12 +70,14 @@ class ToolRegistry:
         max_result_chars: int,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
-        """Args:
-        tools: The tools to register, in the order the model should see them.
-        recorder: How to actually execute a tool (live, replayed, optionally recorded).
-        max_result_chars: The per-result character budget (`truncate_result`'s `max_chars`).
-        clock: A zero-arg callable returning the current time, used to measure `latency_ms` —
-            the latency seam (CONVENTIONS.md §10), defaulting to `time.perf_counter`.
+        """Register `tools`, validating names and the result budget up front.
+
+        Args:
+            tools: The tools to register, in the order the model should see them.
+            recorder: How to actually execute a tool (live, replayed, optionally recorded).
+            max_result_chars: The per-result character budget (`truncate_result`'s `max_chars`).
+            clock: A zero-arg callable returning the current time, used to measure `latency_ms`
+                — the latency seam (CONVENTIONS.md §10), defaulting to `time.perf_counter`.
 
         Raises:
             ValueError: Two tools share a `name`, or `max_result_chars < 1`.
@@ -112,8 +116,10 @@ class ToolRegistry:
             A `ToolExecution` whose `result` is already truncated to `max_result_chars`.
             `unavailable("unknown_tool")` (latency 0, the recorder is never called) if `name`
             isn't registered; `unavailable("<ExceptionClass>: tool raised")` (with one ERROR log
-            naming `name` and `arguments`' keys, never their values) if the recorder/tool raises.
-            `asyncio.CancelledError` is a `BaseException`, not caught here, and propagates.
+            naming `name` and `arguments`' keys, never their values) if the recorder/tool raises;
+            `unavailable("<ExceptionClass>: result not serializable")` (same log shape) if the
+            result can't be JSON-serialized. `asyncio.CancelledError` is a `BaseException`, not
+            caught by either guard, and propagates.
         """
         tool = self._by_name.get(name)
         if tool is None:
@@ -127,8 +133,19 @@ class ToolRegistry:
             result = unavailable(f"{type(exc).__name__}: tool raised")
         # round(), not int(): a scripted clock (e.g. 2.0 -> 2.01) can land a hair under the exact
         # millisecond boundary in binary floating point (2.01 - 2.0 == 9.999999999999787), and a
-        # truncating int() would report 9ms instead of the intended 10ms.
+        # truncating int() would report 9ms instead of the intended 10ms. Measured around the run
+        # only — truncation is guarded separately below.
         latency_ms = round((self._clock() - start) * 1000)
-        return ToolExecution(
-            result=truncate_result(result, self._max_result_chars), latency_ms=latency_ms
-        )
+
+        try:
+            truncated = truncate_result(result, self._max_result_chars)
+        except Exception as exc:  # the second deliberate backstop: a result json.dumps can't
+            # serialize (e.g. a raw datetime) must not escape either (spine constraint M4-a).
+            logger.exception(
+                "tool result not serializable tool=%s arg_keys=%s", name, sorted(arguments)
+            )
+            truncated = truncate_result(
+                unavailable(f"{type(exc).__name__}: result not serializable"),
+                self._max_result_chars,
+            )
+        return ToolExecution(result=truncated, latency_ms=latency_ms)

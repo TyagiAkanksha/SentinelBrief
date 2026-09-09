@@ -166,6 +166,11 @@ async def test_complete_structured_sends_json_object_and_temperature_zero() -> N
     assert request_body["temperature"] in (0, 0.0)
     assert request_body["response_format"] == {"type": "json_object"}
     assert request_body["model"] == "fake-model"
+    # I1 (m4 task-01 fix-1): `complete_structured` shares `_send` with `complete_with_tools`, whose
+    # default path relies on the SDK's `openai.omit` sentinel to leave `tools`/`tool_choice` off
+    # the wire entirely — pin that explicitly so a future SDK/refactor drift shows up here.
+    assert "tools" not in request_body
+    assert "tool_choice" not in request_body
 
 
 async def test_complete_structured_maps_http_500_to_llm_call_error() -> None:
@@ -360,3 +365,53 @@ def test_from_settings_happy_path_configures_client() -> None:
     assert sdk_client.timeout == 60.0
     assert sdk_client.max_retries == 2
     assert sdk_client.api_key == "unset"  # empty LLM_API_KEY default -> the "unset" placeholder
+
+
+# --- m4 task-01 fix-1 (M6): a `choices: []` reply must map to LLMCallError, not IndexError ---
+
+_TOOL_SPEC: dict[str, object] = {
+    "name": "get_session_commands",
+    "description": "Return the full command list for a session.",
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
+async def test_complete_structured_empty_choices_raises_llm_call_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _chat_completion_body(json.dumps(_VALID_VERDICT))
+        body["choices"] = []
+        return httpx.Response(200, json=body)
+
+    client = OpenAICompatibleLLMClient(
+        client=_mock_client(httpx.MockTransport(handler), max_retries=0),
+        prices=_FAKE_PRICES,
+        json_mode="json_object",
+    )
+
+    with pytest.raises(LLMCallError):
+        await client.complete_structured(
+            messages=[{"role": "user", "content": "hi"}],
+            response_model=Verdict,
+            model="fake-model",
+        )
+
+
+async def test_complete_with_tools_empty_choices_raises_llm_call_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _chat_completion_body(json.dumps(_VALID_VERDICT))
+        body["choices"] = []
+        return httpx.Response(200, json=body)
+
+    client = OpenAICompatibleLLMClient(
+        client=_mock_client(httpx.MockTransport(handler), max_retries=0),
+        prices=_FAKE_PRICES,
+        json_mode="json_object",
+    )
+
+    with pytest.raises(LLMCallError):
+        await client.complete_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[_TOOL_SPEC],
+            response_model=Verdict,
+            model="fake-model",
+        )
