@@ -120,7 +120,7 @@ with the controller's M4 acceptance walk.
   // web/src/components/alerts/AlertHeader — the <h1> contains the flag then the IP; the heading's text content still contains the IP.
 
   // web/src/components/alerts/Timeline — TimelineProps unchanged; <ol aria-label="Tool trace"> unchanged. Behavior per item (one <li key={seq}>,
-  //   in the given order): a heading-level text `${seq}. ${tool_name}`; the latency text formatLatency(latency_ms); a labelled block
+  //   in the given order): a title line `${seq}. ${tool_name}` rendered as the item's first `<p>` (not an `<h*>` element — M4 task-07 review M9 ruling); the latency text formatLatency(latency_ms); a labelled block
   //   "Arguments" whose <pre> text is JSON.stringify(arguments, null, 2); a labelled block "Result" whose <pre> text is
   //   JSON.stringify(result, null, 2); when result.unavailable === true, additional visible text `unavailable (${result.reason})`
   //   (reason coerced with String(); "unknown" when absent). Empty list -> exactly one <li> with text "No tool calls were made."
