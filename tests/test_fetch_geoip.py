@@ -195,8 +195,11 @@ def test_archive_without_mmdb_or_with_traversal_name_is_rejected(
 ) -> None:
     """Neither a `README.txt`-only archive nor one whose only member is named `../../evil.mmdb`
     contains anything matching `*/{edition}.mmdb` (or exactly `{edition}.mmdb`) — the documented
-    matching rule (brief Interfaces) — so both are rejected as `no .mmdb in archive`, and neither
-    ever writes a file, in or outside `out_dir`: the member path is never honored.
+    matching rule (brief Interfaces, controller ruling R8) — so both are rejected as `no .mmdb in
+    archive`, and neither ever writes a file, in or outside `out_dir`: the member path is never
+    honored. The companion case where a traversal-named member DOES match the edition rule (and
+    must be written by basename) is
+    `test_traversal_member_matching_the_edition_is_written_by_basename`.
     """
     monkeypatch.setenv("MAXMIND_LICENSE_KEY", "test-key")
 
@@ -230,6 +233,37 @@ def test_archive_without_mmdb_or_with_traversal_name_is_rejected(
         == "error: download_failed: GeoLite2-Country: no .mmdb in archive"
     )
     assert not any(tmp_path.rglob("*.mmdb")), "a member path was honored outside out_dir"
+
+
+def test_traversal_member_matching_the_edition_is_written_by_basename(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Controller ruling R8 / brief Interfaces (amended row): a member named
+    `../../GeoLite2-Country.mmdb` DOES match the documented rule (its name ends with
+    `/GeoLite2-Country.mmdb`) despite its leading `..` components, so it must be extracted — but
+    stripped of its directory, never honoring the member's own path (which would otherwise
+    traverse above `out_dir`). `out_dir` is nested two levels under `tmp_path`
+    (`tmp_path/geo/out`) so the literal traversal target `../../GeoLite2-Country.mmdb` resolves
+    to a path still inside pytest's own tmp tree even if a broken implementation honored it —
+    this test asserts that exact path does not exist, not merely "somewhere outside `out_dir`".
+    """
+    monkeypatch.setenv("MAXMIND_LICENSE_KEY", "test-key")
+    out_dir = tmp_path / "geo" / "out"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_make_tar_gz({"../../GeoLite2-Country.mmdb": b"x" * 16}))
+
+    exit_code = fetch_geoip.main(
+        ["--out-dir", str(out_dir), "--edition", "GeoLite2-Country"],
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert exit_code == 0
+    written = out_dir / "GeoLite2-Country.mmdb"
+    assert written.read_bytes() == b"x" * 16
+
+    traversal_target = (out_dir / "../../GeoLite2-Country.mmdb").resolve()
+    assert not traversal_target.exists()
 
 
 def test_edition_flag_limits_downloads(
