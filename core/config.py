@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     stats_cache_ttl_s: int = 60
     alerts_cache_max_entries: int = 1024
     """Bound on the in-process list/stats cache; M5's Redis backend uses its own maxmemory."""
+    tool_result_max_chars: Annotated[int, Field(ge=1)] = 4000
+    """Character budget every tool result is truncated to before it is fed back to the model or
+    persisted (PRD §6.3, m4 task-01). One backstop for every tool, not a per-tool setting — see
+    the comment in `.env.example`."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod
