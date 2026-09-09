@@ -28,10 +28,10 @@ import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from core.cache import InMemoryTTLCache
+from core.cache import InMemoryTTLCache, TTLCache
 from core.config import Settings
 from core.schemas.alert import CowrieEvent, SessionAlert
-from worker.tools import ReplayToolRecorder, ToolContext, fixture_key, fixture_path
+from worker.tools import ReplayToolRecorder, ToolContext, fixture_path
 from worker.tools.ip_reputation import ABUSEIPDB_CHECK_URL, CACHE_KEY_PREFIX, IpReputationTool
 
 _FIXTURES_ROOT = Path("tests/fixtures/tools")
@@ -54,6 +54,25 @@ class RecordingCache:
     async def set(self, key: str, value: bytes, ttl_s: int) -> None:
         self.set_calls.append((key, value, ttl_s))
         await self._inner.set(key, value, ttl_s)
+
+
+class _CorruptCache:
+    """A `TTLCache` stub whose `get` always returns the same non-JSON-object bytes — standing in
+    for a corrupt cache entry (a truncated Redis RDB, or a stale entry from a different result
+    schema once M5 shares the keyspace with the API cache, controller ruling I2 m4 task-04 fix-1)
+    without needing a real Redis. `set` is recorded so a test can also assert the fresh result
+    overwrites the poisoned entry.
+    """
+
+    def __init__(self, corrupt_value: bytes) -> None:
+        self._corrupt_value = corrupt_value
+        self.set_calls: list[tuple[str, bytes, int]] = []
+
+    async def get(self, key: str) -> bytes | None:
+        return self._corrupt_value
+
+    async def set(self, key: str, value: bytes, ttl_s: int) -> None:
+        self.set_calls.append((key, value, ttl_s))
 
 
 def _success_body(
@@ -97,7 +116,7 @@ def _tool(
     *,
     api_key: str = _TEST_KEY,
     handler: Callable[[httpx.Request], httpx.Response],
-    cache: InMemoryTTLCache | RecordingCache | None = None,
+    cache: TTLCache | None = None,
     cache_ttl_s: int = 86400,
     max_age_days: int = 90,
 ) -> IpReputationTool:
@@ -320,6 +339,19 @@ async def test_malformed_bodies_are_malformed_response() -> None:
         httpx.Response(200, content=b"not json"),
         httpx.Response(200, json={}),
         httpx.Response(200, json={"data": {"abuseConfidenceScore": "high"}}),
+        # Controller ruling (m4 task-04 fix-1, finding M2): `last_seen` is `str | None` by
+        # contract (brief Interfaces line 85) — any other JSON type (here, an epoch int) is a
+        # malformed body, not a value silently passed through and cached.
+        httpx.Response(
+            200,
+            json={
+                "data": {
+                    "abuseConfidenceScore": 5,
+                    "totalReports": 1,
+                    "lastReportedAt": 1757000000,
+                }
+            },
+        ),
     ]
 
     for body in bodies:
@@ -334,7 +366,9 @@ async def test_malformed_bodies_are_malformed_response() -> None:
         assert result == {"unavailable": True, "reason": "malformed_response"}
 
 
-async def test_invalid_ip_is_invalid_arguments_before_any_request() -> None:
+async def test_invalid_ip_is_invalid_arguments_before_any_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -352,15 +386,43 @@ async def test_invalid_ip_is_invalid_arguments_before_any_request() -> None:
     assert await tool.run({"ip": 1}, ctx) == {"unavailable": True, "reason": "invalid_arguments"}
     assert calls == []
 
+    # Controller ruling (m4 task-04 fix-1, finding I1): the ordering ("invalid ip before key",
+    # brief Interfaces line 78) is only observable when the key is unconfigured — the
+    # shipped-unkeyed configuration (`.env.example` ABUSEIPDB_API_KEY= empty, PRD §13) is the only
+    # one where "invalid ip before key" and "key before ip" diverge in their `reason` string.
+    unkeyed_calls: list[httpx.Request] = []
+
+    def unkeyed_handler(request: httpx.Request) -> httpx.Response:
+        unkeyed_calls.append(request)
+        return httpx.Response(200, json=_success_body(100, 412, "2026-09-05T22:14:03+00:00"))
+
+    unkeyed_tool = _tool(api_key="", handler=unkeyed_handler)
+
+    with caplog.at_level(logging.WARNING):
+        unkeyed_result = await unkeyed_tool.run({"ip": "nope"}, ctx)
+
+    assert unkeyed_result == {"unavailable": True, "reason": "invalid_arguments"}
+    assert unkeyed_calls == []
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
 
 async def test_key_never_appears_in_results_or_logs(caplog: pytest.LogCaptureFixture) -> None:
+    """Controller ruling (m4 task-04 fix-1, finding C1): three DISTINCT documentation IPs, so
+    each scenario's request actually reaches the transport instead of being served from a
+    previous call's cache entry — the earlier, same-IP version of this test only ever exercised
+    its own success branch (calls 2 and 3 were served from the cache call 1 wrote) and was
+    therefore vacuous on exactly the branches ("their text is not echoed", brief Interfaces line
+    90) it exists to pin.
+    """
     scripted: list[httpx.Response | Exception] = [
         httpx.Response(200, json=_success_body(100, 412, "2026-09-05T22:14:03+00:00")),
         httpx.Response(429),
         httpx.ConnectError("connection refused (Key test-key rejected upstream)"),
     ]
+    invocations: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        invocations.append(request)
         next_item = scripted.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -370,13 +432,82 @@ async def test_key_never_appears_in_results_or_logs(caplog: pytest.LogCaptureFix
 
     caplog.set_level(logging.DEBUG)
     success = await tool.run({"ip": "203.0.113.10"}, _ctx())
-    quota = await tool.run({"ip": "203.0.113.10"}, _ctx())
-    network = await tool.run({"ip": "203.0.113.10"}, _ctx())
+    quota = await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))
+    network = await tool.run({"ip": "192.0.2.55"}, _ctx("192.0.2.55"))
+
+    # The short-circuit-back-to-cache regression this test exists to catch: with three distinct
+    # IPs, every one of the three scripted transport outcomes must actually have been consumed.
+    assert len(invocations) == 3
+    assert success["cached"] is False
+    assert quota == {"unavailable": True, "reason": "quota_exceeded"}
+    assert network == {"unavailable": True, "reason": "network_error"}
 
     assert "test-key" not in json.dumps(success)
     assert "test-key" not in json.dumps(quota)
     assert "test-key" not in json.dumps(network)
     assert "test-key" not in caplog.text
+
+
+async def test_corrupt_cache_entry_is_treated_as_a_miss() -> None:
+    """Controller ruling (m4 task-04 fix-1, finding I2): a cache hit that is not a JSON object —
+    a corrupt/truncated entry, or a stale entry from a different result schema once M5 shares the
+    Redis keyspace with the API cache — must be treated as a miss, never raise out of `run`
+    (`worker/tools/base.py`'s "NEVER raises by contract"; brief Interfaces line 89 "Never
+    raises"). Two distinct corrupt shapes: bytes that are not valid JSON at all, and bytes that
+    parse to valid JSON but not a JSON *object* (a `dict`).
+    """
+    for corrupt_value in (b"not json", b"[1]"):
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(200, json=_success_body(100, 412, "2026-09-05T22:14:03+00:00"))
+
+        tool = _tool(handler=handler, cache=_CorruptCache(corrupt_value))
+
+        result = await tool.run({"ip": "203.0.113.10"}, _ctx())
+
+        assert request_count == 1  # the corrupt hit was never served; the live lookup ran
+        assert result == {
+            "ip": "203.0.113.10",
+            "abuse_score": 100,
+            "reports": 412,
+            "last_seen": "2026-09-05T22:14:03+00:00",
+            "cached": False,
+        }
+
+
+async def test_ipv6_spellings_share_one_cache_entry_and_canonical_ip() -> None:
+    """Controller ruling (m4 task-04 fix-1, finding M3): two spellings of the same IPv6 address
+    must canonicalize to one cache entry and spend AbuseIPDB quota once, not once per spelling —
+    the free tier is 1 000 checks/day (PRD §6.3) and this tool's whole purpose is spending it once
+    per IP per day (brief Interfaces line 68).
+    """
+    request_count = 0
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        captured.append(request)
+        return httpx.Response(
+            200, json=_success_body(23, 4, "2026-08-30T11:07:55+00:00", ip="2001:db8::1")
+        )
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache)
+
+    first = await tool.run({"ip": "2001:DB8::1"}, _ctx())
+    second = await tool.run({"ip": "2001:0db8:0000:0000:0000:0000:0000:0001"}, _ctx())
+
+    assert request_count == 1
+    assert first["cached"] is False
+    assert second["cached"] is True
+    assert first["ip"] == "2001:db8::1"
+    assert second["ip"] == "2001:db8::1"
+    assert cache.set_calls[0][0] == "abuseipdb:2001:db8::1"
+    assert dict(captured[0].url.params)["ipAddress"] == "2001:db8::1"
 
 
 def test_rejects_nonpositive_ttl_and_max_age() -> None:
@@ -405,6 +536,12 @@ def test_abuseipdb_settings_defaults_bounds_and_secret_repr() -> None:
         Settings(abuseipdb_max_age_days=366)  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         Settings(abuseipdb_timeout_s=0)  # type: ignore[call-arg]
+    # Controller ruling (m4 task-04 fix-1, finding M4): the other two numeric bounds
+    # (`core/config.py`'s `ge=1` on each) were previously untested.
+    with pytest.raises(ValidationError):
+        Settings(abuseipdb_cache_ttl_s=0)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        Settings(abuseipdb_cache_max_entries=0)  # type: ignore[call-arg]
 
     secret_settings = Settings(abuseipdb_api_key=SecretStr("abuse-key-1"))
     assert "abuse-key-1" not in repr(secret_settings)
@@ -422,7 +559,18 @@ async def test_recorded_fixtures_replay_for_the_five_fixture_ips() -> None:
         "192.0.2.55": 64,
         "198.51.100.140": 100,
     }
+    # Controller ruling (m4 task-04 fix-1, finding M1): the brief's five literal fixture file
+    # names — `assert path.name == f"{fixture_key(arguments)}.json"` cannot fail, since
+    # `fixture_path` is *defined* as exactly that expression (`worker/tools/recorder.py`).
+    expected_file_names = {
+        "5d2e7bda8feb939e.json",
+        "6a624fe81e1c51a3.json",
+        "1ba86fc94704aedc.json",
+        "70c94a209a3ec9bd.json",
+        "55230db792e5f6bf.json",
+    }
 
+    seen_file_names: set[str] = set()
     for ip, expected_score in expected_scores.items():
         arguments = {"ip": ip}
 
@@ -433,4 +581,7 @@ async def test_recorded_fixtures_replay_for_the_five_fixture_ips() -> None:
         assert "cached" not in result
 
         path = fixture_path(_FIXTURES_ROOT, tool.name, arguments)
-        assert path.name == f"{fixture_key(arguments)}.json"
+        assert path.exists()
+        seen_file_names.add(path.name)
+
+    assert seen_file_names == expected_file_names
