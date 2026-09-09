@@ -80,4 +80,4 @@ trace.
 
 ## Status
 
-in progress — briefs written 2026-09-09 (`m4-tool-calling/task-01` … `task-07`); git history and the ledger are authoritative.
+done — tag `m4` on the merge of PR #5 (`1704124`, 2026-09-09); seven tasks, a whole-branch review and one fix wave; the acceptance walk is pasted in the (archived) ledger. Git history is authoritative.
