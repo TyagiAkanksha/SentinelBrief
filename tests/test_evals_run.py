@@ -671,7 +671,7 @@ def test_main_closes_the_injected_http_client_on_success_and_failure(tmp_path: P
             "--prompt",
             "triage-v1",
             "--prompt",
-            "triage-v1",
+            "triage-v2",
             "--concurrency",
             "1",
             "--output-dir",

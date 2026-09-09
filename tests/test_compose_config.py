@@ -260,13 +260,16 @@ def test_compose_named_volume(rendered_compose_config: dict[str, Any]) -> None:
 
 
 def test_compose_redis_service_shape(rendered_compose_config: dict[str, Any]) -> None:
-    """m5 task-01 brief Interfaces: `redis:7-alpine`, loopback-only, an RDB snapshot policy so
-    queued jobs survive a restart, a named (non-anonymous) volume, a `redis-cli ping`
-    healthcheck, and the same json-file log rotation as every other service.
+    """m5 task-01 brief Interfaces: `redis:7-alpine`, loopback-only, an RDB snapshot policy (the
+    `command:` override — fix-1 M2: the docstring alone overclaimed this pin, no assertion below
+    it actually checked the snapshot policy) so queued jobs survive a restart, a named
+    (non-anonymous) volume, a `redis-cli ping` healthcheck, and the same json-file log rotation
+    as every other service.
     """
     redis = rendered_compose_config["services"]["redis"]
 
     assert redis["image"] == "redis:7-alpine"
+    assert redis["command"] == ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
     ports = redis.get("ports", [])
     assert len(ports) == 1
     assert ports[0]["host_ip"] == "127.0.0.1"
