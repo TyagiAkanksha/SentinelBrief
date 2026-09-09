@@ -26,6 +26,11 @@ describe("Timeline", () => {
     expect(items).toHaveLength(1);
     expect(items[0]!).toHaveTextContent("No tool calls were made.");
     expect(screen.queryByText("Tool trace arrives at M4")).toBeNull();
+    // m4 fix-wave (review finding task-07 N3 / MUT-15 survived): the empty state must render
+    // through the shared `EmptyState` primitive (`role="status"`), not just any element with the
+    // right text — a bare `<p>` with the same message would satisfy the assertions above but
+    // drops the accessible live-region role.
+    expect(within(items[0]!).getByRole("status")).toHaveTextContent("No tool calls were made.");
   });
 
   it("renders tool name, arguments, result and latency for each call in order", () => {

@@ -376,7 +376,7 @@ async def test_loop_stops_at_cap_and_forces_verdict() -> None:
     assert len(outcome_one.tool_calls) == 1
 
 
-def test_tools_without_a_cap_is_a_value_error_and_from_settings_uses_the_setting() -> None:
+def test_tools_without_a_cap_is_a_value_error_and_from_settings_honours_the_cap_setting() -> None:
     registry = _registry(EchoTool())
 
     with pytest.raises(ValueError):

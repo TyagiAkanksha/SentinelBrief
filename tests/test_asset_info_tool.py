@@ -184,6 +184,27 @@ async def test_yaml_tags_are_not_constructed(tmp_path: Path) -> None:
 
     assert result == unavailable("assets_file_invalid")
 
+    # m4 fix-wave (review finding task-02 N3): the same mapping, written UNTAGGED, must load and
+    # answer the record normally — proving `assets_file_invalid` above is caused by the
+    # `!!python/object/apply:` tag itself, not by some accidental shape mismatch against
+    # `AssetRecord`. Without this companion, a future `AssetRecord` schema change that made this
+    # exact mapping fail validation on ANY loader (safe or unsafe) would keep
+    # `test_yaml_tags_are_not_constructed` green for the wrong reason, defanging the tag check.
+    untagged_path = tmp_path / "safe.yaml"
+    untagged_path.write_text(
+        "assets:\n  hp-eu-01: {role: ssh-honeypot, exposure: internet, criticality: low}\n"
+    )
+
+    untagged_tool = AssetInfoTool.from_path(untagged_path)
+    untagged_result = await untagged_tool.run({"hostname": "hp-eu-01"}, ctx)
+
+    assert untagged_result == {
+        "hostname": "hp-eu-01",
+        "role": "ssh-honeypot",
+        "exposure": "internet",
+        "criticality": "low",
+    }
+
 
 async def test_non_utf8_file_is_unavailable_invalid(
     tmp_path: Path, caplog: pytest.LogCaptureFixture

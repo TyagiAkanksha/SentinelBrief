@@ -377,11 +377,15 @@ def test_main_restores_httpx_logger_levels(monkeypatch: pytest.MonkeyPatch, tmp_
     process-global side effect (closing the real key-leak MUT-2 proves — see
     `test_license_key_is_sent_in_the_query_and_never_printed`) but never restores the prior level,
     so calling `main()` in-process (as every test in this file does) leaks the mutation across the
-    whole pytest session. Both loggers are reset to a known baseline (`NOTSET`) immediately before
-    each call so this test's own "restored" assertion is meaningful regardless of what earlier
-    tests in the session already did to them; a `finally` restores that baseline again after the
-    test regardless of outcome, so this test does not itself leak into later ones. Fails at HEAD:
-    the level is `WARNING`, not `NOTSET`, after the very first successful call.
+    whole pytest session.
+
+    m4 fix-wave (review finding task-03 N1): the baseline before each call is `DEBUG`, not
+    `NOTSET`. A `NOTSET` baseline cannot distinguish "the previous level was correctly captured
+    and restored" from "the `finally` unconditionally hardcodes `logging.NOTSET` instead of
+    restoring whatever `previous_httpx_level`/`previous_httpcore_level` actually held" — the exact
+    mutant this test exists to kill, and it would pass this assertion vacuously under the old
+    `NOTSET` baseline. A `finally` restores the `NOTSET` baseline again after the test regardless
+    of outcome, so this test does not itself leak into later ones.
     """
     monkeypatch.setenv("MAXMIND_LICENSE_KEY", "test-key")
     httpx_logger = logging.getLogger("httpx")
@@ -396,19 +400,19 @@ def test_main_restores_httpx_logger_levels(monkeypatch: pytest.MonkeyPatch, tmp_
         return httpx.Response(403, text="forbidden")
 
     try:
-        httpx_logger.setLevel(logging.NOTSET)
-        httpcore_logger.setLevel(logging.NOTSET)
+        httpx_logger.setLevel(logging.DEBUG)
+        httpcore_logger.setLevel(logging.DEBUG)
 
         exit_code = fetch_geoip.main(
             ["--out-dir", str(tmp_path)], transport=httpx.MockTransport(ok_handler)
         )
 
         assert exit_code == 0
-        assert httpx_logger.level == logging.NOTSET
-        assert httpcore_logger.level == logging.NOTSET
+        assert httpx_logger.level == logging.DEBUG
+        assert httpcore_logger.level == logging.DEBUG
 
-        httpx_logger.setLevel(logging.NOTSET)
-        httpcore_logger.setLevel(logging.NOTSET)
+        httpx_logger.setLevel(logging.DEBUG)
+        httpcore_logger.setLevel(logging.DEBUG)
 
         exit_code_err = fetch_geoip.main(
             ["--out-dir", str(tmp_path), "--edition", "GeoLite2-Country"],
@@ -416,8 +420,8 @@ def test_main_restores_httpx_logger_levels(monkeypatch: pytest.MonkeyPatch, tmp_
         )
 
         assert exit_code_err == 1
-        assert httpx_logger.level == logging.NOTSET
-        assert httpcore_logger.level == logging.NOTSET
+        assert httpx_logger.level == logging.DEBUG
+        assert httpcore_logger.level == logging.DEBUG
     finally:
         httpx_logger.setLevel(logging.NOTSET)
         httpcore_logger.setLevel(logging.NOTSET)

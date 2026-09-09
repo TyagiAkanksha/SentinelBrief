@@ -362,6 +362,20 @@ async def test_malformed_bodies_are_malformed_response() -> None:
         httpx.Response(200, json={"data": None}),
         httpx.Response(200, json={"data": "oops"}),
         httpx.Response(200, json={"data": 7}),
+        # m4 fix-wave (review finding task-04 N3): a vendor score too large to be a legitimate
+        # 0-100 confidence value is still a syntactically valid JSON number token — sent as raw
+        # bytes (`content=`, not `json=`: httpx's own encoder rejects a Python `inf` float with
+        # `allow_nan=False` before any request is even made, which would fail this test for the
+        # wrong reason) so the literal `1e999` travels on the wire and `response.json()`'s
+        # `json.loads` parses it as `float("inf")` (Python's float parser overflows silently, no
+        # exception). `int(float("inf"))` then raises `OverflowError`, which `run`'s except tuple
+        # does not catch, so it escapes the "tools never raise" contract on this reachable,
+        # malformed-body path.
+        httpx.Response(
+            200,
+            content=b'{"data": {"abuseConfidenceScore": 1e999, "totalReports": 1, '
+            b'"lastReportedAt": null}}',
+        ),
     ]
 
     for body in bodies:

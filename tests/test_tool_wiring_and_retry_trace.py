@@ -13,6 +13,7 @@ RED here until Part B's implementer fix hoists the registry above `seed()`'s per
 from __future__ import annotations
 
 import importlib.util
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -29,7 +30,7 @@ from tests.fakes import FakeLLMClient, ScriptedToolCall
 from tests.helpers import seed_alert
 from worker.prompts import ALERT_DATA_BEGIN, ALERT_DATA_END, build_tool_result_message
 from worker.tools import LiveToolRecorder, ReplayToolRecorder, ToolContext
-from worker.tools.wiring import build_registry
+from worker.tools.wiring import TOOL_NAMES, build_registry
 from worker.triage import TriagePipeline
 
 _TOOL_FIXTURES_DIR = Path("tests/fixtures/tools")
@@ -123,10 +124,31 @@ def _alert_with_commands(count: int) -> SessionAlert:
     )
 
 
+# --- task-06 M1: TOOL_NAMES against the PRD §6.3 table order itself, not wiring's own constant --
+
+
+def test_tool_names_matches_the_prd_6_3_table_order() -> None:
+    """m4 fix-wave (review finding task-06 M1): the pre-existing pins below (`registry.names ==
+    TOOL_NAMES` in `tests/test_tool_loop.py`) only compare `TOOL_NAMES` against tools
+    `build_registry` built FROM `TOOL_NAMES` itself — self-referential against `wiring.py`'s own
+    constant, so it could never fail even if the whole tuple were silently reordered or a name
+    were typo'd. This literal is PRD §6.3's own tool table order, independent of the source file.
+    """
+    assert TOOL_NAMES == (
+        "lookup_ip_reputation",
+        "get_ip_geo_asn",
+        "get_alert_history",
+        "get_session_commands",
+        "get_asset_info",
+    )
+
+
 # --- I1: build_registry actually consumes every Settings field it is documented to -------------
 
 
-async def test_build_registry_consumes_every_wired_settings_field(tmp_path: Path) -> None:
+async def test_build_registry_consumes_every_wired_settings_field(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     tmp_yaml = tmp_path / "assets.yaml"
     tmp_yaml.write_text(
         "assets:\n  hp-x:\n    role: ssh-honeypot\n    exposure: internet\n    criticality: high\n"
@@ -134,12 +156,19 @@ async def test_build_registry_consumes_every_wired_settings_field(tmp_path: Path
     settings = Settings(
         abuseipdb_timeout_s=1.5,
         abuseipdb_cache_max_entries=7,
+        abuseipdb_cache_ttl_s=123,
+        abuseipdb_max_age_days=45,
         assets_yaml_path=str(tmp_yaml),
         tool_session_commands_max=3,
+        tool_session_downloads_max=2,
+        tool_command_max_chars=17,
         alert_history_max_window_hours=5,
+        geoip_db_path="/nonexistent/c.mmdb",
+        geoip_asn_db_path="/nonexistent/a.mmdb",
     )
 
-    registry = build_registry(settings, recorder=LiveToolRecorder())
+    with caplog.at_level(logging.WARNING):
+        registry = build_registry(settings, recorder=LiveToolRecorder())
 
     # Reading tool objects' private attributes is accepted for a wiring pin (task-06 fix-1 brief,
     # I1): build_registry's whole job is threading Settings fields into these constructors, and
@@ -147,9 +176,27 @@ async def test_build_registry_consumes_every_wired_settings_field(tmp_path: Path
     reputation_tool = registry._by_name["lookup_ip_reputation"]  # type: ignore[attr-defined]
     assert reputation_tool._http.timeout.connect == 1.5  # type: ignore[attr-defined]
     assert reputation_tool._cache._max_entries == 7  # type: ignore[attr-defined]
+    # m4 fix-wave (review finding task-06 N1): the two remaining IpReputationTool bounds were
+    # previously unpinned by this wiring test.
+    assert reputation_tool._cache_ttl_s == 123  # type: ignore[attr-defined]
+    assert reputation_tool._max_age_days == 45  # type: ignore[attr-defined]
 
     history_tool = registry._by_name["get_alert_history"]  # type: ignore[attr-defined]
     assert history_tool._max_window_hours == 5  # type: ignore[attr-defined]
+
+    # m4 fix-wave (review finding task-06 N1): SessionCommandsTool's two remaining bounds
+    # (`_max_commands`/`tool_session_commands_max` is already pinned below via the `run()` call).
+    commands_tool = registry._by_name["get_session_commands"]  # type: ignore[attr-defined]
+    assert commands_tool._max_downloads == 2  # type: ignore[attr-defined]
+    assert commands_tool._max_command_chars == 17  # type: ignore[attr-defined]
+
+    # m4 fix-wave (review finding task-06 N1): both GeoIP paths reach `GeoAsnTool.from_settings`
+    # via `open_reader`, which is otherwise unobservable from outside the tool — a distinct,
+    # unreadable path per Setting (m4-final-review.md plan defect 7: distinguishable values per
+    # seam) so this can only pass if BOTH paths were actually threaded through, not just one.
+    warning_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "geoip database unreadable path=/nonexistent/c.mmdb" in warning_messages
+    assert "geoip database unreadable path=/nonexistent/a.mmdb" in warning_messages
 
     ctx = ToolContext(alert=_minimal_alert(), session=None, now=datetime.now(UTC))
     asset_execution = await registry.execute("get_asset_info", {"hostname": "hp-x"}, ctx)

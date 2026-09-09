@@ -305,6 +305,41 @@ async def test_complete_with_tools_rejects_non_object_arguments() -> None:
     await _complete_with_tools_bad_arguments("{")
 
 
+async def test_complete_with_tools_empty_or_whitespace_arguments_decode_to_empty_dict() -> None:
+    """m4 fix-wave (review finding task-01 M5): some OpenAI-compatible servers send
+    `function.arguments == ""` (or whitespace-only) for a tool call that takes no parameters,
+    instead of the spec-correct `"{}"`. `json.loads("")` raises `json.JSONDecodeError`, which
+    today maps to `LLMCallError` and fails the whole alert (`worker/triage.py:310` marks it
+    `failed`) for a reply the loop should simply treat as `arguments == {}` and continue. Genuinely
+    malformed arguments (`"[1, 2]"`, a non-object; `"{"`, truncated JSON) must still raise
+    `LLMCallError` — that is `test_complete_with_tools_rejects_non_object_arguments` above, and it
+    is unchanged by this fix.
+    """
+    for bad_arguments in ("", "   "):
+        tool_calls = [_tool_call_member("call_1", "get_session_commands", bad_arguments)]
+
+        def handler(
+            request: httpx.Request, tool_calls: list[dict[str, object]] = tool_calls
+        ) -> httpx.Response:
+            return httpx.Response(200, json=_chat_completion_tool_calls_body(tool_calls))
+
+        client = OpenAICompatibleLLMClient(
+            client=_mock_client(httpx.MockTransport(handler)),
+            prices=_FAKE_PRICES,
+            json_mode="json_object",
+        )
+
+        turn = await client.complete_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[_SESSION_TOOL_SPEC],
+            response_model=Verdict,
+            model="fake-model",
+        )
+
+        assert isinstance(turn, ToolCallTurn)
+        assert turn.calls[0].arguments == {}
+
+
 async def test_complete_with_tools_rejects_non_function_tool_call_type() -> None:
     tool_calls = [_tool_call_member("call_1", "get_session_commands", "{}", call_type="custom")]
 
