@@ -13,13 +13,23 @@ all.
 
 Snapshot values are copied verbatim from each task's brief Interfaces block, not read back from
 the implementation — any drift, in either direction, fails.
+
+Task-04 (controller ruling R7) adds `IpReputationTool`'s case in the same file, for the same
+reason: `name` is what the model must emit to call `lookup_ip_reputation`, and `external = True`
+gates whether the tool is ever run live vs. served from a fixture — a silent flip to `False` would
+start spending real AbuseIPDB quota inside `ReplayToolRecorder`'s "local tools run live" branch.
 """
 
 from __future__ import annotations
 
+import httpx
+import pytest
+
+from core.cache import InMemoryTTLCache
 from worker.tools import spec_for
 from worker.tools.asset_info import AssetInfoTool
 from worker.tools.geo_asn import GeoAsnTool
+from worker.tools.ip_reputation import IpReputationTool
 from worker.tools.session_commands import SessionCommandsTool
 
 _SESSION_COMMANDS_SPEC = {
@@ -98,3 +108,35 @@ def test_geo_asn_tool_interface_is_pinned() -> None:
     assert tool.name == "get_ip_geo_asn"
     assert tool.external is True
     assert spec_for(tool) == _GEO_ASN_SPEC
+
+
+_IP_REPUTATION_SPEC = {
+    "name": "lookup_ip_reputation",
+    "description": (
+        "Look up an IP address's abuse reputation (AbuseIPDB confidence score 0-100, report "
+        "count, last report time). Costs quota; call it once per address."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"ip": {"type": "string", "description": "An IPv4 or IPv6 address."}},
+        "required": ["ip"],
+        "additionalProperties": False,
+    },
+}
+
+
+def test_ip_reputation_tool_interface_is_pinned() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail(f"unexpected request: {request.method} {request.url}")
+
+    tool = IpReputationTool(
+        api_key="",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        cache=InMemoryTTLCache(),
+        cache_ttl_s=86400,
+        max_age_days=90,
+    )
+
+    assert tool.name == "lookup_ip_reputation"
+    assert tool.external is True
+    assert spec_for(tool) == _IP_REPUTATION_SPEC
