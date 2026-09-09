@@ -26,12 +26,15 @@ from core.schemas.alerts_read import (
     ToolCallOut,
     VerdictOut,
     VerdictSummary,
+    normalize_country,
     reasoning_excerpt,
 )
 from core.schemas.verdict import VerdictCategory
 from core.services.alerts import get_alert
 
 _SIX_DP = Decimal("0.000001")
+
+GEO_TOOL_NAME = "get_ip_geo_asn"
 
 
 def latest_verdicts_subquery() -> Subquery:
@@ -46,6 +49,22 @@ def latest_verdicts_subquery() -> Subquery:
         .distinct(VerdictRow.alert_id)
         .order_by(VerdictRow.alert_id, VerdictRow.created_at.desc(), VerdictRow.id.desc())
         .subquery("latest")
+    )
+
+
+def geo_country_subquery() -> Subquery:
+    """The first `GEO_TOOL_NAME` call's `result["country"]` per verdict (PRD §9).
+
+    `DISTINCT ON (verdict_id) ORDER BY verdict_id, seq` picks the earliest such call when a
+    verdict's tool loop invoked the geo tool more than once; `->>` yields SQL `NULL` for an
+    `{unavailable}` result (no `"country"` key), left to `normalize_country` in Python.
+    """
+    return (
+        select(ToolCallRow.verdict_id, ToolCallRow.result["country"].astext.label("country"))
+        .where(ToolCallRow.tool_name == GEO_TOOL_NAME)
+        .distinct(ToolCallRow.verdict_id)
+        .order_by(ToolCallRow.verdict_id, ToolCallRow.seq)
+        .subquery("geo")
     )
 
 
@@ -69,22 +88,28 @@ async def list_alerts(
         The page's `AlertSummary` rows and the total count of rows matching `filters`.
     """
     latest = latest_verdicts_subquery()
+    geo = geo_country_subquery()
 
-    base = select(
-        AlertRow.id,
-        AlertRow.source,
-        func.coalesce(AlertRow.raw["src_ip"].astext, "").label("src_ip"),
-        func.coalesce(AlertRow.raw["sensor"].astext, "").label("sensor"),
-        AlertRow.event_time,
-        AlertRow.received_at,
-        AlertRow.status,
-        latest.c.severity,
-        latest.c.category,
-        latest.c.confidence,
-        latest.c.escalate,
-        latest.c.reasoning,
-        latest.c.created_at,
-    ).outerjoin(latest, latest.c.alert_id == AlertRow.id)
+    base = (
+        select(
+            AlertRow.id,
+            AlertRow.source,
+            func.coalesce(AlertRow.raw["src_ip"].astext, "").label("src_ip"),
+            func.coalesce(AlertRow.raw["sensor"].astext, "").label("sensor"),
+            AlertRow.event_time,
+            AlertRow.received_at,
+            AlertRow.status,
+            latest.c.severity,
+            latest.c.category,
+            latest.c.confidence,
+            latest.c.escalate,
+            latest.c.reasoning,
+            latest.c.created_at,
+            geo.c.country,
+        )
+        .outerjoin(latest, latest.c.alert_id == AlertRow.id)
+        .outerjoin(geo, geo.c.verdict_id == latest.c.id)
+    )
 
     if filters.severity_gte is not None:
         base = base.where(latest.c.severity >= filters.severity_gte)
@@ -118,6 +143,7 @@ async def list_alerts(
             event_time=row.event_time,
             received_at=row.received_at,
             status=cast(AlertStatus, row.status),
+            country=normalize_country(row.country),
             verdict=(
                 None
                 if row.severity is None
@@ -175,6 +201,9 @@ async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertD
         tool_calls = [ToolCallOut.model_validate(tc) for tc in tool_call_rows]
 
     raw: dict[str, Any] = row.raw
+    country = normalize_country(
+        next((tc.result.get("country") for tc in tool_calls if tc.tool_name == GEO_TOOL_NAME), None)
+    )
     return AlertDetail(
         id=row.id,
         source=row.source,
@@ -183,6 +212,7 @@ async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertD
         event_time=row.event_time,
         received_at=row.received_at,
         status=cast(AlertStatus, row.status),
+        country=country,
         raw=raw,
         verdict=verdict_out,
         tool_calls=tool_calls,

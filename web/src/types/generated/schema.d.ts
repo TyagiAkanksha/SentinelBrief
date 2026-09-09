@@ -97,6 +97,8 @@ export interface components {
          * @description The single-alert view (PRD §8): full raw payload, latest verdict, and its tool calls.
          */
         AlertDetail: {
+            /** Country */
+            country?: string | null;
             /**
              * Event Time
              * Format: date-time
@@ -136,6 +138,8 @@ export interface components {
          * @description One list row (PRD §8): the latest verdict's summary, or `None` for pending/failed alerts.
          */
         AlertSummary: {
+            /** Country */
+            country?: string | null;
             /**
              * Event Time
              * Format: date-time

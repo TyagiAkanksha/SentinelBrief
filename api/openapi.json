@@ -4,6 +4,17 @@
       "AlertDetail": {
         "description": "The single-alert view (PRD \u00a78): full raw payload, latest verdict, and its tool calls.",
         "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
           "event_time": {
             "format": "date-time",
             "title": "Event Time",
@@ -81,6 +92,17 @@
       "AlertSummary": {
         "description": "One list row (PRD \u00a78): the latest verdict's summary, or `None` for pending/failed alerts.",
         "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
           "event_time": {
             "format": "date-time",
             "title": "Event Time",

@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/Badge";
 import type { Severity } from "@/components/ui/Badge";
+import { CountryFlag } from "@/components/ui/CountryFlag";
 import { formatAge, formatUtc } from "@/lib/format";
 
 import type { AlertRowProps } from "./interface";
@@ -18,6 +19,7 @@ export function AlertRow({ alert, now }: AlertRowProps) {
       </td>
       <td>{alert.verdict ? <Badge category={alert.verdict.category} /> : "—"}</td>
       <td>
+        <CountryFlag code={alert.country} />
         <Link href={`/alerts/${alert.id}`} className="font-mono text-accent">
           {alert.src_ip}
         </Link>

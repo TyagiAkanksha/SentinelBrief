@@ -1,5 +1,7 @@
 const EM_DASH = "—";
 
+export const COUNTRY_CODE_RE = /^[A-Z]{2}$/;
+
 export function formatUtc(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
@@ -68,6 +70,15 @@ export function formatTokens(n: number | null): string {
     return EM_DASH;
   }
   return n.toLocaleString("en-US");
+}
+
+// Maps an ISO 3166-1 alpha-2 code to its regional-indicator-symbol flag emoji; "" for anything
+// else (missing, wrong length, or not uppercase A-Z) — the caller renders nothing in that case.
+export function countryFlag(code: string | null | undefined): string {
+  if (code === null || code === undefined || !COUNTRY_CODE_RE.test(code)) {
+    return "";
+  }
+  return String.fromCodePoint(0x1f1e6 + code.charCodeAt(0) - 65, 0x1f1e6 + code.charCodeAt(1) - 65);
 }
 
 // HTML's <input type="datetime-local"> rejects any value carrying a zone suffix (the browser

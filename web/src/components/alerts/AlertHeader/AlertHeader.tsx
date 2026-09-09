@@ -1,3 +1,4 @@
+import { CountryFlag } from "@/components/ui/CountryFlag";
 import { formatAge, formatUtc } from "@/lib/format";
 
 import type { AlertHeaderProps } from "./interface";
@@ -5,7 +6,10 @@ import type { AlertHeaderProps } from "./interface";
 export function AlertHeader({ alert, now }: AlertHeaderProps) {
   return (
     <header>
-      <h1 className="font-mono">{alert.src_ip}</h1>
+      <h1 className="font-mono">
+        <CountryFlag code={alert.country} />
+        {alert.src_ip}
+      </h1>
       <dl>
         <dt>Sensor</dt>
         <dd>{alert.sensor}</dd>
