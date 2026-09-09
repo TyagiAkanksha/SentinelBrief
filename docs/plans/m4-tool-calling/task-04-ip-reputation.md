@@ -77,12 +77,14 @@ is the only thing faked — and the real endpoint is touched only by an opt-in
       async def run(self, arguments, ctx) -> dict[str, Any]: ...
           # ip missing / not str / ipaddress.ip_address raises -> unavailable("invalid_arguments")     (checked before the key: never spend quota on garbage)
           # api_key == ""                                        -> unavailable("no_api_key"), logger.warning once per instance
-          # cached = await cache.get(CACHE_KEY_PREFIX + ip); hit -> json.loads(cached) | {"cached": True}
+          # ip = str(ipaddress.ip_address(ip))  — canonical spelling is used for the query, the cache key and the result (M4 task-04 review M3 ruling)
+          # cached = await cache.get(CACHE_KEY_PREFIX + ip); hit -> json.loads(cached) | {"cached": True}; a hit that is not a JSON object
+          #   (decode error / non-dict) is treated as a miss and overwritten by the live lookup — never raises (M4 task-04 review I2 ruling)
           # GET ABUSEIPDB_CHECK_URL, params {"ipAddress": ip, "maxAgeInDays": str(max_age_days)}, headers {"Key": api_key, "Accept": "application/json"}
           #   httpx.HTTPError (timeout, connect, read)  -> unavailable("network_error")
           #   429 -> unavailable("quota_exceeded"); 401 | 403 -> unavailable("unauthorized"); other non-2xx -> unavailable(f"http_{status}")
           #   body: data = body["data"]; result = {"ip": ip, "abuse_score": int(data["abuseConfidenceScore"]), "reports": int(data["totalReports"]),
-          #         "last_seen": data.get("lastReportedAt")  (str | None)}
+          #         "last_seen": data.get("lastReportedAt")  (str | None — any other JSON type -> malformed_response; M4 task-04 review M2 ruling)}
           #     json / KeyError / TypeError / ValueError -> unavailable("malformed_response")
           #   await cache.set(key, json.dumps(result).encode(), cache_ttl_s)     # SUCCESS ONLY — an unavailable answer is never cached
           #   return result | {"cached": False}
