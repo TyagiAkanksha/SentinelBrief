@@ -33,7 +33,10 @@ describe("Timeline", () => {
       makeToolCall({
         seq: 0,
         tool_name: "lookup_ip_reputation",
-        arguments: { ip: "203.0.113.7" },
+        // maxAgeInDays lives only in arguments, never in result — a substring match against
+        // the item's whole text content can therefore only come from the Arguments block, not
+        // (as `"ip": "203.0.113.7"` alone could) from either block.
+        arguments: { ip: "203.0.113.7", maxAgeInDays: 90 },
         result: { ip: "203.0.113.7", abuse_score: 87 },
         latency_ms: 12,
       }),
@@ -55,6 +58,7 @@ describe("Timeline", () => {
     expect(items[0]!).toHaveTextContent("12 ms");
     expect(items[0]!).toHaveTextContent('"abuse_score": 87');
     expect(items[0]!).toHaveTextContent('"ip": "203.0.113.7"');
+    expect(items[0]!).toHaveTextContent('"maxAgeInDays": 90');
 
     expect(items[1]!).toHaveTextContent("1. get_session_commands");
     expect(items[1]!).toHaveTextContent("340 ms");
