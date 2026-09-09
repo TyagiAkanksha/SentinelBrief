@@ -95,7 +95,7 @@ still fails validation after its one retry.
 ### 3. Run the stack
 
 ```sh
-docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web
+docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web, redis, worker
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok"}
 curl -s localhost:3000/healthz                                              # {"status":"ok"}
@@ -107,7 +107,9 @@ uv run python scripts/seed_dev.py --database-url postgresql://sentinel:sentinel@
 curl -s 'localhost:8000/api/v1/alerts?page_size=5' | python3 -m json.tool | head -30
 # keeps the secret out of shell history and out of this file
 export INGEST_HMAC_SECRET=$(grep '^INGEST_HMAC_SECRET=' .env | cut -d= -f2-)
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 200 {"created": false} — already seeded; dedup by fingerprint (a session with a new session_id gets 202 and is triaged inline)
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 200 {"created": false} — already seeded; dedup by fingerprint (a session with a new session_id gets 202 {"status": "pending"} and is enqueued to the worker)
+docker compose -f infra/docker-compose.yml logs worker | tail                                          # the ARQ job line, once the worker picks it up
+curl -s localhost:8000/api/v1/alerts/<id>                                                              # "status":"triaged" within a few seconds
 docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sentinelbrief \
   -c "select count(*) from alerts; select count(*) from verdicts;"   # 25 and 25
 ```
@@ -137,10 +139,12 @@ docker compose -f infra/docker-compose.yml down     # add -v to drop the databas
 Python (repo root):
 
 ```sh
-# One-time: a dedicated Postgres for the test DB (the DB suite skips without this URL and CI
-# fails on any skip).
+# One-time: a dedicated Postgres for the test DB and a dedicated Redis for the test suite (both
+# suites skip without their URL and CI fails on any skip). Never point TEST_REDIS_URL at the dev
+# compose Redis (6379) — the Redis fixtures flushdb it before AND after every test.
 docker run -d --name sentinelbrief-test-db -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel -e POSTGRES_DB=sentinelbrief_test -p 127.0.0.1:5434:5432 postgres:16
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
+docker run -d --name sentinelbrief-test-redis -p 127.0.0.1:6380:6379 redis:7-alpine
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental

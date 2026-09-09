@@ -1,10 +1,11 @@
 """Pins `api/factory.py::create_app` and `api/deps.py`'s request-scoped seams
-(CONVENTIONS.md §5) — m2 task-02.
+(CONVENTIONS.md §5) — m2 task-02; `get_triage`/`TriageFn` swapped for `get_enqueue`/`EnqueueFn`
+at m5 task-01 (queue split: `api/deps.py` no longer carries a triage seam at all).
 
 `create_app()` must build with no database and no env vars wired (what makes the OpenAPI export
 and DB-less tests possible), every route must declare a unique `operation_id` (the frontend's
 codegen keys on it), and dependencies that need something unwired (`get_session` with no
-`session_factory`, `get_triage` with no `triage`) must raise at request time rather than working
+`session_factory`, `get_enqueue` with no `enqueue`) must raise at request time rather than working
 silently — surfacing through the registered handlers as the generic §8 500 envelope, never a raw
 traceback. `get_settings` is the one dep that always has something to return (a default,
 zero-env `Settings()` when none is injected), so its test pins the happy path instead.
@@ -19,7 +20,7 @@ from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import TriageFn, get_session, get_settings, get_triage
+from api.deps import EnqueueFn, get_enqueue, get_session, get_settings
 from api.factory import create_app
 from core.config import Settings
 
@@ -106,17 +107,17 @@ async def test_get_settings_returns_injected(settings: Settings) -> None:
     assert response.json() == {"cheap_model": "fake-model"}
 
 
-async def test_get_triage_raises_when_unwired() -> None:
+async def test_get_enqueue_raises_when_unwired() -> None:
     app = create_app()
 
-    async def _probe(triage: TriageFn = Depends(get_triage)) -> dict[str, bool]:
+    async def _probe(enqueue: EnqueueFn = Depends(get_enqueue)) -> dict[str, bool]:
         return {"ok": True}
 
-    app.add_api_route("/_probe/triage", _probe, methods=["GET"], operation_id="probe_triage")
+    app.add_api_route("/_probe/enqueue", _probe, methods=["GET"], operation_id="probe_enqueue")
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/_probe/triage")
+        response = await client.get("/_probe/enqueue")
 
     assert response.status_code == 500
     assert response.json() == {"error": {"code": "internal_error", "message": "internal error"}}

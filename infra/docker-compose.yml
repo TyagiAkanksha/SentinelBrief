@@ -1,12 +1,14 @@
 # infra/docker-compose.yml — SentinelBrief local orchestration (PRD §11; CONVENTIONS.md §11).
 #
-# Three services: postgres, api, web; worker and redis arrive at M5.
+# Five services: postgres, api, web, redis, worker (from M5).
 #
 # Migrations are never run at container startup (CONVENTIONS.md §11) — run them explicitly:
 #   docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 #
 # All services publish ports on 127.0.0.1 only (`.claude/rules/infra.md`) and use json-file log
-# rotation from day one (docs/deployment.md).
+# rotation from day one (docs/deployment.md). `worker` shares the `api` image (same build
+# context/Dockerfile) with a different `command:` and never publishes a port — only ARQ jobs
+# reach it, through Redis.
 
 name: sentinelbrief
 
@@ -49,6 +51,44 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]   # RDB snapshot <= 60 s after a change: queued jobs survive a restart
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - sentinelbrief_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    image: sentinelbrief-api
+    command: ["arq", "worker.main.WorkerSettings"]
+    env_file: ../.env
+    volumes:
+      - ../infra/geoip:/app/infra/geoip:ro     # M4 task-03 M6: the worker is where get_ip_geo_asn runs now
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "arq", "--check", "worker.main.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
     logging: *default-logging
 
   web:
@@ -70,3 +110,4 @@ services:
 
 volumes:
   sentinelbrief_pg:
+  sentinelbrief_redis:

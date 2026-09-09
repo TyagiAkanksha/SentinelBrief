@@ -22,6 +22,7 @@ from core.errors import (
     ConflictError,
     LLMCallError,
     NotFoundError,
+    QueueUnavailableError,
     RateLimitedError,
     SentinelBriefError,
     SignatureError,
@@ -43,6 +44,7 @@ STATUS_BY_ERROR: Mapping[type[SentinelBriefError], int] = {
     LLMCallError: 502,
     VerdictValidationError: 502,
     StructuredOutputError: 502,
+    QueueUnavailableError: 503,
 }
 
 

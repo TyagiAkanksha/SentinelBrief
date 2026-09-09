@@ -46,6 +46,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn
 
+import httpx
 from pydantic import ValidationError
 
 from core.config import Settings
@@ -216,42 +217,25 @@ def _case_payload(result: CaseResult) -> dict[str, Any]:
     return payload
 
 
-def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> int:
-    """Score every `--prompt` version against a golden set via the real `TriagePipeline`.
+def _run(
+    args: argparse.Namespace, settings: Settings, *, llm: LLMClient | None, http: httpx.AsyncClient
+) -> int:
+    """The rest of `main`, once argv is parsed and `Settings()` has validated.
+
+    Split out so `main` can guarantee `http.aclose()` on every exit path below this point via a
+    single `try/finally` (N-M5) — every early-return in this function is one such exit path.
 
     Args:
-        argv: Command-line arguments (excluding the program name); `None` reads `sys.argv[1:]`.
-        llm: An `LLMClient` to use instead of building the real one from `Settings()` — the seam
-            tests inject `FakeLLMClient` through (CONVENTIONS.md §10).
+        args: The parsed CLI arguments.
+        settings: The validated config surface.
+        llm: An `LLMClient` to use instead of building the real one; `None` builds the real one.
+        http: The process-lifetime `httpx.AsyncClient` every `TriagePipeline` in the run shares,
+            via one call to `worker.tools.wiring.build_registry` above the `--prompt` loop —
+            never built once per prompt version.
 
     Returns:
-        `0` on success (the table was printed and every prompt's result JSON was written); `1`
-        on a usage error, a `Settings()` validation failure, an invalid/missing golden file, a
-        `ConfigError` raised before any case ran, an unwritable output directory, or when every
-        case failed across every prompt run (`all_cases_failed`) — see the module docstring's
-        failure-path table. Every `1` path prints exactly one `error: <code>: <message>` line to
-        stderr and leaves stdout empty.
+        `0` on success, `1` on any failure path (see `main`'s own docstring).
     """
-    parser = _Parser(prog="python -m evals.run")
-    parser.add_argument("--golden", required=True, type=Path)
-    parser.add_argument("--prompt", action="append", required=True)
-    parser.add_argument("--model", default=None)
-    parser.add_argument("--concurrency", type=_positive_int, default=4)
-    parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
-    parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
-    try:
-        args = parser.parse_args(argv)
-    except UsageError as e:
-        return _fail(e.code, str(e))
-
-    if not args.tool_fixtures.is_dir():
-        return _fail("usage", "--tool-fixtures is not a directory")
-
-    try:
-        settings = Settings()
-    except ValidationError as e:
-        return _fail("config_error", str(e))
-
     model: str = args.model if args.model is not None else settings.cheap_model
 
     # Price before spend for the flag itself: a fake never prices, so this only applies to the
@@ -273,6 +257,9 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     except ConfigError as e:
         return _fail(e.code, str(e))
 
+    # One registry per run (N-M5), over the shared `http` client — never one per prompt version.
+    registry = build_registry(settings, recorder=ReplayToolRecorder(args.tool_fixtures), http=http)
+
     git_sha = _git_sha()
     rows: list[ResultRow] = []
     any_case_succeeded = False
@@ -282,7 +269,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
                 llm=client,
                 model=model,
                 prompt_version=prompt_version,
-                tools=build_registry(settings, recorder=ReplayToolRecorder(args.tool_fixtures)),
+                tools=registry,
                 tool_loop_max_iter=settings.tool_loop_max_iter,
             )
         except ConfigError as e:
@@ -327,6 +314,58 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
 
     print(format_table(rows))
     return 0
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    llm: LLMClient | None = None,
+    http: httpx.AsyncClient | None = None,
+) -> int:
+    """Score every `--prompt` version against a golden set via the real `TriagePipeline`.
+
+    Args:
+        argv: Command-line arguments (excluding the program name); `None` reads `sys.argv[1:]`.
+        llm: An `LLMClient` to use instead of building the real one from `Settings()` — the seam
+            tests inject `FakeLLMClient` through (CONVENTIONS.md §10).
+        http: An `httpx.AsyncClient` to use instead of building the real one — the seam tests
+            inject a client through to assert it gets closed (N-M5). `None` builds one timed
+            from `settings.abuseipdb_timeout_s`, built (and closed) here rather than per prompt
+            version or per tool call.
+
+    Returns:
+        `0` on success (the table was printed and every prompt's result JSON was written); `1`
+        on a usage error, a `Settings()` validation failure, an invalid/missing golden file, a
+        `ConfigError` raised before any case ran, an unwritable output directory, or when every
+        case failed across every prompt run (`all_cases_failed`) — see the module docstring's
+        failure-path table. Every `1` path prints exactly one `error: <code>: <message>` line to
+        stderr and leaves stdout empty.
+    """
+    parser = _Parser(prog="python -m evals.run")
+    parser.add_argument("--golden", required=True, type=Path)
+    parser.add_argument("--prompt", action="append", required=True)
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--concurrency", type=_positive_int, default=4)
+    parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
+    parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
+    try:
+        args = parser.parse_args(argv)
+    except UsageError as e:
+        return _fail(e.code, str(e))
+
+    if not args.tool_fixtures.is_dir():
+        return _fail("usage", "--tool-fixtures is not a directory")
+
+    try:
+        settings = Settings()
+    except ValidationError as e:
+        return _fail("config_error", str(e))
+
+    http_client = http or httpx.AsyncClient(timeout=settings.abuseipdb_timeout_s)
+    try:
+        return _run(args, settings, llm=llm, http=http_client)
+    finally:
+        asyncio.run(http_client.aclose())
 
 
 if __name__ == "__main__":

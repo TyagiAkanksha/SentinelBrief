@@ -928,7 +928,7 @@
         "summary": "List Alerts"
       },
       "post": {
-        "description": "Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.",
+        "description": "Insert `payload`, deduplicating on its fingerprint; enqueue triage for the still-`pending`\nrow and answer immediately \u2014 the LLM call happens entirely in the worker process (PRD \u00a73,\n\u00a710.1).",
         "operationId": "ingest_alert",
         "requestBody": {
           "content": {

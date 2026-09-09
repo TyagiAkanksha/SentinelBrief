@@ -35,6 +35,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cache import TTLCache
@@ -108,20 +109,25 @@ class TriagePipeline:
         llm: LLMClient,
         recorder: ToolRecorder | None = None,
         cache: TTLCache | None = None,
+        http: httpx.AsyncClient | None = None,
     ) -> TriagePipeline:
         """Build the five-tool pipeline (`worker.tools.wiring.build_registry`) from `Settings`.
 
-        The one construction `api.main` uses, so `api.main` needs no new `worker` import beyond
-        this module (import-linter contract 3's M2-only ignore list is unchanged).
+        The one construction `worker.main` uses at startup (m5 task-01: `api/` no longer builds
+        a pipeline at all).
 
         Args:
             settings: The config surface to build the model, prompt version, registry and cap
                 from.
             llm: The LLM client to call.
             recorder: How tools are actually executed; defaults to `LiveToolRecorder()` — always
-                live, matching `api.main`'s own use case.
+                live, matching `worker.main`'s own use case.
             cache: An external `TTLCache` seam for `lookup_ip_reputation`; `None` lets
                 `build_registry` build an in-process one sized from `settings`.
+            http: The process-lifetime `httpx.AsyncClient` `lookup_ip_reputation` issues its
+                request through (M4 task-06 fix-1 I4: the caller owns `aclose()` —
+                `worker/main.py::shutdown` is the owner); `None` lets `build_registry` build one
+                timed from `settings`.
 
         Returns:
             A `TriagePipeline` wired with every PRD §6.3 tool.
@@ -130,7 +136,9 @@ class TriagePipeline:
             llm=llm,
             model=settings.cheap_model,
             prompt_version=settings.triage_prompt_version,
-            tools=build_registry(settings, recorder=recorder or LiveToolRecorder(), cache=cache),
+            tools=build_registry(
+                settings, recorder=recorder or LiveToolRecorder(), cache=cache, http=http
+            ),
             tool_loop_max_iter=settings.tool_loop_max_iter,
         )
 

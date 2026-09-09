@@ -19,7 +19,9 @@ export interface paths {
         put?: never;
         /**
          * Ingest Alert
-         * @description Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.
+         * @description Insert `payload`, deduplicating on its fingerprint; enqueue triage for the still-`pending`
+         *     row and answer immediately — the LLM call happens entirely in the worker process (PRD §3,
+         *     §10.1).
          */
         post: operations["ingest_alert"];
         delete?: never;

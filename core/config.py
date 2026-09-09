@@ -14,6 +14,24 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from core.errors import ConfigError
+
+
+def require_nonempty(name: str, value: str) -> None:
+    """Fail fast when a required secret/setting is empty at boot.
+
+    Shared by `api/main.py` and `worker/main.py` (both entrypoints require this exact message).
+
+    Args:
+        name: The setting's name, for the error message.
+        value: The plaintext value to check.
+
+    Raises:
+        ConfigError: When `value` is empty.
+    """
+    if not value:
+        raise ConfigError(f"{name} must not be empty")
+
 
 class ModelPrice(BaseModel):
     """USD price per million tokens for one model id (PRD §6.4)."""
@@ -40,6 +58,20 @@ class Settings(BaseSettings):
     triage_prompt_version: str = "triage-v4"
     environment: str = "development"
     database_url: SecretStr = SecretStr("")
+    redis_url: SecretStr = SecretStr("")
+    """Redis DSN for the ARQ queue (PRD §4, from M5). SECRET: a deployed URL may embed a
+    password."""
+    redis_socket_timeout_s: Annotated[float, Field(gt=0)] = 2.0
+    """Connect + socket timeout of every api-side Redis call (enqueue, `/healthz` ping, response
+    cache), in seconds — so a dead Redis fails fast instead of hanging the request (m5 task-01)."""
+    triage_job_timeout_s: Annotated[int, Field(ge=1)] = 120
+    """ARQ `job_timeout` for one triage job (all attempts share it); ARQ's in-progress lease the
+    worker holds is this + 10 s (m5 task-01)."""
+    worker_max_jobs: Annotated[int, Field(ge=1)] = 4
+    """Concurrent triage jobs per worker process — bounds concurrent LLM calls (m5 task-01)."""
+    worker_health_check_interval_s: Annotated[int, Field(ge=1)] = 15
+    """How often the worker refreshes its Redis health key (`<queue_name>:health-check`, TTL this
+    + 1 s); the compose healthcheck probes it every 30 s (m5 task-01)."""
     ingest_hmac_secret: SecretStr = SecretStr("")
     cors_origins: str = "http://localhost:3000"
     alerts_list_cache_ttl_s: int = 15
