@@ -1,0 +1,16 @@
+{
+  "arguments": {
+    "ip": "192.0.2.55",
+    "window_hours": 24
+  },
+  "result": {
+    "categories": {
+      "brute_force": 1
+    },
+    "count": 1,
+    "first_seen": "2026-09-06T06:45:27+00:00",
+    "ip": "192.0.2.55",
+    "window_hours": 24
+  },
+  "tool": "get_alert_history"
+}

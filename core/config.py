@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     abuseipdb_cache_max_entries: Annotated[int, Field(ge=1)] = 4096
     """Bound on the in-process `lookup_ip_reputation` cache; M5's Redis backend uses its own
     maxmemory instead (m4 task-04)."""
+    alert_history_max_window_hours: Annotated[int, Field(ge=1)] = 720
+    """Largest `window_hours` `get_alert_history` will honor (30 days); bounds the scan the model
+    can request over `ix_alerts_src_ip` (PRD §6.3, m4 task-05)."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

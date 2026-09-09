@@ -34,11 +34,12 @@ from core.services.alerts import get_alert
 _SIX_DP = Decimal("0.000001")
 
 
-def _latest_verdicts_subquery() -> Subquery:
+def latest_verdicts_subquery() -> Subquery:
     """The latest verdict per alert: Postgres `DISTINCT ON (alert_id)` (PRD §5, §9).
 
     Ordered `alert_id, created_at DESC, id DESC` — the `id` tiebreaker matters when two verdicts
-    for the same alert share a `created_at` (e.g. two writes in one transaction/second).
+    for the same alert share a `created_at` (e.g. two writes in one transaction/second). Public —
+    shared with alert_history (m4 task-05).
     """
     return (
         select(VerdictRow)
@@ -67,7 +68,7 @@ async def list_alerts(
     Returns:
         The page's `AlertSummary` rows and the total count of rows matching `filters`.
     """
-    latest = _latest_verdicts_subquery()
+    latest = latest_verdicts_subquery()
 
     base = select(
         AlertRow.id,
@@ -212,7 +213,7 @@ async def get_stats(session: AsyncSession) -> StatsOut:
     for status, count in status_rows:
         by_status[status] = count
 
-    latest = _latest_verdicts_subquery()
+    latest = latest_verdicts_subquery()
 
     severity_rows = (
         await session.execute(select(latest.c.severity, func.count()).group_by(latest.c.severity))

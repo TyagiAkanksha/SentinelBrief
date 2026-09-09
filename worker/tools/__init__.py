@@ -5,6 +5,7 @@ for the "tools never raise" contract and the fixture-replay seam this package bu
 
 from __future__ import annotations
 
+from worker.tools.alert_history import AlertHistoryTool
 from worker.tools.asset_info import AssetInfoTool, AssetRecord, AssetsFile
 from worker.tools.base import Tool, ToolContext, spec_for, unavailable
 from worker.tools.geo_asn import GeoAsnTool, GeoReader, open_reader
@@ -25,6 +26,7 @@ __all__ = [
     "ABUSEIPDB_CHECK_URL",
     "CACHE_KEY_PREFIX",
     "FIXTURE_KEY_CHARS",
+    "AlertHistoryTool",
     "AssetInfoTool",
     "AssetRecord",
     "AssetsFile",
