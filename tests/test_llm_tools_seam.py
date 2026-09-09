@@ -498,3 +498,36 @@ async def test_fake_complete_structured_records_tools_none() -> None:
     )
 
     assert fake.calls[0].tools is None
+
+
+# --- m4 task-06 (controller ruling R11): the fake mirrors the real client's own guards ----------
+
+
+async def test_fake_complete_with_tools_rejects_empty_tools() -> None:
+    """Mirrors `test_complete_with_tools_requires_at_least_one_tool` above, on the fake: no reply
+    is consumed and no call is recorded — exactly like the real client never issuing a request."""
+    fake = FakeLLMClient([json.dumps(_VALID_VERDICT)])
+
+    with pytest.raises(ValueError, match="at least one tool"):
+        await fake.complete_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            response_model=Verdict,
+            model="fake-model",
+        )
+
+    assert fake.calls == []
+
+
+async def test_fake_complete_with_tools_rejects_empty_scripted_tool_sequence() -> None:
+    """An empty `ScriptedToolCall` sequence would mint a `ToolCallTurn` with zero calls —
+    `ToolCallTurn.calls` is documented `len >= 1`, so the fake refuses to build one."""
+    fake = FakeLLMClient([[]])
+
+    with pytest.raises(AssertionError, match="empty tool script"):
+        await fake.complete_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[_SESSION_TOOL_SPEC],
+            response_model=Verdict,
+            model="fake-model",
+        )

@@ -16,6 +16,13 @@ RED-safety: this file is imported by most of the suite, so it must stay importab
 for the runtime constructor — that import runs only when a test actually calls the method, so a
 RED commit fails only the tests that exercise tool calls, never collection of the whole suite.
 This pattern stays in place after GREEN (the file is pinned).
+
+m4 task-06 (controller ruling R11, the M2-era deferred fact) closes two gaps against the real
+client: `complete_with_tools` now raises `ValueError` when `tools` is empty (mirroring
+`OpenAICompatibleLLMClient.complete_with_tools`, which never issues the request either) and
+`AssertionError("FakeLLMClient: empty tool script")` when a scripted reply is an empty sequence
+(`ToolCallTurn.calls` is documented `len >= 1` — a real model always names at least one tool when
+it asks for tools at all).
 """
 
 from __future__ import annotations
@@ -142,9 +149,17 @@ class FakeLLMClient:
         """Record the call (including the offered `tools`), then pop and replay the next reply.
 
         Raises:
-            AssertionError: The response queue is exhausted.
+            ValueError: `tools` is empty — mirrors
+                `worker.llm_client.OpenAICompatibleLLMClient.complete_with_tools`, which raises
+                before ever issuing the request (m4 task-06, R11).
+            AssertionError: The response queue is exhausted, or the next queued reply is an
+                empty scripted tool-call sequence (`ToolCallTurn.calls` is documented `len >= 1`
+                — a real model always asks for at least one tool when it asks at all).
         """
         from core.llm import ToolCallRequest, ToolCallTurn
+
+        if not tools:
+            raise ValueError("complete_with_tools requires at least one tool")
 
         self.calls.append(
             FakeCall(
@@ -168,6 +183,8 @@ class FakeLLMClient:
             )
         if isinstance(next_response, Exception):
             raise next_response
+        if not next_response:
+            raise AssertionError("FakeLLMClient: empty tool script")
         turn = len(self.calls)  # this reply's 1-based position in fake.calls
         calls = tuple(
             ToolCallRequest(
