@@ -93,7 +93,7 @@ class IpReputationTool:
         if not isinstance(ip, str):
             return unavailable("invalid_arguments")
         try:
-            ipaddress.ip_address(ip)
+            ip = str(ipaddress.ip_address(ip))
         except ValueError:
             return unavailable("invalid_arguments")
 
@@ -106,7 +106,13 @@ class IpReputationTool:
         cache_key = CACHE_KEY_PREFIX + ip
         cached = await self._cache.get(cache_key)
         if cached is not None:
-            return {**json.loads(cached), "cached": True}
+            try:
+                payload = json.loads(cached)
+            except (ValueError, UnicodeDecodeError):
+                payload = None
+            if isinstance(payload, dict):
+                return {**payload, "cached": True}
+            logger.debug("lookup_ip_reputation cache hit was not a JSON object; treating as a miss")
 
         try:
             response = await self._http.get(
@@ -126,11 +132,14 @@ class IpReputationTool:
 
         try:
             data = response.json()["data"]
+            last_seen = data.get("lastReportedAt")
+            if last_seen is not None and not isinstance(last_seen, str):
+                raise TypeError
             result = {
                 "ip": ip,
                 "abuse_score": int(data["abuseConfidenceScore"]),
                 "reports": int(data["totalReports"]),
-                "last_seen": data.get("lastReportedAt"),
+                "last_seen": last_seen,
             }
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return unavailable("malformed_response")
