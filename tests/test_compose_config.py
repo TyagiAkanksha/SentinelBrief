@@ -16,6 +16,9 @@ root (which may or may not have a dev `.env`, and must never be mutated by a tes
 m3 task-07 extends this module with the `web` service (`test_compose_web_service_shape`) and adds
 a `web` assertion to two of the m2-pinned tests below (`test_compose_config_validates`,
 `test_compose_publishes_loopback_only`); no other assertion in this file changes.
+
+m4 task-03 adds `test_compose_api_mounts_geoip_read_only`: the `api` service's read-only bind
+mount of `infra/geoip` (the deploy-time `.mmdb` directory `scripts/fetch_geoip.py` populates).
 """
 
 from __future__ import annotations
@@ -208,6 +211,28 @@ def test_compose_web_service_shape(tmp_path: Path) -> None:
     logging = web["logging"]
     assert logging["driver"] == "json-file"
     assert logging["options"]["max-size"] == "10m"
+
+
+def test_compose_api_mounts_geoip_read_only(tmp_path: Path) -> None:
+    """m4 task-03 brief Interfaces: the `api` service bind-mounts `infra/geoip` read-only at
+    `/app/infra/geoip` — the same relative path `GEOIP_DB_PATH`/`GEOIP_ASN_DB_PATH` resolve to on
+    the host and in the container — so `scripts/fetch_geoip.py`'s deploy-time output is reachable
+    from inside the container but never writable there. Rendered from its own `tmp_path` copy
+    (not the shared `rendered_compose_config` fixture), mirroring
+    `test_compose_api_build_context_is_repo_root`, so the bind's relative `../infra/geoip` source
+    can be checked against the exact directory it resolves relative to.
+    """
+    config = _render_compose_config(tmp_path)
+    api = config["services"]["api"]
+
+    geoip_mounts = [
+        mount for mount in api.get("volumes", []) if mount.get("target") == "/app/infra/geoip"
+    ]
+
+    assert geoip_mounts, f"api has no bind mount at /app/infra/geoip: {api.get('volumes')}"
+    mount = geoip_mounts[0]
+    assert mount["read_only"] is True
+    assert Path(mount["source"]).resolve() == (tmp_path / "infra" / "geoip").resolve()
 
 
 def test_compose_named_volume(rendered_compose_config: dict[str, Any]) -> None:
