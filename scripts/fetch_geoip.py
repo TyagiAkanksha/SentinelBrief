@@ -48,6 +48,15 @@ def _member_matching_edition(names: list[str], edition: str) -> str | None:
     return None
 
 
+class _ArchiveError(Exception):
+    """The one reason `_extract_mmdb` ever fails: no member matches `edition`
+    (`"no .mmdb in archive"`), or a matching member is unusable — not a regular file, or the
+    archive itself is unreadable (`"bad archive"`). `main` catches this type alone (review
+    findings M2/M3): a private exception means an unrelated builtin `LookupError`/`KeyError`
+    surfacing from inside `tarfile` can never be silently relabelled as one of these two reasons.
+    """
+
+
 def _extract_mmdb(archive_bytes: bytes, edition: str, out_dir: Path) -> int:
     """Extract the one `.mmdb` member matching `edition` from `archive_bytes` into
     `out_dir / f"{edition}.mmdb"` — always by that fixed, controlled name, never by the member's
@@ -57,16 +66,24 @@ def _extract_mmdb(archive_bytes: bytes, edition: str, out_dir: Path) -> int:
         The number of bytes written.
 
     Raises:
-        LookupError: no member in the archive matches `edition`.
-        tarfile.TarError: the archive is not readable.
+        _ArchiveError: no member matches `edition`, the matching member is not a regular file
+            (e.g. a directory or a symlink — `tar.extractfile()` returns `None` or raises
+            `KeyError` for these), or the archive itself is not readable.
     """
-    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
-        member_name = _member_matching_edition(tar.getnames(), edition)
-        if member_name is None:
-            raise LookupError("no .mmdb in archive")
-        extracted = tar.extractfile(member_name)
-        assert extracted is not None
-        data = extracted.read()
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+            member_name = _member_matching_edition(tar.getnames(), edition)
+            if member_name is None:
+                raise _ArchiveError("no .mmdb in archive")
+            member = tar.getmember(member_name)
+            if not member.isfile():
+                raise _ArchiveError("bad archive")
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise _ArchiveError("bad archive")
+            data = extracted.read()
+    except (KeyError, tarfile.TarError) as exc:
+        raise _ArchiveError("bad archive") from exc
 
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{edition}.mmdb"
@@ -101,40 +118,50 @@ def main(argv: Sequence[str] | None = None, *, transport: httpx.BaseTransport | 
         return 1
 
     # httpx/httpcore log the full request URL (query params included) at INFO by default — that
-    # would leak the key into any log handler. Quiet them before the first request.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # would leak the key into any log handler. Quiet them before the first request, and restore
+    # whatever level they had on the way out (review M5): `main()` runs in-process in every test
+    # in this file, so an unrestored mutation would leak across the whole pytest session.
+    httpx_logger = logging.getLogger("httpx")
+    httpcore_logger = logging.getLogger("httpcore")
+    previous_httpx_level = httpx_logger.level
+    previous_httpcore_level = httpcore_logger.level
+    httpx_logger.setLevel(logging.WARNING)
+    httpcore_logger.setLevel(logging.WARNING)
 
-    with httpx.Client(transport=transport, timeout=60, follow_redirects=True) as client:
-        for edition in editions:
-            try:
-                response = client.get(
-                    DOWNLOAD_URL,
-                    params={"edition_id": edition, "license_key": key, "suffix": "tar.gz"},
-                )
-            except httpx.HTTPError as exc:
-                print(f"error: download_failed: {edition}: {type(exc).__name__}", file=sys.stderr)
-                return 1
+    try:
+        with httpx.Client(transport=transport, timeout=60, follow_redirects=True) as client:
+            for edition in editions:
+                try:
+                    response = client.get(
+                        DOWNLOAD_URL,
+                        params={"edition_id": edition, "license_key": key, "suffix": "tar.gz"},
+                    )
+                except httpx.HTTPError as exc:
+                    print(
+                        f"error: download_failed: {edition}: {type(exc).__name__}",
+                        file=sys.stderr,
+                    )
+                    return 1
 
-            if not (200 <= response.status_code < 300):
-                print(
-                    f"error: download_failed: {edition}: HTTP {response.status_code}",
-                    file=sys.stderr,
-                )
-                return 1
+                if not (200 <= response.status_code < 300):
+                    print(
+                        f"error: download_failed: {edition}: HTTP {response.status_code}",
+                        file=sys.stderr,
+                    )
+                    return 1
 
-            try:
-                size = _extract_mmdb(response.content, edition, out_dir)
-            except LookupError:
-                print(f"error: download_failed: {edition}: no .mmdb in archive", file=sys.stderr)
-                return 1
-            except tarfile.TarError:
-                print(f"error: download_failed: {edition}: bad archive", file=sys.stderr)
-                return 1
+                try:
+                    size = _extract_mmdb(response.content, edition, out_dir)
+                except _ArchiveError as exc:
+                    print(f"error: download_failed: {edition}: {exc}", file=sys.stderr)
+                    return 1
 
-            print(f"{edition}: {size} bytes -> {out_dir / f'{edition}.mmdb'}")
+                print(f"{edition}: {size} bytes -> {out_dir / f'{edition}.mmdb'}")
 
-    return 0
+        return 0
+    finally:
+        httpx_logger.setLevel(previous_httpx_level)
+        httpcore_logger.setLevel(previous_httpcore_level)
 
 
 if __name__ == "__main__":
