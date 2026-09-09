@@ -28,7 +28,7 @@ file regardless of which test or eval run wrote it.
 {
   "tool": "get_ip_geo_asn",
   "arguments": {"ip": "203.0.113.10"},
-  "result": {"asn": 64512, "country": "ZZ"}
+  "result": {"asn": 64496, "country": "ZZ"}
 }
 ```
 

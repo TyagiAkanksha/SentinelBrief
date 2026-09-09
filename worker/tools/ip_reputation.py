@@ -143,7 +143,7 @@ class IpReputationTool:
                 "reports": int(data["totalReports"]),
                 "last_seen": last_seen,
             }
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except (json.JSONDecodeError, KeyError, OverflowError, TypeError, ValueError):
             return unavailable("malformed_response")
 
         await self._cache.set(cache_key, json.dumps(result).encode(), self._cache_ttl_s)

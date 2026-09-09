@@ -21,7 +21,7 @@ from core.schemas.verdict import VerdictCategory
 
 REASONING_EXCERPT_CHARS = 160
 
-COUNTRY_CODE_RE = re.compile(r"[A-Z]{2}")
+COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
 
 
 def reasoning_excerpt(reasoning: str) -> str:

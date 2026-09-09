@@ -5,7 +5,7 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M3 complete (read path + dashboard v0); M4 (tool calling) next. The build plan
+**Status:** M4 complete (tool calling); M5 (queue split + routing) next. The build plan
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
@@ -123,8 +123,8 @@ uv run python scripts/fetch_geoip.py   # needs MAXMIND_LICENSE_KEY exported (ste
 
 Then set `GEOIP_DB_PATH=infra/geoip/GeoLite2-Country.mmdb` and
 `GEOIP_ASN_DB_PATH=infra/geoip/GeoLite2-ASN.mmdb` in `.env` (the compose `api` service mounts
-`infra/geoip` read-only at the same path). `ABUSEIPDB_API_KEY` is optional too (task-04). Without
-keys both tools answer `{"unavailable": true}`.
+`infra/geoip` read-only at the same path). `ABUSEIPDB_API_KEY` is optional too. Without keys both
+tools answer `{"unavailable": true}`.
 
 ### 4. Tear down
 

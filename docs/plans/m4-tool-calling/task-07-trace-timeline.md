@@ -81,7 +81,7 @@ with the controller's M4 acceptance walk.
   ```python
   # core/schemas/alerts_read.py
   COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
-  def normalize_country(value: object) -> str | None: ...        # value if isinstance(value, str) and COUNTRY_CODE_RE.match(value) else None
+  def normalize_country(value: object) -> str | None: ...        # value if isinstance(value, str) and COUNTRY_CODE_RE.fullmatch(value) else None
   class AlertBase(BaseModel):
       ...existing fields...
       country: str | None = None                                # ISO 3166-1 alpha-2 from the latest verdict's first get_ip_geo_asn result; None when

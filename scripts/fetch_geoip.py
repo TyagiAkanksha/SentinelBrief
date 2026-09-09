@@ -52,8 +52,9 @@ class _ArchiveError(Exception):
     """The one reason `_extract_mmdb` ever fails: no member matches `edition`
     (`"no .mmdb in archive"`), or a matching member is unusable — not a regular file, or the
     archive itself is unreadable (`"bad archive"`). `main` catches this type alone (review
-    findings M2/M3): a private exception means an unrelated builtin `LookupError`/`KeyError`
-    surfacing from inside `tarfile` can never be silently relabelled as one of these two reasons.
+    findings M2/M3): `tarfile`'s own `KeyError` (a corrupt archive can raise it even after a
+    name was found) is deliberately relabelled `"bad archive"` here, by design, rather than
+    left as an unrelated builtin exception escaping to `main`.
     """
 
 
@@ -67,8 +68,8 @@ def _extract_mmdb(archive_bytes: bytes, edition: str, out_dir: Path) -> int:
 
     Raises:
         _ArchiveError: no member matches `edition`, the matching member is not a regular file
-            (e.g. a directory or a symlink — `tar.extractfile()` returns `None` or raises
-            `KeyError` for these), or the archive itself is not readable.
+            (e.g. a directory or a symlink), or the archive itself is not readable (including a
+            `tarfile` `KeyError`, relabelled `"bad archive"` by design).
     """
     try:
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:

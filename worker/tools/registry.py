@@ -128,7 +128,7 @@ class ToolRegistry:
         start = self._clock()
         try:
             result = await self._recorder.execute(tool, arguments, ctx)
-        except Exception as exc:  # the ONE deliberate backstop (controller ruling Q6, spine M4-a)
+        except Exception as exc:  # first of the two deliberate backstops (ruling Q6, spine M4-a)
             logger.exception("tool raised tool=%s arg_keys=%s", name, sorted(arguments))
             result = unavailable(f"{type(exc).__name__}: tool raised")
         # round(), not int(): a scripted clock (e.g. 2.0 -> 2.01) can land a hair under the exact
@@ -139,8 +139,9 @@ class ToolRegistry:
 
         try:
             truncated = truncate_result(result, self._max_result_chars)
-        except Exception as exc:  # the second deliberate backstop: a result json.dumps can't
-            # serialize (e.g. a raw datetime) must not escape either (spine constraint M4-a).
+        except Exception as exc:
+            # second of the two deliberate backstops: a result json.dumps can't serialize (e.g.
+            # a raw datetime) must not escape either (spine constraint M4-a).
             logger.exception(
                 "tool result not serializable tool=%s arg_keys=%s", name, sorted(arguments)
             )

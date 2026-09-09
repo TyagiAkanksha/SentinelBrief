@@ -19,7 +19,7 @@ import json
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from time import perf_counter
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import httpx
 import openai
@@ -282,12 +282,20 @@ class OpenAICompatibleLLMClient:
             for tool_call in message.tool_calls:
                 if tool_call.type != "function":
                     raise LLMCallError(f"unsupported tool call type: {tool_call.type}")
-                try:
-                    arguments = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError as e:
-                    raise LLMCallError("tool call arguments are not a JSON object") from e
-                if not isinstance(arguments, dict):
-                    raise LLMCallError("tool call arguments are not a JSON object")
+                raw_arguments = tool_call.function.arguments
+                if not raw_arguments.strip():
+                    # Some OpenAI-compatible servers send `""` (or whitespace-only) for a
+                    # no-parameter tool call instead of the spec-correct `"{}"` (m4 fix-wave
+                    # task-01 M5); treat it the same as an empty object rather than failing the
+                    # whole alert over a known quirk.
+                    arguments: dict[str, Any] = {}
+                else:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                    except json.JSONDecodeError as e:
+                        raise LLMCallError("tool call arguments are not a JSON object") from e
+                    if not isinstance(arguments, dict):
+                        raise LLMCallError("tool call arguments are not a JSON object")
                 calls.append(
                     ToolCallRequest(
                         id=tool_call.id, name=tool_call.function.name, arguments=arguments

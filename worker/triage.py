@@ -216,10 +216,22 @@ class TriagePipeline:
                 ) from second_err
             return _outcome(result, retried=True)
 
-        has_tools = self._tools is not None and bool(self._tools.specs())
+        async def _final(msgs: list[ChatMessage]) -> TriageOutcome:
+            """The tool-less tail shared by the no-tools path and the cap-reached path: one
+            `complete_structured` call, retried once on `StructuredOutputError` (PRD §6.5).
+            """
+            try:
+                result = await self._llm.complete_structured(
+                    messages=msgs, response_model=Verdict, model=self._model
+                )
+            except StructuredOutputError as first_err:
+                return await _retry_once(msgs, first_err)
+            return _outcome(result, retried=False)
+
+        specs = self._tools.specs() if self._tools is not None else []
+        has_tools = self._tools is not None and bool(specs)
         if has_tools:
             assert self._tools is not None and self._tool_loop_max_iter is not None
-            specs = self._tools.specs()
             seq = 0
             for _turn in range(self._tool_loop_max_iter):
                 try:
@@ -257,22 +269,10 @@ class TriagePipeline:
 
             # Cap reached without a content reply: force one tool-less final call.
             messages.append({"role": "user", "content": FINAL_VERDICT_INSTRUCTION})
-            try:
-                result = await self._llm.complete_structured(
-                    messages=messages, response_model=Verdict, model=self._model
-                )
-            except StructuredOutputError as first_err:
-                return await _retry_once(messages, first_err)
-            return _outcome(result, retried=False)
+            return await _final(messages)
 
         # No tools (or an empty registry): the M3 tool-less pipeline, byte for byte.
-        try:
-            result = await self._llm.complete_structured(
-                messages=messages, response_model=Verdict, model=self._model
-            )
-        except StructuredOutputError as first_err:
-            return await _retry_once(messages, first_err)
-        return _outcome(result, retried=False)
+        return await _final(messages)
 
     async def triage_alert(self, session: AsyncSession, alert_id: uuid.UUID) -> AlertStatus:
         """Load `alert_id`, run it through the pipeline, and persist the outcome as one unit.

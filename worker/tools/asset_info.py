@@ -83,8 +83,9 @@ class AssetInfoTool:
         Returns:
             An `AssetInfoTool` over the loaded fleet, or one whose every `run` call answers
             `unavailable("assets_file_missing")` (path does not exist / can't be read) or
-            `unavailable("assets_file_invalid")` (bad YAML syntax, or the wrong shape) — logging
-            exactly one WARNING naming the path (never the file's contents) in either case.
+            `unavailable("assets_file_invalid")` (bad YAML syntax, the wrong shape, or bytes that
+            are not valid UTF-8) — logging exactly one WARNING naming the path (never the file's
+            contents) in either case.
         """
         try:
             raw_bytes = path.read_bytes()
