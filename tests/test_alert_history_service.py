@@ -11,6 +11,10 @@ Every seeded row goes through `tests.helpers.seed_alert`/`add_verdict`, which ca
 `insert_alert`/`persist_verdict` writers, so a fixture here is byte-for-byte what a real ingest +
 triage run would produce. `T = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)` is the fixed "now" every
 window is computed relative to.
+
+Fix round 1 (m4 task-05 fix-1, review finding M1): `test_service_never_commits` now listens for
+the real `ConnectionEvents.commit` event instead of a `before_cursor_execute` string check, which
+SQLAlchemy's DBAPI-level COMMIT can never trip.
 """
 
 from __future__ import annotations
@@ -226,6 +230,10 @@ async def test_statements_use_the_src_ip_expression_and_never_select_raw(
 
 
 async def test_service_never_commits(db_session: AsyncSession) -> None:
+    """Fix round 1 (m4 task-05 fix-1, review finding M1): a `before_cursor_execute` string check
+    for `"COMMIT"` can never fail — SQLAlchemy issues COMMIT through the DBAPI connection, not
+    through `cursor.execute`. A `ConnectionEvents.commit` listener observes the real event
+    instead; `in_transaction()` is kept as the second, independent proof."""
     await seed_alert(
         db_session,
         session_id="hist-nocommit-001",
@@ -234,17 +242,17 @@ async def test_service_never_commits(db_session: AsyncSession) -> None:
     )
     await db_session.flush()
 
-    statements: list[str] = []
+    commits: list[object] = []
 
-    def _capture(conn: object, cursor: object, statement: str, *args: object) -> None:
-        statements.append(statement)
+    def _count_commit(conn: object) -> None:
+        commits.append(conn)
 
     engine = db_session.get_bind()
-    event.listen(engine, "before_cursor_execute", _capture)
+    event.listen(engine, "commit", _count_commit)
     try:
         await get_alert_history(db_session, src_ip="203.0.113.10", since=T - timedelta(hours=24))
     finally:
-        event.remove(engine, "before_cursor_execute", _capture)
+        event.remove(engine, "commit", _count_commit)
 
-    assert not any("COMMIT" in stmt.upper() for stmt in statements)
+    assert commits == []
     assert db_session.in_transaction() is True
