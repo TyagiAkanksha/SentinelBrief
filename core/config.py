@@ -74,6 +74,21 @@ class Settings(BaseSettings):
     geoip_asn_db_path: str = ""
     """Path to the GeoLite2 ASN `.mmdb` `get_ip_geo_asn` reads for `asn`/`org` (m4 task-03).
     Empty -> `asn`/`org` are always null."""
+    abuseipdb_api_key: SecretStr = SecretStr("")
+    """AbuseIPDB API key `lookup_ip_reputation` sends in the `Key` header (PRD §6.3, m4 task-04).
+    SECRET, optional: empty -> the tool always answers `unavailable("no_api_key")`."""
+    abuseipdb_cache_ttl_s: Annotated[int, Field(ge=1)] = 86400
+    """How long a successful `lookup_ip_reputation` answer is cached, in seconds (PRD §6.3: 24 h
+    free-tier quota conservation). A failure is never cached."""
+    abuseipdb_timeout_s: Annotated[float, Field(gt=0)] = 5.0
+    """Per-request timeout for the AbuseIPDB `check` call; the tool loop must not hang on a slow
+    vendor (m4 task-04)."""
+    abuseipdb_max_age_days: Annotated[int, Field(ge=1, le=365)] = 90
+    """`maxAgeInDays` sent to AbuseIPDB's `check` endpoint (AbuseIPDB's own default window, m4
+    task-04)."""
+    abuseipdb_cache_max_entries: Annotated[int, Field(ge=1)] = 4096
+    """Bound on the in-process `lookup_ip_reputation` cache; M5's Redis backend uses its own
+    maxmemory instead (m4 task-04)."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod
