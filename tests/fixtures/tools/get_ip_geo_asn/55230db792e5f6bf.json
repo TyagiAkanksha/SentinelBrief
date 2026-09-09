@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "198.51.100.140"
+  },
+  "result": {
+    "asn": 64500,
+    "country": "BR",
+    "ip": "198.51.100.140",
+    "org": "Example Telecom SA"
+  },
+  "tool": "get_ip_geo_asn"
+}

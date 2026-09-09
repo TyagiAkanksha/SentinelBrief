@@ -44,6 +44,8 @@ services:
     env_file: ../.env
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - ../infra/geoip:/app/infra/geoip:ro     # GeoLite2 .mmdb files fetched by scripts/fetch_geoip.py; same relative path as on the host
     depends_on:
       postgres:
         condition: service_healthy

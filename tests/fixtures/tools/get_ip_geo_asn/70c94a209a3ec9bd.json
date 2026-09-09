@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "192.0.2.55"
+  },
+  "result": {
+    "asn": 64499,
+    "country": "DE",
+    "ip": "192.0.2.55",
+    "org": "Example Hosting GmbH"
+  },
+  "tool": "get_ip_geo_asn"
+}

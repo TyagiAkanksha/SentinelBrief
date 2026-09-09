@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     `download_count` (m4 task-02)."""
     tool_command_max_chars: Annotated[int, Field(ge=1)] = 200
     """Max characters each command `get_session_commands` returns is clipped to (m4 task-02)."""
+    maxmind_license_key: SecretStr = SecretStr("")
+    """MaxMind license key, deploy-time only (PRD §10.8, m4 task-03): read by
+    `scripts/fetch_geoip.py` to download the GeoLite2 `.mmdb` files; never used by the running
+    api/worker. SECRET."""
+    geoip_db_path: str = ""
+    """Path to the GeoLite2 Country (or City) `.mmdb` `get_ip_geo_asn` reads for `country` (m4
+    task-03). Relative paths resolve from the process cwd: the repo root on the host,
+    `/app` (the image's `WORKDIR`) in the container — the same string works in both. Empty ->
+    `country` is always null."""
+    geoip_asn_db_path: str = ""
+    """Path to the GeoLite2 ASN `.mmdb` `get_ip_geo_asn` reads for `asn`/`org` (m4 task-03).
+    Empty -> `asn`/`org` are always null."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod
