@@ -5,7 +5,7 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M3 complete (read path + dashboard v0); M4 (tool calling) next. The build plan
+**Status:** M4 complete (tool calling); M5 (queue split + routing) next. The build plan
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
@@ -115,6 +115,17 @@ docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sen
 Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
 only DDL path.
 
+#### Enrichment tools (optional)
+
+```sh
+uv run python scripts/fetch_geoip.py   # needs MAXMIND_LICENSE_KEY exported (step 1); writes infra/geoip/GeoLite2-Country.mmdb and GeoLite2-ASN.mmdb, never committed
+```
+
+Then set `GEOIP_DB_PATH=infra/geoip/GeoLite2-Country.mmdb` and
+`GEOIP_ASN_DB_PATH=infra/geoip/GeoLite2-ASN.mmdb` in `.env` (the compose `api` service mounts
+`infra/geoip` read-only at the same path). `ABUSEIPDB_API_KEY` is optional too. Without keys both
+tools answer `{"unavailable": true}`.
+
 ### 4. Tear down
 
 ```sh
@@ -151,6 +162,7 @@ Live-API smoke tests are opt-in: `uv run pytest -m live`.
 ## Evaluation
 
 ```sh
+# external tools replay tests/fixtures/tools (override with --tool-fixtures DIR)
 uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v2
 ```
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  countryFlag,
   formatAge,
   formatDatetimeLocalUtc,
   formatLatency,
@@ -75,6 +76,17 @@ describe("total formatters on non-finite input", () => {
       expect(formatPercent(bad)).toBe("—");
       expect(formatLatency(bad)).toBe("—");
       expect(formatTokens(bad)).toBe("—");
+    }
+  });
+});
+
+describe("countryFlag", () => {
+  it("countryFlag maps a two-letter code to regional indicators and everything else to empty", () => {
+    expect(countryFlag("DE")).toBe("\u{1F1E9}\u{1F1EA}");
+    expect(countryFlag("NL")).toBe("\u{1F1F3}\u{1F1F1}");
+
+    for (const bad of ["de", "DEU", "", null, undefined]) {
+      expect(countryFlag(bad)).toBe("");
     }
   });
 });

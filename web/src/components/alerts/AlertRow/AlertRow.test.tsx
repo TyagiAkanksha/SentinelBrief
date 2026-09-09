@@ -129,4 +129,46 @@ describe("AlertRow", () => {
     expect(reasoningCell!).toHaveTextContent(verdict.reasoning_excerpt);
     expect(receivedCell!.querySelector("time")).not.toBeNull();
   });
+
+  it("renders the country flag inside the IP cell before the link", () => {
+    const alert = makeAlert({ country: "DE" });
+
+    render(
+      <table>
+        <tbody>
+          <AlertRow alert={alert} now={now} />
+        </tbody>
+      </table>,
+    );
+
+    const cells = screen.getAllByRole("cell");
+    expect(cells).toHaveLength(6);
+
+    const ipCell = cells[2]!;
+    expect(within(ipCell).getByRole("img", { name: "Country DE" })).toBeInTheDocument();
+    expect(within(ipCell).getByRole("link", { name: alert.src_ip })).toBeInTheDocument();
+  });
+
+  it("renders no flag when country is null or absent", () => {
+    const nullCountry = makeAlert({ country: null });
+    const { unmount } = render(
+      <table>
+        <tbody>
+          <AlertRow alert={nullCountry} now={now} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.queryByRole("img")).toBeNull();
+    unmount();
+
+    const omittedCountry = makeAlert();
+    render(
+      <table>
+        <tbody>
+          <AlertRow alert={omittedCountry} now={now} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.queryByRole("img")).toBeNull();
+  });
 });

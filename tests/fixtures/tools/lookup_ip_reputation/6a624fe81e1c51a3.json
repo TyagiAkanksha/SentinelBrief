@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "198.51.100.23"
+  },
+  "result": {
+    "abuse_score": 87,
+    "ip": "198.51.100.23",
+    "last_seen": "2026-09-04T03:41:19+00:00",
+    "reports": 96
+  },
+  "tool": "lookup_ip_reputation"
+}

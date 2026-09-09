@@ -8,6 +8,7 @@ one set of envelope fields while differing by exactly the fields the detail view
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -20,10 +21,21 @@ from core.schemas.verdict import VerdictCategory
 
 REASONING_EXCERPT_CHARS = 160
 
+COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
+
 
 def reasoning_excerpt(reasoning: str) -> str:
     """The first `REASONING_EXCERPT_CHARS` characters of `reasoning`, a plain slice, no ellipsis."""
     return reasoning[:REASONING_EXCERPT_CHARS]
+
+
+def normalize_country(value: object) -> str | None:
+    """`value` if it is a two-uppercase-letter ISO 3166-1 alpha-2 code, else `None`.
+
+    `fullmatch` (not `match` + `$`): Python's `$` matches at the end of the string or immediately
+    before a trailing newline, so `"DE\\n"` would otherwise wrongly survive (m4 task-07 fix-1 M1).
+    """
+    return value if isinstance(value, str) and COUNTRY_CODE_RE.fullmatch(value) else None
 
 
 class VerdictOut(BaseModel):
@@ -84,6 +96,10 @@ class AlertBase(BaseModel):
     event_time: datetime
     received_at: datetime
     status: AlertStatus
+    # ISO 3166-1 alpha-2 from the latest verdict's first `get_ip_geo_asn` result; `None` when
+    # there is no such call, it was `{unavailable}`, or the value is not two uppercase letters.
+    # Defaulted (not required) so existing `AlertSummary`/`AlertDetail` literals still validate.
+    country: str | None = None
 
 
 class AlertSummary(AlertBase):

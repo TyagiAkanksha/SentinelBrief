@@ -26,6 +26,7 @@ from core.schemas.alerts_read import (
     ToolCallOut,
     VerdictOut,
     VerdictSummary,
+    normalize_country,
     reasoning_excerpt,
 )
 from core.schemas.verdict import VerdictCategory
@@ -33,18 +34,37 @@ from core.services.alerts import get_alert
 
 _SIX_DP = Decimal("0.000001")
 
+GEO_TOOL_NAME = "get_ip_geo_asn"
 
-def _latest_verdicts_subquery() -> Subquery:
+
+def latest_verdicts_subquery() -> Subquery:
     """The latest verdict per alert: Postgres `DISTINCT ON (alert_id)` (PRD §5, §9).
 
     Ordered `alert_id, created_at DESC, id DESC` — the `id` tiebreaker matters when two verdicts
-    for the same alert share a `created_at` (e.g. two writes in one transaction/second).
+    for the same alert share a `created_at` (e.g. two writes in one transaction/second). Public —
+    shared with alert_history (m4 task-05).
     """
     return (
         select(VerdictRow)
         .distinct(VerdictRow.alert_id)
         .order_by(VerdictRow.alert_id, VerdictRow.created_at.desc(), VerdictRow.id.desc())
         .subquery("latest")
+    )
+
+
+def geo_country_subquery() -> Subquery:
+    """The first `GEO_TOOL_NAME` call's `result["country"]` per verdict (PRD §9).
+
+    `DISTINCT ON (verdict_id) ORDER BY verdict_id, seq` picks the earliest such call when a
+    verdict's tool loop invoked the geo tool more than once; `->>` yields SQL `NULL` for an
+    `{unavailable}` result (no `"country"` key), left to `normalize_country` in Python.
+    """
+    return (
+        select(ToolCallRow.verdict_id, ToolCallRow.result["country"].astext.label("country"))
+        .where(ToolCallRow.tool_name == GEO_TOOL_NAME)
+        .distinct(ToolCallRow.verdict_id)
+        .order_by(ToolCallRow.verdict_id, ToolCallRow.seq)
+        .subquery("geo")
     )
 
 
@@ -67,8 +87,12 @@ async def list_alerts(
     Returns:
         The page's `AlertSummary` rows and the total count of rows matching `filters`.
     """
-    latest = _latest_verdicts_subquery()
+    latest = latest_verdicts_subquery()
+    geo = geo_country_subquery()
 
+    # `geo` is joined only into `items_stmt`, never into `base`/the COUNT statement: it cannot
+    # change the row count (1:0..1 on `latest.id`), so joining it there would only add an unused
+    # `tool_calls` scan to the dashboard's hot public path (m4 task-07 fix-1 M2).
     base = select(
         AlertRow.id,
         AlertRow.source,
@@ -98,7 +122,9 @@ async def list_alerts(
     assert total is not None
 
     items_stmt = (
-        base.order_by(
+        base.add_columns(geo.c.country)
+        .outerjoin(geo, geo.c.verdict_id == latest.c.id)
+        .order_by(
             latest.c.severity.desc().nulls_last(),
             AlertRow.received_at.desc(),
             AlertRow.id.desc(),
@@ -117,6 +143,7 @@ async def list_alerts(
             event_time=row.event_time,
             received_at=row.received_at,
             status=cast(AlertStatus, row.status),
+            country=normalize_country(row.country),
             verdict=(
                 None
                 if row.severity is None
@@ -174,6 +201,9 @@ async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertD
         tool_calls = [ToolCallOut.model_validate(tc) for tc in tool_call_rows]
 
     raw: dict[str, Any] = row.raw
+    country = normalize_country(
+        next((tc.result.get("country") for tc in tool_calls if tc.tool_name == GEO_TOOL_NAME), None)
+    )
     return AlertDetail(
         id=row.id,
         source=row.source,
@@ -182,6 +212,7 @@ async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertD
         event_time=row.event_time,
         received_at=row.received_at,
         status=cast(AlertStatus, row.status),
+        country=country,
         raw=raw,
         verdict=verdict_out,
         tool_calls=tool_calls,
@@ -212,7 +243,7 @@ async def get_stats(session: AsyncSession) -> StatsOut:
     for status, count in status_rows:
         by_status[status] = count
 
-    latest = _latest_verdicts_subquery()
+    latest = latest_verdicts_subquery()
 
     severity_rows = (
         await session.execute(select(latest.c.severity, func.count()).group_by(latest.c.severity))

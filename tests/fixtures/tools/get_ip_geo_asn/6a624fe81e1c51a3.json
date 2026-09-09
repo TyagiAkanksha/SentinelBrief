@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "198.51.100.23"
+  },
+  "result": {
+    "asn": 64497,
+    "country": "US",
+    "ip": "198.51.100.23",
+    "org": "Example Cloud LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # validator below do the json.loads itself, so malformed input surfaces as a pydantic
     # ValidationError instead (CONVENTIONS.md §7).
     model_prices_json: Annotated[dict[str, ModelPrice], NoDecode] = Field(default_factory=dict)
-    triage_prompt_version: str = "triage-v1"
+    triage_prompt_version: str = "triage-v4"
     environment: str = "development"
     database_url: SecretStr = SecretStr("")
     ingest_hmac_secret: SecretStr = SecretStr("")
@@ -46,6 +46,55 @@ class Settings(BaseSettings):
     stats_cache_ttl_s: int = 60
     alerts_cache_max_entries: int = 1024
     """Bound on the in-process list/stats cache; M5's Redis backend uses its own maxmemory."""
+    tool_result_max_chars: Annotated[int, Field(ge=1)] = 4000
+    """Character budget every tool result is truncated to before it is fed back to the model or
+    persisted (PRD §6.3, m4 task-01). One backstop for every tool, not a per-tool setting — see
+    the comment in `.env.example`."""
+    assets_yaml_path: str = "honeypot/assets.yaml"
+    """Path to the static fleet description `get_asset_info` reads (PRD §6.3, m4 task-02).
+    Relative paths resolve from the process cwd: the repo root on the host, `/app` (the image's
+    `WORKDIR`) in the container — the same string works in both."""
+    tool_session_commands_max: Annotated[int, Field(ge=1)] = 40
+    """Max commands `get_session_commands` returns from a session; the rest are only reflected in
+    `command_count` (PRD §6.3's own example, m4 task-02)."""
+    tool_session_downloads_max: Annotated[int, Field(ge=1)] = 10
+    """Max downloads `get_session_commands` returns from a session; the rest are only reflected in
+    `download_count` (m4 task-02)."""
+    tool_command_max_chars: Annotated[int, Field(ge=1)] = 200
+    """Max characters each command `get_session_commands` returns is clipped to (m4 task-02)."""
+    maxmind_license_key: SecretStr = SecretStr("")
+    """MaxMind license key, deploy-time only (PRD §10.8, m4 task-03): read by
+    `scripts/fetch_geoip.py` to download the GeoLite2 `.mmdb` files; never used by the running
+    api/worker. SECRET."""
+    geoip_db_path: str = ""
+    """Path to the GeoLite2 Country (or City) `.mmdb` `get_ip_geo_asn` reads for `country` (m4
+    task-03). Relative paths resolve from the process cwd: the repo root on the host,
+    `/app` (the image's `WORKDIR`) in the container — the same string works in both. Empty ->
+    `country` is always null."""
+    geoip_asn_db_path: str = ""
+    """Path to the GeoLite2 ASN `.mmdb` `get_ip_geo_asn` reads for `asn`/`org` (m4 task-03).
+    Empty -> `asn`/`org` are always null."""
+    abuseipdb_api_key: SecretStr = SecretStr("")
+    """AbuseIPDB API key `lookup_ip_reputation` sends in the `Key` header (PRD §6.3, m4 task-04).
+    SECRET, optional: empty -> the tool always answers `unavailable("no_api_key")`."""
+    abuseipdb_cache_ttl_s: Annotated[int, Field(ge=1)] = 86400
+    """How long a successful `lookup_ip_reputation` answer is cached, in seconds (PRD §6.3: 24 h
+    free-tier quota conservation). A failure is never cached."""
+    abuseipdb_timeout_s: Annotated[float, Field(gt=0)] = 5.0
+    """Per-request timeout for the AbuseIPDB `check` call; the tool loop must not hang on a slow
+    vendor (m4 task-04)."""
+    abuseipdb_max_age_days: Annotated[int, Field(ge=1, le=365)] = 90
+    """`maxAgeInDays` sent to AbuseIPDB's `check` endpoint (AbuseIPDB's own default window, m4
+    task-04)."""
+    abuseipdb_cache_max_entries: Annotated[int, Field(ge=1)] = 4096
+    """Bound on the in-process `lookup_ip_reputation` cache; M5's Redis backend uses its own
+    maxmemory instead (m4 task-04)."""
+    alert_history_max_window_hours: Annotated[int, Field(ge=1)] = 720
+    """Largest `window_hours` `get_alert_history` will honor (30 days); bounds the scan the model
+    can request over `ix_alerts_src_ip` (PRD §6.3, m4 task-05)."""
+    tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6
+    """Hard cap on tool-call turns per alert before a tool-less verdict is forced (PRD §6.3, m4
+    task-06). Never a literal in `worker/triage.py`."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

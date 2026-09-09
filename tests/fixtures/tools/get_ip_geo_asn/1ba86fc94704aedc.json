@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "203.0.113.77"
+  },
+  "result": {
+    "asn": 64498,
+    "country": "SG",
+    "ip": "203.0.113.77",
+    "org": "Example Hosting Pte"
+  },
+  "tool": "get_ip_geo_asn"
+}

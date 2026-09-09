@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "203.0.113.10"
+  },
+  "result": {
+    "asn": 64496,
+    "country": "NL",
+    "ip": "203.0.113.10",
+    "org": "Example Scanning BV"
+  },
+  "tool": "get_ip_geo_asn"
+}

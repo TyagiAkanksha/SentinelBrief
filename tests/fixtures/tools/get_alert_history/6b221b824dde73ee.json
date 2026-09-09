@@ -1,0 +1,16 @@
+{
+  "arguments": {
+    "ip": "203.0.113.10",
+    "window_hours": 24
+  },
+  "result": {
+    "categories": {
+      "scanning": 3
+    },
+    "count": 3,
+    "first_seen": "2026-09-05T14:02:11+00:00",
+    "ip": "203.0.113.10",
+    "window_hours": 24
+  },
+  "tool": "get_alert_history"
+}

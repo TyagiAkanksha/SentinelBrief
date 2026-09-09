@@ -20,7 +20,7 @@ invariants: **no LLM call outside `worker/`** and **one transaction per verdict 
   PRD section that mandates the behavior (e.g. "PRD §6.1: duplicates never re-trigger triage").
 - Prefer `collections.abc` types (`Callable`, `Sequence`, `Mapping`, `AsyncIterator`) in
   annotations.
-- No bare `except Exception` and no `raise Exception(...)` — use the typed family (§4).
+- No bare `except Exception`/`raise Exception(...)` — use the typed family (two carve-outs, §4).
 - Keep files small; each function serves **one purpose**. A module accumulating unrelated
   responsibilities is a split-smell — raise it rather than growing it.
 
@@ -125,7 +125,14 @@ no contract forbids the import.
 - **Routes contain no `try/except`.** Rollback happens in the session dependency; mapping happens
   in the registered handlers. One documented carve-out: `GET /healthz` catches database/connection
   errors to answer `503 {"status": "degraded", ...}` instead of a `500` envelope, because a
-  liveness probe must never look like an application crash.
+  liveness probe must never look like an application crash. The second carve-out is
+  `worker/tools/registry.py::ToolRegistry.execute` (M4, controller ruling Q6): the worker's
+  boundary with tool code fed attacker-influenced input catches `Exception` — never
+  `BaseException`, so cancellation propagates — around two guarded regions (running the tool,
+  truncating its result), logs the tool name and argument keys only, and returns
+  `{"unavailable": true, "reason": "<ExceptionClass>: tool raised"}` or
+  `{"unavailable": true, "reason": "<ExceptionClass>: result not serializable"}` respectively, so
+  an inline triage can never 500 the ingest request.
 
 ## 5. App construction
 

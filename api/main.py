@@ -56,9 +56,7 @@ engine: AsyncEngine = make_engine(settings.database_url.get_secret_value())
 session_factory: async_sessionmaker[AsyncSession] = make_session_factory(engine)
 
 llm = OpenAICompatibleLLMClient.from_settings(settings)
-pipeline = TriagePipeline(
-    llm=llm, model=settings.cheap_model, prompt_version=settings.triage_prompt_version
-)
+pipeline = TriagePipeline.from_settings(settings, llm=llm)
 
 app: FastAPI = create_app(
     session_factory=session_factory, settings=settings, triage=pipeline.triage_alert

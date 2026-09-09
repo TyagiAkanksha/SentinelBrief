@@ -28,16 +28,11 @@ _ENV_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / ".env.example"
 _SCHEDULED = {
     "ESCALATE_SEVERITY_GTE",
     "ESCALATE_CONFIDENCE_LT",
-    "TOOL_LOOP_MAX_ITER",
     "DAILY_TOKEN_BUDGET",
     "REDIS_URL",
     "ADMIN_TOKEN",
     "RETRIAGE_PER_DAY",
     "PUBLIC_RATE_LIMIT_PER_MIN",
-    "ABUSEIPDB_API_KEY",
-    "MAXMIND_LICENSE_KEY",
-    "GEOIP_DB_PATH",
-    "ASSETS_YAML_PATH",
     "NEXT_PUBLIC_API_URL",
     "API_URL",
 }

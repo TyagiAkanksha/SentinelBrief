@@ -1,6 +1,6 @@
 # SentinelBrief — Product Requirements Document
 
-**Version:** 1.2 · **Owner:** Akanksha Tyagi · **Status:** Approved for build · **Changelog:** §15
+**Version:** 1.3 · **Owner:** Akanksha Tyagi · **Status:** Approved for build · **Changelog:** §15
 **One-liner:** An LLM-powered triage layer that reads incoming security alerts, gathers context via tool calls, and gives analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness measuring how well it does.
 
 ---
@@ -186,7 +186,7 @@ The golden set lives in the repo as JSONL (`evals/golden/*.jsonl`), not in the d
 ### 6.2 Worker loop
 For each job: load raw alert → run the tool-calling loop (§6.3) → validate structured output (§6.5) → persist verdict + tool trace + metrics in one transaction → set alert `status='triaged'` → publish `verdict.created` on Redis pub/sub (for SSE). On unrecoverable failure after 3 retries with backoff: `status='failed'`, log, move on. A poison alert must never wedge the queue.
 
-**Retry budget, stated explicitly (v1.1):** the structured-output retry (§6.5) happens once *inside* a job; the job itself is retried up to 3 times (M5). A poison alert can therefore cost at most 6 LLM calls before it is marked `failed`, and the daily token budget (§10.3) counts every one of them.
+**Retry budget, stated explicitly (v1.1, amended v1.3):** the structured-output retry (§6.5) happens once *inside* a job; the job itself is retried up to 3 times (M5). A poison alert can therefore cost at most `(TOOL_LOOP_MAX_ITER + 2) × 3` LLM calls (8 × 3 = 24 at the defaults: six tool turns, the forced final verdict and the one validation retry, times three job retries) before it is marked `failed`, and the daily token budget (§10.3) counts every one of them.
 
 ### 6.3 Enrichment tools
 The model decides which tools to call; the worker executes them and returns results. Hard cap: **6 tool-call iterations** per alert, then force a final verdict.
@@ -409,6 +409,9 @@ Terraform stack live; migration documented.
 ---
 
 ## 15. Changelog
+
+**v1.3 — 2026-09-09.** M4 build-time amendment; no scope change.
+- §6.2: the v1.1 retry-budget bound is corrected for M4's tool-calling loop (§6.3): at most `(TOOL_LOOP_MAX_ITER + 2) × 3` LLM calls per poison alert (24 at the defaults), not 6 — the earlier number predated the tool loop.
 
 **v1.2 — 2026-09-07.** M2 build-time amendment; no scope change.
 - §5: `verdicts.created_at` is `NOT NULL` (migration 0001 already ships it that way; a creation timestamp must never be null — M2 task-01 review M2, ruled at the M2 gate).

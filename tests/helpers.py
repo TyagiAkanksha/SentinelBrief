@@ -118,6 +118,7 @@ async def seed_alert(
     verdict: Verdict | None = None,
     status: AlertStatus | None = None,
     session_id: str | None = None,
+    src_ip: str | None = None,
     received_at: datetime | None = None,
     verdict_created_at: datetime | None = None,
     cost_usd: Decimal = Decimal("0.000100"),
@@ -126,10 +127,18 @@ async def seed_alert(
 ) -> uuid.UUID:
     """Seed one alert, and optionally its verdict, entirely through production writers.
 
+    `src_ip` overrides the envelope's top-level `src_ip` field (not any per-event `src_ip`) — it
+    is what `AlertRow.raw["src_ip"].astext`/`ix_alerts_src_ip` reads, so tests that vary the
+    source address for `get_alert_history` (m4 task-05) pass it here instead of hand-rolling a
+    whole session payload.
+
     Returns the new alert's id; the caller commits — services and helpers never commit
     (CONVENTIONS.md §3).
     """
-    alert = load_alert(name, session_id=session_id or uuid.uuid4().hex[:12])
+    load_overrides: dict[str, object] = {"session_id": session_id or uuid.uuid4().hex[:12]}
+    if src_ip is not None:
+        load_overrides["src_ip"] = src_ip
+    alert = load_alert(name, **load_overrides)
     result = await insert_alert(session, alert)
     assert result.created, "seed_alert: duplicate fingerprint is a test bug"
 

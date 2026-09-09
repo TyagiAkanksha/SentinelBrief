@@ -87,4 +87,4 @@ cache, routes and the error-handler refactor together.)
 
 ## Status
 
-in progress — briefs written at the M2 gate (2026-09-07); git history and the ledger are authoritative.
+done — merged via PR #4, tag `m3` on dbd1cde (2026-09-09); git history and the ledger are authoritative.

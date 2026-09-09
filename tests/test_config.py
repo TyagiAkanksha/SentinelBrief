@@ -42,7 +42,7 @@ def test_settings_constructs_with_no_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert settings.cheap_model == ""
     assert settings.strong_model == ""
     assert settings.model_prices_json == {}
-    assert settings.triage_prompt_version == "triage-v1"
+    assert settings.triage_prompt_version == "triage-v4"
     assert settings.environment == "development"
 
 
