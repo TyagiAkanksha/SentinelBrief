@@ -80,4 +80,4 @@ trace.
 
 ## Status
 
-planned — briefs pending (written at the M3 gate).
+in progress — briefs written 2026-09-09 (`m4-tool-calling/task-01` … `task-07`); git history and the ledger are authoritative.
