@@ -82,6 +82,11 @@ retry heals an orphaned row instead of stranding it.
   `.github/workflows/ci.yml`, `.env.example`, `README.md`, `api/openapi.json` +
   `web/src/types/generated/*` (the ingest operation's description text changes → regenerate both
   in the same commit, CONVENTIONS §8)
+- Modify (docs invalidated by this task — review I1 / plan conflict P1, fix round 1):
+  `CONVENTIONS.md` (§2 item 3: "No exceptions" replaces the M2-only exception; §4's registry
+  carve-out sentence no longer mentions inline triage; §5's `create_app` signature gains
+  `enqueue`/`redis`/`cache`), `.claude/rules/api.md` (no exception to contract 3; the ingest
+  route's commit-before-enqueue STAYS — spine M5-a)
 - Delete: nothing else (`tests/test_inline_triage.py` is renamed, not deleted)
 
 ## Interfaces
@@ -280,6 +285,10 @@ it opens a FRESH session on each call and appends the row's status as seen there
 | api waits for redis | `tests/test_compose_config.py::test_compose_api_depends_on_healthy_redis` | `api.depends_on.redis.condition == "service_healthy"` |
 | existing compose pins | `test_compose_config_validates` (+ `redis`, `worker` present), `test_compose_publishes_loopback_only` (+ `redis == {"6379"}`, `"worker" not in published_targets`) | assertions extended, nothing else changes |
 | roster | `tests/test_env_example_roster.py` | `REDIS_URL` removed from `_SCHEDULED`; both roster tests green after the `.env.example` lines land |
+| lifespan closes redis (review I2 / P2, fix-1) | `tests/test_app_lifespan.py::test_lifespan_closes_the_wired_redis_client_on_shutdown`, `::test_lifespan_is_a_no_op_when_no_redis_is_wired` | `httpx.ASGITransport` never runs the ASGI lifespan, so this is driven through `app.router.lifespan_context(app)`: a recording fake with `aclose()` sees exactly `["aclose"]`; a DB-less/Redis-less app starts and stops cleanly. Mutation: `aclose` → `close` in `api/factory.py` fails the first test |
+| api.main enqueue seam (review M1, fix-1) | `tests/test_api_main_enqueue.py::test_api_main_enqueue_closure_reaches_enqueue_triage` | env `REDIS_URL=redis://127.0.0.1:1/0` (refuses immediately), `REDIS_SOCKET_TIMEOUT_S=0.5`; `await module.app.state.enqueue(uuid4())` raises `QueueUnavailableError` — the closure really reaches `enqueue_triage` on the wired client; mutation: a no-op closure fails it |
+| registry once (review M3, fix-1) | `tests/test_evals_registry_once.py::test_evals_run_builds_the_registry_once_above_the_prompt_loop` | source-level pin: `evals/run.py` contains `build_registry(` exactly once, before `for prompt_version in args.prompt:` (N-M5 has no black-box seam) |
+| redis snapshot policy (review M2, fix-1) | `tests/test_compose_config.py::test_compose_redis_service_shape` | + `redis["command"] == ["redis-server", "--save", "60", "1", "--loglevel", "warning"]` — queued jobs survive a restart; the docstring's RDB clause is now pinned |
 | contract 3 absolute | (implementer ritual, pasted in the report) | inject `from worker.triage import TriagePipeline` into `api/deps.py` → `uv run lint-imports` exit 1 naming contract 3; revert → exit 0; `lint-imports` output shows `5 contracts KEPT` with **0 ignored imports** |
 
 ## Steps (TDD)
@@ -350,7 +359,7 @@ export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelb
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run pytest -q -rs tests/test_queue.py tests/test_worker_job.py tests/test_worker_main.py tests/test_ingest.py tests/test_api_main.py tests/test_triage_alert.py tests/test_compose_config.py tests/test_env_example_roster.py tests/test_evals_run.py tests/test_tool_wiring_and_retry_trace.py tests/test_tool_loop.py   # all pass, 0 skipped
 uv run lint-imports                                           # 5 contracts kept, no "ignored imports" line under contract 3
-grep -rn "worker" api/ --include=*.py | grep -v "^api/.*#" ; echo "exit=$?"     # exit=1 — no worker import anywhere under api/
+grep -rnE "^\s*(from|import)\s+worker" api/ --include=*.py ; echo "exit=$?"   # exit=1 — no worker import statement anywhere under api/ (docstring prose may mention the word; review P3)
 grep -c "build_registry(" evals/run.py                        # 1
 uv run python scripts/export_openapi.py --out /tmp/openapi.json && cmp /tmp/openapi.json api/openapi.json   # no drift
 pnpm -C web codegen && git diff --exit-code -- web/src/types/generated                                       # no drift
