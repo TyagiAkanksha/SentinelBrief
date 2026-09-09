@@ -202,6 +202,38 @@ async def test_clips_each_command_to_max_command_chars() -> None:
     assert result["clipped_commands"] == 1
 
 
+async def test_clipped_commands_counts_the_whole_session_not_the_kept_slice() -> None:
+    """I3 (controller ruling, brief amendment 3f1dcb2): `clipped_commands` counts every
+    over-length command in the whole session, not just the ones that land in the kept
+    (`max_commands`-sized) slice. 45 commands, `max_commands=40`; only commands 41-45 (outside
+    the kept window) exceed `max_command_chars` — a "kept slice only" implementation would report
+    `clipped_commands == 0` here, since none of the first 40 need clipping.
+    """
+    session_id = "clip-outside-window"
+    short_commands = [f"short{i:03d}" for i in range(40)]
+    long_commands = [f"long{i:03d}".ljust(250, "-") for i in range(40, 45)]
+    commands = short_commands + long_commands
+    events = [_event("cowrie.session.connect", session_id=session_id, when=_BASE_TS)]
+    events += [
+        _event(
+            "cowrie.command.input",
+            session_id=session_id,
+            when=_BASE_TS + timedelta(seconds=i + 1),
+            input=cmd,
+        )
+        for i, cmd in enumerate(commands)
+    ]
+    alert = _alert(session_id, events)
+    tool = SessionCommandsTool(max_commands=40, max_downloads=10, max_command_chars=200)
+    ctx = ToolContext(alert=alert, session=None, now=_BASE_TS)
+
+    result = await tool.run({"session_id": session_id}, ctx)
+
+    assert result["commands"] == short_commands
+    assert len(result["commands"]) == 40
+    assert result["clipped_commands"] == 5
+
+
 async def test_unknown_session_id_is_unavailable() -> None:
     alert = load_alert("alert4")
     tool = SessionCommandsTool(max_commands=40, max_downloads=10, max_command_chars=200)

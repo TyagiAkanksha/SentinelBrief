@@ -96,8 +96,14 @@ async def test_assets_yaml_covers_every_fixture_and_golden_sensor() -> None:
     tool = AssetInfoTool.from_path(_ASSETS_YAML_PATH)
     ctx = _ctx()
 
+    sensors = _all_used_sensors()
+    # M4: guard against a vacuous pass if both source locations ever moved or emptied out.
+    assert len(sensors) == 20, (
+        f"expected 20 fleet sensors referenced by fixtures+golden, got {sorted(sensors)}"
+    )
+
     missing = []
-    for sensor in sorted(_all_used_sensors()):
+    for sensor in sorted(sensors):
         result = await tool.run({"hostname": sensor}, ctx)
         if result.get("unavailable"):
             missing.append(sensor)
@@ -158,14 +164,47 @@ async def test_malformed_yaml_or_wrong_shape_is_unavailable(tmp_path: Path) -> N
 
 
 async def test_yaml_tags_are_not_constructed(tmp_path: Path) -> None:
+    """M4 task-02 review C1: an `!!python/object/apply:os.system` payload lands on
+    `unavailable("assets_file_invalid")` under BOTH the safe and an unsafe loader (`os.system`
+    returns an int exit status; `AssetsFile.model_validate` then rejects `{"assets": 0}` with a
+    `ValidationError` regardless), so it pinned nothing. This payload instead deserializes into a
+    VALID `AssetsFile` under `yaml.load(..., Loader=yaml.UnsafeLoader)` — the tool would then
+    answer `hp-eu-01` normally — so only `yaml.safe_load`'s refusal of every `!!python/` tag
+    routes this to `assets_file_invalid`.
+    """
     path = tmp_path / "danger.yaml"
-    path.write_text('assets: !!python/object/apply:os.system ["echo pwned"]\n')
+    path.write_text(
+        "assets: !!python/object/apply:dict "
+        "[[[hp-eu-01, {role: ssh-honeypot, exposure: internet, criticality: low}]]]\n"
+    )
     ctx = _ctx()
 
     tool = AssetInfoTool.from_path(path)
     result = await tool.run({"hostname": "hp-eu-01"}, ctx)
 
     assert result == unavailable("assets_file_invalid")
+
+
+async def test_non_utf8_file_is_unavailable_invalid(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """I1: a non-UTF-8 `assets.yaml` must degrade like any other malformed file, never raise a
+    `UnicodeDecodeError` out of `from_path` (Goal: "a missing or malformed file degrades ... never
+    raising"). Only one WARNING across construction plus two runs, same as the missing-file case.
+    """
+    path = tmp_path / "bad.yaml"
+    path.write_bytes(b"assets:\n  hp-eu-01: {role: \xf3\xa0}\n")
+    ctx = _ctx()
+
+    with caplog.at_level(logging.WARNING):
+        tool = AssetInfoTool.from_path(path)
+        result_1 = await tool.run({"hostname": "hp-eu-01"}, ctx)
+        result_2 = await tool.run({"hostname": "hp-eu-01"}, ctx)
+
+    assert result_1 == unavailable("assets_file_invalid")
+    assert result_2 == unavailable("assets_file_invalid")
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
 
 
 async def test_extra_record_keys_are_ignored(tmp_path: Path) -> None:
