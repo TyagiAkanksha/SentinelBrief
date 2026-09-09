@@ -18,6 +18,12 @@ Task-04 (controller ruling R7) adds `IpReputationTool`'s case in the same file, 
 reason: `name` is what the model must emit to call `lookup_ip_reputation`, and `external = True`
 gates whether the tool is ever run live vs. served from a fixture — a silent flip to `False` would
 start spending real AbuseIPDB quota inside `ReplayToolRecorder`'s "local tools run live" branch.
+
+Task-05 (controller ruling R7) adds `AlertHistoryTool`'s case in the same file, for the same
+reason: `name` is what the model must emit to call `get_alert_history`, and `external = True`
+gates whether it is replayed from a fixture — a silent flip to `False` would run the only
+DB-touching tool live inside `ReplayToolRecorder`'s "local tools run live" branch, defeating the
+whole point of deterministic evals.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import pytest
 
 from core.cache import InMemoryTTLCache
 from worker.tools import spec_for
+from worker.tools.alert_history import AlertHistoryTool
 from worker.tools.asset_info import AssetInfoTool
 from worker.tools.geo_asn import GeoAsnTool
 from worker.tools.ip_reputation import IpReputationTool
@@ -140,3 +147,34 @@ def test_ip_reputation_tool_interface_is_pinned() -> None:
     assert tool.name == "lookup_ip_reputation"
     assert tool.external is True
     assert spec_for(tool) == _IP_REPUTATION_SPEC
+
+
+_ALERT_HISTORY_SPEC = {
+    "name": "get_alert_history",
+    "description": (
+        "Count earlier sessions from the same source IP in the last N hours, when the first was "
+        "seen, and how they were categorised. Use it to tell a first-time visitor from a "
+        "persistent attacker."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "ip": {"type": "string", "description": "An IPv4 or IPv6 address."},
+            "window_hours": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Look-back window in hours; clamped to the configured maximum.",
+            },
+        },
+        "required": ["ip", "window_hours"],
+        "additionalProperties": False,
+    },
+}
+
+
+def test_alert_history_tool_interface_is_pinned() -> None:
+    tool = AlertHistoryTool(max_window_hours=720)
+
+    assert tool.name == "get_alert_history"
+    assert tool.external is True
+    assert spec_for(tool) == _ALERT_HISTORY_SPEC
