@@ -18,7 +18,8 @@ type. `OpenAICompatibleLLMClient` implements it through the same price-before-sp
 error path as `complete_structured`; `FakeLLMClient` replays scripted tool-call turns so the loop
 (task-06) and every tool can be driven without a network. `worker/tools/` defines the `Tool`
 Protocol and `ToolContext`, a `ToolRegistry` that exposes OpenAI-style specs and executes a tool by
-name (an unknown name is `{unavailable: true}`, never an exception), the one character-budget
+name (an unknown name, or a tool that raises, is `{unavailable: true}` — an exception never leaves
+the registry: controller ruling Q6, spine M4-a), the one character-budget
 backstop `TOOL_RESULT_MAX_CHARS` applied to every serialized result, and the `ToolRecorder` seam:
 `LiveToolRecorder` executes (and, given `record_dir`, records) while `ReplayToolRecorder` serves
 *external* tools from `tests/fixtures/tools/<tool>/<key>.json` and runs local tools live. The
@@ -30,8 +31,10 @@ replay into `evals.run` (PRD §7.2).
 - `PRD.md` §6.3, §6.5, §7.2, §10.1, §10.6.
 - `docs/plans/m4-tool-calling.md` — Global Constraints (tool failures never raise; budgets are
   settings; recorded fixtures, never live APIs in tests).
-- `CONVENTIONS.md` §2 (contract 3 — `core.llm` has no SDK import), §4 (no bare `except
-  Exception`), §7, §10; `.claude/rules/worker.md`, `.claude/rules/tests.md`, `.claude/rules/core.md`.
+- `CONVENTIONS.md` §2 (contract 3 — `core.llm` has no SDK import), §4 (the registry's single
+  `except Exception` is a ruled exception — controller ruling Q6 — at the worker's boundary with
+  third-party code fed attacker-influenced input; routes keep the rule), §7, §10;
+  `.claude/rules/worker.md`, `.claude/rules/tests.md`, `.claude/rules/core.md`.
 - Code you build on: `core/llm.py` (`ChatMessage`, `LLMUsage`, `LLMResult`, `LLMClient`,
   `parse_structured`, `compute_cost_usd`), `worker/llm_client.py` (`OpenAICompatibleLLMClient` —
   the `cast` boundary comment, price-before-spend, `LLMCallError` mapping), `core/errors.py`
@@ -163,7 +166,8 @@ replay into `evals.run` (PRD §7.2).
                                                                #   downloaded DB, the alerts table) -> ReplayToolRecorder serves it from a
                                                                #   fixture; False: deterministic from ctx.alert + repo files -> runs live everywhere
       async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]: ...
-          # NEVER raises: every failure is `unavailable(reason)` (spine constraint M4-a); the tool validates its own arguments
+          # NEVER raises by contract: every failure is `unavailable(reason)` (spine constraint M4-a); the tool validates its own
+          # arguments. The registry's backstop below catches whatever slips through anyway.
   def unavailable(reason: str) -> dict[str, Any]: ...          # {"unavailable": True, "reason": reason}
   def spec_for(tool: Tool) -> ToolSpec: ...                    # {"name": tool.name, "description": tool.description, "parameters": tool.parameters}
 
@@ -209,9 +213,15 @@ replay into `evals.run` (PRD §7.2).
       def specs(self) -> list[ToolSpec]: ...                   # [spec_for(t) for t in tools], registration order
       async def execute(self, name: str, arguments: Mapping[str, Any], ctx: ToolContext) -> ToolExecution: ...
           # unknown name -> ToolExecution(unavailable("unknown_tool"), latency_ms=0) — the loop still records the call
-          # else start = clock(); result = await recorder.execute(tool, arguments, ctx); latency_ms = int((clock() - start) * 1000)
+          # else start = clock()
+          #      try: result = await recorder.execute(tool, arguments, ctx)
+          #      except Exception as exc:                       # the ONE deliberate backstop (controller ruling Q6; spine M4-a): inline triage
+          #          # persists until M5, so an exception escaping here would 500 the ingest request and strand the alert `pending`
+          #          logger.exception("tool raised tool=%s arg_keys=%s", name, sorted(arguments))   # keys only — values are attacker-influenced
+          #          result = unavailable(f"{type(exc).__name__}: tool raised")
+          #      latency_ms = int((clock() - start) * 1000)
           #      return ToolExecution(truncate_result(result, max_result_chars), latency_ms)
-          # Catches nothing: tools never raise (Tool contract); no bare `except Exception` (CONVENTIONS §4)
+          # `asyncio.CancelledError` is a BaseException and is NOT caught — cancellation must propagate.
 
   # worker/tools/__init__.py — re-exports: Tool, ToolContext, unavailable, spec_for, ToolRecorder, LiveToolRecorder,
   #   ReplayToolRecorder, fixture_key, fixture_path, write_fixture, FIXTURE_KEY_CHARS, ToolRegistry, ToolExecution, truncate_result
@@ -259,6 +269,7 @@ replay into `evals.run` (PRD §7.2).
 | `names` / `specs` order | `tests/test_tool_registry.py::test_registry_names_and_specs_follow_registration_order` | `("a", "b")`, specs in the same order; fails when sorted alphabetically (register `b` then `a`) |
 | execute through recorder + latency seam | `tests/test_tool_registry.py::test_registry_executes_through_the_recorder_and_measures_latency` | a recording `ToolRecorder` stub sees `(tool, arguments, ctx)`; `clock` ticking `1.0 → 1.25` → `latency_ms == 250`; fails when the registry calls `tool.run` directly (recorder never sees it) |
 | unknown tool | `tests/test_tool_registry.py::test_registry_unknown_tool_is_unavailable_and_never_raises` | `execute("nope", {}, ctx)` → `result == unavailable("unknown_tool")`, `latency_ms == 0`, recorder not called |
+| raising tool | `tests/test_tool_registry.py::test_execute_returns_unavailable_when_a_tool_raises` | a registered `BoomTool` whose `run` raises `RuntimeError("boom")`, called with `{"secret_arg": "value-7"}` → `result == unavailable("RuntimeError: tool raised")`, `latency_ms` measured through the clock, exactly one ERROR record in `caplog` whose message contains `boom` (the tool name) and `secret_arg` and does **not** contain `value-7`; no exception; fails when the exception propagates, when a value is logged, or when the log level is below ERROR |
 | truncation applied | `tests/test_tool_registry.py::test_registry_truncates_oversized_results_to_the_budget` | a tool returning a 10 000-char string with `max_result_chars=100` → `result["truncated"] is True`, `len(result["preview"]) == 100`, `original_chars > 100`; fails when the untruncated result leaks through |
 | `truncate_result` identity + shape | `tests/test_tool_registry.py::test_truncate_result_under_budget_is_identity_and_over_budget_has_preview` | under budget → equal dict (and not the same object); over budget → exactly the three keys, `preview == serialized[:max_chars]`, `ensure_ascii=False` keeps a `é` intact; fails when a non-ASCII char is escaped or `original_chars` counts the pretty form |
 | `fixture_key` | `tests/test_tool_recorder.py::test_fixture_key_is_canonical_order_independent_and_16_hex` | `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}` → same 16-hex key; `{"ip": "203.0.113.10"}` → `"5d2e7bda8feb939e"`; fails when whitespace or key order changes the key |
@@ -333,8 +344,10 @@ uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --
   a validated `LLMResult`, or the same typed errors as `complete_structured`.
 - `FakeLLMClient` replays scripted tool-call turns with deterministic ids and records the tool
   specs it was offered; the existing suite is unchanged in behavior.
-- `ToolRegistry.execute` never raises (unknown tool → `unavailable("unknown_tool")`), measures
-  latency through an injectable clock, and truncates every result to `TOOL_RESULT_MAX_CHARS`;
+- `ToolRegistry.execute` never raises (unknown tool → `unavailable("unknown_tool")`; a raising
+  tool → `unavailable("<ExceptionClass>: tool raised")` with one ERROR log naming the tool and
+  the argument keys only), measures latency through an injectable clock, and truncates every
+  result to `TOOL_RESULT_MAX_CHARS`;
   `ReplayToolRecorder` never executes an external tool and reports `fixture_missing` /
   `fixture_mismatch` / `fixture_unreadable` instead of raising; `LiveToolRecorder` records a
   fixture in the documented format when asked; `fixture_key({"ip": "203.0.113.10"})` is

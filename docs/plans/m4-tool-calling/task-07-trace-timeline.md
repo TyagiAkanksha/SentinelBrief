@@ -201,7 +201,7 @@ Step 8 is the controller's.
   6. `curl -s localhost:3000/alerts/$ID4 | grep -o 'Tool trace\|get_session_commands\|cat /etc/passwd\|Country DE' | sort -u | wc -l` → `4` (the trace renders, with the command text and the flag).
   7. `curl -s localhost:3000/alerts | grep -o 'aria-label="Country [A-Z][A-Z]"' | sort -u | wc -l` → `5`.
   8. `set -a; . ./.env; set +a; uv run pytest -q -m live tests/test_tool_loop_live.py` → both tests pass (both clauses against the real LLM with replayed external tools) — or both skipped, recorded as "no key at the gate" with the owner's decision.
-  9. `uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v3 --prompt triage-v4` (with the key) → two comparable rows into the ledger (never the README).
+  9. `uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v4` (with the key) → two comparable rows into the ledger (never the README) — the same comparison as task-06's default gate; the deployed default follows the task-06 ledger ruling (`triage-v1` or `triage-v4`), and nothing in this task depends on which.
   10. `docker compose -f infra/docker-compose.yml config > /dev/null && echo ok` → `ok`; `git ls-files '*.mmdb' | wc -l` → `0`.
   11. Browser screenshots of `/alerts` (flags visible) and `/alerts/<ID4>` (timeline with arguments/result blocks) at the user checkpoint.
   Then: whole-branch review on the strongest model → fix wave → README status line

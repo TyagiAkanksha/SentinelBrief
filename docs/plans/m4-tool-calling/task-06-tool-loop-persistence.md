@@ -24,7 +24,9 @@ transaction as the verdict (PRD §6.2); tokens, cost and LLM latency are summed 
 `TriageOutcome` and `ToolCallRecord` move to `worker/outcome.py` (both `frozen=True`, pinned) so
 `worker/store.py` drops its `TYPE_CHECKING` import of `worker.triage`. A pipeline built without a
 registry behaves exactly as M3 (every existing test is untouched). `triage-v4.md` adds a "Tools"
-section (via `/new-prompt-version`: v3 is immutable) and becomes the default.
+section (via `/new-prompt-version`: v3 is immutable) and becomes the default **only if** a live
+v1-vs-v4 eval comparison over golden v1 shows no regression (controller ruling Q4; the M1
+precedent — a default changes on evidence, never on authorship).
 `worker/tools/wiring.py::build_registry(settings, …)` assembles the five tools from `Settings`;
 `api/main.py` wires it through `TriagePipeline.from_settings`; `evals.run` gains
 `--tool-fixtures DIR` and replays (PRD §7.2); `scripts/seed_dev.py` scripts a tool turn for the
@@ -62,8 +64,9 @@ task-07's timeline.
 - Create (test-author): `tests/test_tool_loop.py`, `tests/test_tool_loop_db.py`,
   `tests/test_outcome.py`, `tests/test_prompt_v4_tools.py`, `tests/test_evals_replay.py`,
   `tests/test_seed_dev_tools.py`, `tests/test_tool_loop_live.py`
-- Modify (test-author, re-pinned): `tests/test_config.py` (default prompt version → `triage-v4`),
-  `tests/test_env_example_roster.py` (`TOOL_LOOP_MAX_ITER` leaves `_SCHEDULED`)
+- Modify (test-author, re-pinned): `tests/test_env_example_roster.py` (`TOOL_LOOP_MAX_ITER` leaves
+  `_SCHEDULED`); `tests/test_config.py:45` (`triage-v1` → `triage-v4`) **only in Step 7b, if the
+  eval gate passes** — a controller-approved test-author touch-up, re-pinned
 - Modify (implementer, allowed — adds a test): `tests/test_prompt_pins.py` (the v4 sha256 pin,
   like v1–v3)
 - Modify: `worker/triage.py`, `worker/store.py`, `worker/prompts/__init__.py`, `core/config.py`,
@@ -160,7 +163,9 @@ task-07's timeline.
 
   # core/config.py (+ .env.example)
   tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6          # TOOL_LOOP_MAX_ITER=6 (line exists; graduates from _SCHEDULED)
-  triage_prompt_version: str = "triage-v4"                     # TRIAGE_PROMPT_VERSION=triage-v4 (bumped, per the skill)
+  triage_prompt_version: str = "triage-v1"                     # UNCHANGED at Step 4. Bumped to "triage-v4" (with TRIAGE_PROMPT_VERSION=triage-v4)
+                                                               #   only in Step 7b, when the eval gate passes (controller ruling Q4). Either way the
+                                                               #   config default and the .env.example line carry the SAME value (pinned below).
 
   # worker/prompts/triage-v4.md — `cp triage-v3.md triage-v4.md`, then ONLY: (1) the header comment says why v4 exists (tool guidance;
   #   v1–v3 untouched); (2) a new section inserted between "# Categories" and "# Output contract", verbatim:
@@ -226,6 +231,7 @@ severity-1 `scanning` verdict built through `Verdict(...).model_dump_json()`.
 | the cap is a setting | `tests/test_tool_loop.py::test_tools_without_a_cap_is_a_value_error_and_from_settings_uses_the_setting` | `TriagePipeline(..., tools=reg)` → `ValueError`; `Settings(tool_loop_max_iter=3)` → `from_settings(...)` pipeline runs at most 3 tool turns (probe with `[S, S, S, S, VALID]` → the 4th call has `tools is None`); `grep -n "= 6" worker/triage.py` finds nothing |
 | unknown tool recorded, never raises | `tests/test_tool_loop.py::test_unknown_tool_is_recorded_as_unavailable_and_the_loop_continues` | `[ScriptedToolCall("nope", {})]` then `VALID` → `tool_calls[0].tool_name == "nope"`, `result == {"unavailable": True, "reason": "unknown_tool"}`, outcome succeeds |
 | tool failure never raises | `tests/test_tool_loop.py::test_tool_unavailable_result_flows_back_and_run_succeeds` | `FailingLookup` → the tool message carries `"unavailable": true`; no exception; verdict produced |
+| raising tool never escapes `run` | `tests/test_tool_loop.py::test_loop_treats_a_raising_tool_as_unavailable` | a `BoomTool` (raises `RuntimeError`) in the registry, `[[ScriptedToolCall("boom", {})], VALID]` → no exception; `tool_calls[0].result == {"unavailable": True, "reason": "RuntimeError: tool raised"}`; the tool message carries it; verdict produced; one ERROR record in `caplog` |
 | truncation before feedback | `tests/test_tool_loop.py::test_oversized_tool_result_is_truncated_before_feedback_and_in_the_record` | registry `max_result_chars=100`, `EchoTool` with a 5 000-char value → the tool message contains `"truncated": true` and the record's `result["preview"]` has 100 chars; fails when the full string reaches the model or the record |
 | retry without tools | `tests/test_tool_loop.py::test_invalid_content_reply_after_a_tool_turn_is_retried_once_without_tools` | `[S, "not json", VALID]` → 3 calls; the retry call has `tools is None`, its messages end with the assistant raw text + `RETRY_INSTRUCTION`; `retried is True`; `[S, "not json", "still not"]` → `VerdictValidationError(attempts=2)` |
 | accounting | `tests/test_tool_loop.py::test_tokens_cost_and_latency_sum_over_every_llm_turn_but_not_tool_time` | `FakeLLMClient(usage=LLMUsage(10, 5), cost_usd=Decimal("0.000010"), latency_ms=7)` with `[S, S, VALID]` → `input_tokens == 30`, `output_tokens == 15`, `cost_usd == Decimal("0.000030")`, `latency_ms == 21`; a tool whose `run` sleeps 20 ms does not move `latency_ms`; fails when a tool turn's usage is dropped |
@@ -236,11 +242,13 @@ severity-1 `scanning` verdict built through `Verdict(...).model_dump_json()`.
 | outcome types moved + frozen | `tests/test_outcome.py::test_outcome_types_live_in_worker_outcome_and_are_frozen` | `worker.outcome.TriageOutcome is worker.triage.TriageOutcome`; `worker.outcome.ToolCallRecord is worker.store.ToolCallRecord`; both `__dataclass_params__.frozen`; assigning raises `FrozenInstanceError`; `TriageOutcome(...)` without `tool_calls` → `()` |
 | store no longer imports triage | `tests/test_outcome.py::test_worker_store_does_not_import_worker_triage` | `Path(worker.store.__file__).read_text()` has no `worker.triage`; a subprocess `python -c "import worker.store, sys; print('worker.triage' in sys.modules)"` prints `False` |
 | trace persisted in the verdict transaction | `tests/test_tool_loop_db.py::test_tool_calls_persisted_in_verdict_transaction` | `seed_alert(db_session, "alert4")` pending; `FakeLLMClient([[ScriptedToolCall("get_session_commands", {"session_id": sid})], VALID4])`; `TriagePipeline(..., tools=build_registry(settings, recorder=ReplayToolRecorder(Path("tests/fixtures/tools"))), tool_loop_max_iter=6).triage_alert(db_session, alert_id)` → `"triaged"`; a fresh session sees one verdict and one `tool_calls` row `tool_name == "get_session_commands"`, `seq == 0`, `result["commands"] == ["uname -a", "cat /etc/passwd", "w"]`; fails when rows are written by anything but `persist_verdict` (mutation: drop `tool_calls=outcome.tool_calls` → 0 rows) |
+| raising tool persisted, verdict lands | `tests/test_tool_loop_db.py::test_loop_continues_and_persists_when_a_tool_raises` | `ToolRegistry([BoomTool()], recorder=LiveToolRecorder(), max_result_chars=4000)`, `[[ScriptedToolCall("boom", {"k": "v"})], VALID4]` → `triage_alert` returns `"triaged"`; a fresh session sees one verdict row and one `tool_calls` row with `tool_name == "boom"`, `arguments == {"k": "v"}`, `result == {"unavailable": True, "reason": "RuntimeError: tool raised"}`; the alert is `triaged`; fails when the exception escapes `run` (the alert would stay `pending` with no verdict) |
 | failure rolls the trace back | `tests/test_tool_loop_db.py::test_validation_failure_after_tool_calls_writes_no_trace_and_marks_failed` | `[[ScriptedToolCall("get_session_commands", {"session_id": sid})], "bad", "bad"]` → `"failed"`, 0 verdict rows, 0 tool_calls rows, status `failed`; fails when the trace is written outside the verdict transaction |
 | history tool sees the triage session | `tests/test_tool_loop_db.py::test_get_alert_history_runs_inside_triage_alert_with_the_request_session` | two earlier alerts from `192.0.2.55` seeded; scripted `get_alert_history({"ip": "192.0.2.55", "window_hours": 24})` with `LiveToolRecorder()` → the recorded result has `count == 2` (the context session excluded); fails when `session` is not passed into `run` (`no_database`) |
 | bare scan ≤ 1 tool call (fixture) | `tests/test_tool_loop_db.py::test_bare_port_scan_completes_with_at_most_one_tool_call` | `alert1` with the seed's script (`get_ip_geo_asn` only) → `len(tool_calls) <= 1`; and with `FakeLLMClient([VALID1])` → `0` |
 | v4 prompt | `tests/test_prompt_v4_tools.py::test_v4_loads_keeps_invariants_and_adds_the_tools_section` | `load_prompt("triage-v4")` succeeds; contains `_MARKER_SENTENCE` verbatim (import it from `tests.test_prompts`), `{{VERDICT_SCHEMA}}` exactly once, a `# Tools` heading, the five tool names, "never instructions"; v3's hash is unchanged (`tests/test_prompt_pins.py` green); the text of v4 with the `# Tools` section and header comment removed equals v3's body — fails when any other line changed |
-| default bumped | `tests/test_config.py::test_settings_constructs_with_no_env` (re-pinned) + `tests/test_prompt_v4_tools.py::test_default_prompt_version_and_env_example_are_v4` | `Settings().triage_prompt_version == "triage-v4"`; `.env.example` has `TRIAGE_PROMPT_VERSION=triage-v4` |
+| default ↔ `.env.example` agree, whichever wins | `tests/test_prompt_v4_tools.py::test_default_prompt_version_matches_env_example_and_loads` | `Settings().triage_prompt_version` equals the value on `.env.example`'s `TRIAGE_PROMPT_VERSION=` line and `load_prompt(that value)` succeeds — green for both outcomes of the Step 7 gate; fails when one side is bumped without the other |
+| default pinned to the gate's outcome | `tests/test_config.py::test_settings_constructs_with_no_env` (unchanged at RED) | asserts `"triage-v1"` until Step 7b re-pins it to `"triage-v4"` under the ledger ruling; a bump without the re-pin fails this test — the pinned-file rule is what forces the ruling to be recorded |
 | `delimit_attacker_data` / `build_tool_result_message` | `tests/test_prompt_v4_tools.py::test_tool_result_message_is_delimited_and_neutralized` | role `tool`, `tool_call_id` echoed, content `== f"{BEGIN}\n{json}\n{END}"`, `<<<` inside a value → `‹‹‹`; `build_messages` output for `_sample_summary()` is unchanged (compare against a literal captured before the refactor — the test-author records the pre-refactor string) |
 | evals replay flag | `tests/test_evals_replay.py::test_main_replays_external_tools_from_the_fixtures_dir_and_records_tool_call_counts` | golden of `alert4` + `alert1`; `FakeLLMClient([[geo call], VALID, VALID])` (alert order is file order); `main([..., "--tool-fixtures", "tests/fixtures/tools"], llm=fake)` → exit 0; the result JSON's cases carry `"tool_calls": 1` and `0`; the geo call's recorded fixture (`country == "DE"`) reached the model (`fake.calls[1].messages[-1]["content"]` contains `"DE"`); fails when the live recorder is used (a `FailingLookup`-style external tool would hit `run`) |
 | default fixtures dir + bad dir | `tests/test_evals_replay.py::test_tool_fixtures_default_and_non_directory_usage_error` | no flag → `DEFAULT_TOOL_FIXTURES` (assert via a `--tool-fixtures` omitted run still exiting 0); `--tool-fixtures /nonexistent` → exit 1, stderr `error: usage: --tool-fixtures is not a directory` |
@@ -257,8 +265,9 @@ Roles: the **test-author** writes Steps 1–2 and pins the seven new files plus 
 ones; the **implementer** does Steps 3–9 and never edits a pinned file (it *adds* the v4 hash
 pin to `tests/test_prompt_pins.py`, which is an addition, not an edit of an authored assertion).
 
-- [ ] **Step 1 (RED — test-author): write the seven test files** per the table; change
-  `tests/test_config.py:45` to `"triage-v4"`; remove `"TOOL_LOOP_MAX_ITER"` from `_SCHEDULED`.
+- [ ] **Step 1 (RED — test-author): write the seven test files** per the table; remove
+  `"TOOL_LOOP_MAX_ITER"` from `_SCHEDULED`. Do **not** touch `tests/test_config.py` at RED — the
+  default bump is gated in Step 7.
   Before writing the `build_messages` regression literal, capture it:
   `uv run python -c "from tests.test_prompts import _sample_summary, _MINIMAL_TEMPLATE; from worker.prompts import build_messages; from core.schemas.verdict import VERDICT_JSON_SCHEMA; print(repr(build_messages(_MINIMAL_TEMPLATE, summary=_sample_summary(), schema=VERDICT_JSON_SCHEMA)[1]['content']))"`.
 - [ ] **Step 2 (RED — test-author): run to see them fail.** `uv run pytest -q tests/test_tool_loop.py
@@ -267,18 +276,19 @@ pin to `tests/test_prompt_pins.py`, which is an addition, not an edit of an auth
   / `'worker.tools.wiring'`, `ConfigError: prompt version 'triage-v4' not found`, `ImportError:
   cannot import name 'build_tool_result_message'`, and `TypeError: __init__() got an unexpected
   keyword argument 'tools'`; `tests/test_tool_loop_db.py` errors the same way (with the export
-  line set); `tests/test_config.py::test_settings_constructs_with_no_env` fails on `triage-v1 !=
-  triage-v4`; the roster test names `TOOL_LOOP_MAX_ITER`; the live file skips. Pin, commit
+  line set); `tests/test_config.py` stays green; the roster test names `TOOL_LOOP_MAX_ITER`; the
+  live file skips. Pin, commit
   `test(worker,evals,scripts): tool loop, outcome relocation, v4 prompt, replay, seed traces RED (m4 task-06)`.
 - [ ] **Step 3 (GREEN — implementer): `worker/outcome.py`; `worker/store.py` and `worker/triage.py`
   import from it** (re-exports kept). `uv run pytest -q tests/test_outcome.py tests/test_store.py
   tests/test_helpers.py` green; `uv run mypy` clean.
 - [ ] **Step 4 (GREEN — implementer): `worker/prompts/__init__.py` (`delimit_attacker_data`,
   `build_tool_result_message`, `build_messages` refactored to call the former); `triage-v4.md` via
-  `/new-prompt-version` steps 1–5** (copy v3, insert the section verbatim, header comment, hash
-  pin appended to `tests/test_prompt_pins.py`, config default + `.env.example` bump). `uv run
+  `/new-prompt-version` steps 1–4 only** (copy v3, insert the section verbatim, header comment,
+  hash pin appended to `tests/test_prompt_pins.py`). The skill's step 5 (config default +
+  `.env.example` bump) is **deferred to Step 7b** — it happens only on eval evidence. `uv run
   pytest -q tests/test_prompts.py tests/test_prompt_pins.py tests/test_prompt_v4_tools.py
-  tests/test_config.py` green.
+  tests/test_config.py` green (default still `triage-v1`).
 - [ ] **Step 5 (GREEN — implementer): the loop in `worker/triage.py`** per Interfaces (`tools`,
   `tool_loop_max_iter`, `tool_names`, `from_settings`, `run(session=, now=)`, `triage_alert`
   forwarding `tool_calls`), `core/config.py::tool_loop_max_iter`, `worker/tools/wiring.py`.
@@ -295,8 +305,24 @@ pin to `tests/test_prompt_pins.py`, which is an addition, not an edit of an auth
   — `down -v` first so the 25 rows are fresh) → `created=25 skipped=0 failed=0`; then
   `curl -s 'localhost:8000/api/v1/alerts?page_size=50' | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(i["src_ip"]) for i in d["items"] if i["src_ip"]=="192.0.2.55"])'`
   and the detail `tool_calls` names for that id (`['get_session_commands', 'get_ip_geo_asn']`)
-  — paste both. Run `/new-prompt-version` step 7 only if `LLM_API_KEY` is exported (v3 vs v4 rows
-  into the ledger, never the README); otherwise record "not run — no key".
+  — paste both. Then the **prompt-default gate (controller ruling Q4)**: with `LLM_API_KEY`
+  exported (`set -a; . ./.env; set +a`), run
+  `uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --prompt triage-v4`
+  — replay mode is the default (external tools from `tests/fixtures/tools`; the LLM is live: a
+  fake replays canned verdicts regardless of prompt, so only a live run is evidence) — and paste
+  both rows into the implementer report and the ledger (never the README: v1 numbers are never
+  published). **Bump iff** v4's `severity_exact` ≥ v1's − 0.05 **and** v4's `category_accuracy` ≥
+  v1's − 0.05 (one case of the 20 golden v1 rows = 0.05 of `RunMetrics`'s fractions). Without a
+  key the gate is not run: no bump, and the ledger records "default stays triage-v1 — no key at
+  task-06" as an owner decision.
+- [ ] **Step 7b (conditional — implementer, then test-author): apply the gate's outcome.** Gate
+  passed → the implementer sets `triage_prompt_version: str = "triage-v4"` in `core/config.py`
+  and `TRIAGE_PROMPT_VERSION=triage-v4` in `.env.example`, and the controller dispatches the
+  test-author to re-pin `tests/test_config.py:45` to `"triage-v4"` (pinned-file rule) before
+  Step 9's commit; the ledger line cites the two rows. Gate failed or not run → nothing changes:
+  the default stays `triage-v1`, v4 is opt-in via `TRIAGE_PROMPT_VERSION=triage-v4`, and the
+  ledger records the ruling. Either way `test_default_prompt_version_matches_env_example_and_loads`
+  is green.
 - [ ] **Step 8 (implementer): README** — in "Evaluation", the comment line gains
   `# external tools replay tests/fixtures/tools (override with --tool-fixtures DIR)`; execute the
   evaluation line from a fresh shell first (`env -i … 'uv run python -m evals.run --golden
@@ -317,6 +343,7 @@ uv run pytest -q -m live tests/test_tool_loop_live.py                           
 grep -n "worker.triage" worker/store.py ; echo "exit=$?"                                # exit=1
 grep -nE "range\(6\)|= 6\b" worker/triage.py ; echo "exit=$?"                           # exit=1 — the cap is never a literal
 sha256sum worker/prompts/triage-v3.md                                                   # 334e47bdeb2d390cb5e3f4ea7628b3373cc95b77b23e62147e63023081dd6e46 (v3 untouched)
+grep -n "^TRIAGE_PROMPT_VERSION=" .env.example; uv run python -c "from core.config import Settings; print(Settings().triage_prompt_version)"   # the same value on both lines: triage-v1, or triage-v4 after a passed Step 7 gate (ledger)
 uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q   # all clean; "Contracts: 5 kept, 0 broken"
 ```
 
@@ -331,7 +358,8 @@ uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --
 - The trace is written by `persist_verdict` in the verdict's transaction and rolled back with it
   on failure; `TriageOutcome`/`ToolCallRecord` live in `worker/outcome.py`, frozen, and
   `worker/store.py` no longer references `worker.triage`.
-- `triage-v4` ships immutably beside v1–v3 and is the default; `api.main` builds the five-tool
+- `triage-v4` ships immutably beside v1–v3 and is the default only if the Step 7 eval gate passed
+  (v1-vs-v4 rows and the ruling in the ledger either way); `api.main` builds the five-tool
   pipeline from `Settings`; `evals.run` replays external tools from `--tool-fixtures`; the seed
   writes real traces for the five fixture alerts (`alert4` → `get_session_commands` first;
   `alert1` → one call); the two PRD §12 M4 clauses are pinned by tests and, with a key, shown
