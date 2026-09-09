@@ -540,6 +540,12 @@ class _SleepingLLMClient(FakeLLMClient):
     Used only by `test_main_started_at_is_taken_before_the_run` to prove ordering: if
     `started_at` is captured before `run_golden` starts (as it must be), it is strictly earlier
     than the wall-clock time recorded inside this fake's (artificially slow) call.
+
+    Overrides both `LLMClient` methods (m4 task-06): `evals.run.main` now always builds its
+    `TriagePipeline` with tools attached (PRD §7.2 — external tools replay, the LLM is the only
+    live component), so every call this test's single golden case makes goes through
+    `complete_with_tools`, not `complete_structured`. Mirrors the same sleep-then-record shape so
+    the ordering proof and the `called_at` self-check hold either way.
     """
 
     def __init__(self, responses: list[str | Exception]) -> None:
@@ -551,6 +557,15 @@ class _SleepingLLMClient(FakeLLMClient):
         self.called_at = datetime.now(UTC)
         return await super().complete_structured(
             messages=messages, response_model=response_model, model=model
+        )
+
+    async def complete_with_tools(
+        self, *, messages: Any, tools: Any, response_model: Any, model: str
+    ) -> Any:
+        await asyncio.sleep(0.05)
+        self.called_at = datetime.now(UTC)
+        return await super().complete_with_tools(
+            messages=messages, tools=tools, response_model=response_model, model=model
         )
 
 

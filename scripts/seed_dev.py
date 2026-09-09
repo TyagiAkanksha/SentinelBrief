@@ -9,6 +9,17 @@ validates) from the fixture's intended band or the golden case's label; `--live`
 real `OpenAICompatibleLLMClient` and refuses to run without `LLM_API_KEY`. A second run creates 0
 new rows (PRD §6.1 dedup).
 
+m4 task-06: every alert also runs through the five-tool registry (`worker.tools.wiring
+.build_registry`) so seeded rows carry real tool-call traces for task-07's timeline. Each of the
+five `fixtures/alerts/*.json` sessions scripts one tool turn from `FIXTURE_TOOL_TURNS`, replayed
+against `tests/fixtures/tools/` (`select_recorder`); every golden-set row scripts none (the model
+just answers directly). `load_candidates` itself is unchanged — still `(alert, canned)` pairs, so
+the pinned m3 `tests/test_seed_dev.py::test_load_candidates_returns_fixtures_then_golden`'s 2-tuple
+unpacking keeps working — `main()` zips a separately-computed per-candidate tool-name list
+(fixture stem order, matching `load_candidates`'s own fixture-loading order) alongside it before
+calling `seed()`, which is the one function whose own (untested-by-signature) contract grew a
+third, `tool_names`, element per candidate.
+
 Runs from a repo checkout on the host — it imports `tests.fakes` (lazily, only on the fake path)
 — never inside the api image and never from a compose `command:` (PRD §10.1; M2 final review,
 plan defect 9).
@@ -28,7 +39,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
@@ -42,14 +53,28 @@ from core.schemas.verdict import Verdict, VerdictCategory
 from core.services.alerts import insert_alert
 from evals.golden import load_golden
 from worker.llm_client import OpenAICompatibleLLMClient
+from worker.tools import LiveToolRecorder, ReplayToolRecorder, ToolRecorder
+from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
+
+if TYPE_CHECKING:
+    from tests.fakes import ScriptedToolCall
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GOLDEN = REPO_ROOT / "evals" / "golden" / "v1.jsonl"
 DEFAULT_FIXTURES = REPO_ROOT / "fixtures" / "alerts"
+DEFAULT_TOOL_FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "tools"
 FAKE_MODEL = (
     "seed-fake"  # model_primary/model_final on fake-seeded verdicts, so they are recognizable
 )
+
+FIXTURE_TOOL_TURNS: dict[str, tuple[str, ...]] = {  # one tool turn per fixture alert (m4 task-06)
+    "alert1": ("get_ip_geo_asn",),
+    "alert2": ("get_ip_geo_asn",),
+    "alert3": ("get_ip_geo_asn",),
+    "alert4": ("get_session_commands", "get_ip_geo_asn"),
+    "alert5": ("get_session_commands", "get_ip_geo_asn"),
+}
 
 FIXTURE_LABELS: dict[
     str, tuple[int, VerdictCategory, bool]
@@ -126,6 +151,45 @@ def canned_verdict(
     return verdict.model_dump_json()
 
 
+def scripted_tool_turn(alert: SessionAlert, names: Sequence[str]) -> "list[ScriptedToolCall]":
+    """Build one scripted tool turn for `alert` naming `names` (m4 task-06, `FIXTURE_TOOL_TURNS`).
+
+    Imports `tests.fakes` lazily, like the `FakeLLMClient` branch in `seed()` — this module must
+    still import without `tests/` present.
+
+    Args:
+        alert: The fixture alert the turn is scripted for.
+        names: The tool names to script, in call order (e.g. `FIXTURE_TOOL_TURNS["alert4"]`).
+
+    Returns:
+        One `ScriptedToolCall` per name in `names`, with the arguments each tool needs from
+        `alert`.
+    """
+    from tests.fakes import ScriptedToolCall
+
+    arguments_by_name: dict[str, dict[str, object]] = {
+        "get_ip_geo_asn": {"ip": alert.src_ip},
+        "get_session_commands": {"session_id": alert.session_id},
+    }
+    return [ScriptedToolCall(name, arguments_by_name[name]) for name in names]
+
+
+def select_recorder(*, live: bool) -> ToolRecorder:
+    """Pick the tool recorder for a seed run (m4 task-06): live execution, or fixture replay.
+
+    Args:
+        live: `True` selects `LiveToolRecorder` (matches `--live`'s real LLM client); `False`
+            selects `ReplayToolRecorder` over `DEFAULT_TOOL_FIXTURES_DIR`, so external tools never
+            hit the network even when triage itself runs live.
+
+    Returns:
+        A `ToolRecorder` for `build_registry`.
+    """
+    if live:
+        return LiveToolRecorder()
+    return ReplayToolRecorder(DEFAULT_TOOL_FIXTURES_DIR)
+
+
 def load_candidates(*, golden: Path, fixtures: Path) -> list[tuple[SessionAlert, str]]:
     """Load every fixture and golden-set case as `(SessionAlert, canned verdict json)` pairs.
 
@@ -180,28 +244,38 @@ class SeedCounts:
 
 
 async def seed(
-    candidates: Sequence[tuple[SessionAlert, str]],
+    candidates: Sequence[tuple[SessionAlert, str, Sequence[str]]],
     *,
     database_url: str,
     schema: str | None,
     llm: LLMClient | None,
     model: str,
     prompt_version: str,
+    recorder: ToolRecorder,
+    settings: Settings,
 ) -> SeedCounts:
     """Insert and triage every candidate through the production write path.
 
     Duplicates (an existing fingerprint) are skipped without triggering triage — PRD §6.1: a
     re-run must never double-trigger an LLM call. A fresh `FakeLLMClient` is built per alert
-    (when `llm` is not injected) so that a skip can never desync the fake's response queue.
+    (when `llm` is not injected) so that a skip can never desync the fake's response queue; when
+    the candidate names a tool turn (`FIXTURE_TOOL_TURNS`, m4 task-06), that fake's script is
+    `[scripted_tool_turn(alert, names), canned]` so the run's one tool turn plus its final verdict
+    both come from the same fake, in order.
 
     Args:
-        candidates: `(SessionAlert, canned verdict json)` pairs, e.g. from `load_candidates`.
+        candidates: `(SessionAlert, canned verdict json, tool names)` triples — `main()` builds
+            these by zipping `load_candidates`'s pairs with each candidate's `FIXTURE_TOOL_TURNS`
+            entry (`()` for every golden-set row).
         database_url: The Postgres URL to seed.
         schema: Optional schema to pin the connection's search_path to.
         llm: An `LLMClient` to use for every alert instead of a fresh `FakeLLMClient` per alert
-            — the seam tests inject `FakeLLMClient` through.
+            — the seam tests inject `FakeLLMClient` through. Bypasses per-alert tool scripting:
+            the same injected client answers every alert, exactly as before m4 task-06.
         model: The model id recorded on every seeded verdict.
         prompt_version: The prompt version every alert is triaged with.
+        recorder: How the five enrichment tools are executed (`select_recorder`).
+        settings: The config surface `build_registry` wires every tool's bounds from.
 
     Returns:
         Counts of created, skipped, and failed-triage alerts.
@@ -213,7 +287,7 @@ async def seed(
     failed = 0
     try:
         async with factory() as session:
-            for alert, canned in candidates:
+            for alert, canned, names in candidates:
                 result = await insert_alert(session, alert)
                 await session.commit()  # same commit-before-triage as the ingest route
                 if not result.created:
@@ -225,9 +299,18 @@ async def seed(
                 else:
                     from tests.fakes import FakeLLMClient
 
-                    client = FakeLLMClient([canned])
+                    if names:
+                        client = FakeLLMClient([scripted_tool_turn(alert, names), canned])
+                    else:
+                        client = FakeLLMClient([canned])
 
-                pipeline = TriagePipeline(llm=client, model=model, prompt_version=prompt_version)
+                pipeline = TriagePipeline(
+                    llm=client,
+                    model=model,
+                    prompt_version=prompt_version,
+                    tools=build_registry(settings, recorder=recorder),
+                    tool_loop_max_iter=settings.tool_loop_max_iter,
+                )
                 status = await pipeline.triage_alert(session, result.alert_id)
                 created += 1
                 failed += status == "failed"
@@ -341,15 +424,30 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
 
     candidates = load_candidates(golden=args.golden, fixtures=args.fixtures)
 
+    # `load_candidates` stays fixtures-first-then-golden pairs (unchanged; the pinned m3
+    # `tests/test_seed_dev.py` unpacks it as `(alert, canned)`). The per-candidate tool names come
+    # from a separately-computed, same-order list: `FIXTURE_TOOL_TURNS` for each of the (sorted)
+    # fixture files, then `()` for every golden-set row.
+    fixture_stems = [path.stem for path in sorted(args.fixtures.glob("*.json"))]
+    tool_names_by_candidate = [FIXTURE_TOOL_TURNS.get(stem, ()) for stem in fixture_stems]
+    tool_names_by_candidate += [()] * (len(candidates) - len(tool_names_by_candidate))
+    triples = [
+        (alert, canned, names)
+        for (alert, canned), names in zip(candidates, tool_names_by_candidate, strict=True)
+    ]
+
+    recorder = select_recorder(live=args.live)
     try:
         counts = asyncio.run(
             seed(
-                candidates,
+                triples,
                 database_url=database_url,
                 schema=args.schema,
                 llm=client,
                 model=model,
                 prompt_version=settings.triage_prompt_version,
+                recorder=recorder,
+                settings=settings,
             )
         )
     except (OSError, SQLAlchemyError) as e:

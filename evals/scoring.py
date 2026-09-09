@@ -39,6 +39,10 @@ class CaseResult:
     cost_usd: Decimal
     latency_ms: int
     error: str | None
+    tool_calls: int = 0
+    """Number of enrichment tool calls the pipeline made for this case (PRD §7.2, m4 task-06);
+    `0` on a failed case. Not scored — informational only, carried through to the per-case result
+    JSON so a run can be inspected for tool usage without re-running it."""
 
 
 @dataclass(frozen=True)

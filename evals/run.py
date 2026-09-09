@@ -1,18 +1,25 @@
 """`evals.run`: drive the real `TriagePipeline` over a golden set and score it (PRD §7.2, §7.3).
 
 `python -m evals.run --golden <path> --prompt <version> [--prompt <version> ...] [--model ID]
-[--concurrency N] [--output-dir DIR]` runs one `TriagePipeline` per `--prompt` value over every
-case in the golden set (`evals.golden.load_golden`), scores each run (`evals.scoring.score`), and
-prints one comparable table row per prompt (`evals.scoring.format_table`) — two different prompt
-versions in one invocation is how PRD §12 M1's acceptance criterion is demonstrated. Each run's
-full per-case result is written as JSON under the gitignored `evals/results/`; per
+[--concurrency N] [--output-dir DIR] [--tool-fixtures DIR]` runs one `TriagePipeline` per
+`--prompt` value over every case in the golden set (`evals.golden.load_golden`), scores each run
+(`evals.scoring.score`), and prints one comparable table row per prompt
+(`evals.scoring.format_table`) — two different prompt versions in one invocation is how PRD §12
+M1's acceptance criterion is demonstrated. Each run's full per-case result (including its
+`tool_calls` count, PRD §7.2) is written as JSON under the gitignored `evals/results/`; per
 `.claude/rules/evals.md` v1's numbers are synthetic and are **never published** outside that JSON
 and task/ledger reports — never `docs/results.md`, the README, or a commit message.
+
+`--tool-fixtures DIR` (default `tests/fixtures/tools`) is where every external tool
+(`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
+(`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
+(`.claude/rules/evals.md`) — local tools (`get_session_commands`, `get_asset_info`) still run.
 
 Every failure path prints exactly one `error: <code>: <message>` line to stderr, leaves stdout
 empty, and never raises a traceback:
 
-    argparse usage error (no --prompt, unknown flag, --concurrency < 1)       usage
+    argparse usage error (no --prompt, unknown flag, --concurrency < 1,
+        --tool-fixtures not a directory)                                     usage
     `Settings()` fails validation (e.g. malformed MODEL_PRICES_JSON)          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model,
@@ -47,7 +54,11 @@ from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
 from evals.scoring import CaseResult, ResultRow, RunMetrics, format_table, score
 from worker.llm_client import OpenAICompatibleLLMClient
+from worker.tools import ReplayToolRecorder
+from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
+
+DEFAULT_TOOL_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "tools"
 
 
 class UsageError(SentinelBriefError):
@@ -149,6 +160,7 @@ async def run_golden(
                     cost_usd=Decimal("0"),
                     latency_ms=0,
                     error=f"{e.code}: {e}",
+                    tool_calls=0,
                 )
             return CaseResult(
                 case_id=case.case_id,
@@ -159,6 +171,7 @@ async def run_golden(
                 cost_usd=outcome.cost_usd,
                 latency_ms=outcome.latency_ms,
                 error=None,
+                tool_calls=len(outcome.tool_calls),
             )
 
     return list(await asyncio.gather(*(_run_one(case) for case in cases)))
@@ -225,10 +238,14 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     parser.add_argument("--model", default=None)
     parser.add_argument("--concurrency", type=_positive_int, default=4)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
+    parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
         return _fail(e.code, str(e))
+
+    if not args.tool_fixtures.is_dir():
+        return _fail("usage", "--tool-fixtures is not a directory")
 
     try:
         settings = Settings()
@@ -261,7 +278,13 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     any_case_succeeded = False
     for prompt_version in args.prompt:
         try:
-            pipeline = TriagePipeline(llm=client, model=model, prompt_version=prompt_version)
+            pipeline = TriagePipeline(
+                llm=client,
+                model=model,
+                prompt_version=prompt_version,
+                tools=build_registry(settings, recorder=ReplayToolRecorder(args.tool_fixtures)),
+                tool_loop_max_iter=settings.tool_loop_max_iter,
+            )
         except ConfigError as e:
             return _fail(e.code, str(e))
 

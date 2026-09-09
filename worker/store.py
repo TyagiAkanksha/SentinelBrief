@@ -3,33 +3,26 @@
 `flush()`-only, session-first, like every other service function — the caller (`TriagePipeline
 .triage_alert`) owns the single commit that makes a verdict row, its tool-call trace, and the
 alert's `triaged` status durable together, or rolls all three back together.
+
+`TriageOutcome`/`ToolCallRecord` live in `worker/outcome.py` (m4 task-06, M2 final review M4-b):
+this module imports them directly, no longer needing the pipeline module (that other worker
+package that owns the triage prompt/LLM loop) at all, even under `TYPE_CHECKING` —
+`ToolCallRecord` is re-exported here so `from worker.store import ToolCallRecord` (used
+throughout the M0-M3 suite) keeps working.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.models import ToolCallRow, VerdictRow
 from core.services.alerts import set_alert_status
+from worker.outcome import ToolCallRecord, TriageOutcome
 
-if TYPE_CHECKING:
-    from worker.triage import TriageOutcome
-
-
-@dataclass(frozen=True)
-class ToolCallRecord:
-    """One recorded tool invocation to persist alongside its verdict."""
-
-    seq: int
-    tool_name: str
-    arguments: dict[str, Any]
-    result: dict[str, Any]
-    latency_ms: int
+__all__ = ["ToolCallRecord", "TriageOutcome", "persist_verdict"]
 
 
 async def persist_verdict(

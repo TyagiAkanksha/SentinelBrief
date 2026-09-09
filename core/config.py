@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     alert_history_max_window_hours: Annotated[int, Field(ge=1)] = 720
     """Largest `window_hours` `get_alert_history` will honor (30 days); bounds the scan the model
     can request over `ix_alerts_src_ip` (PRD §6.3, m4 task-05)."""
+    tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6
+    """Hard cap on tool-call turns per alert before a tool-less verdict is forced (PRD §6.3, m4
+    task-06). Never a literal in `worker/triage.py`."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

@@ -16,6 +16,7 @@ from worker.prompts import PROMPTS_DIR
 _TRIAGE_V1_SHA256 = "fdc5139eaca90322d7d745d35b2103ef610c1920cc170b888f2754c9063ac34b"
 _TRIAGE_V2_SHA256 = "11865e6e5bfc4b7654217bc9f75e67ab62ce31f1f55f7f47e22180f173c134f1"
 _TRIAGE_V3_SHA256 = "334e47bdeb2d390cb5e3f4ea7628b3373cc95b77b23e62147e63023081dd6e46"
+_TRIAGE_V4_SHA256 = "c353637832854f8e554b724838e057fefd548eeb0b2284297d7f21b44db8499e"
 
 
 def test_shipped_v1_hash_pinned() -> None:
@@ -40,3 +41,14 @@ def test_shipped_v3_hash_pinned() -> None:
     text = (PROMPTS_DIR / "triage-v3.md").read_bytes()
 
     assert hashlib.sha256(text).hexdigest() == _TRIAGE_V3_SHA256
+
+
+def test_shipped_v4_hash_pinned() -> None:
+    """m4 task-06: `triage-v4.md` is now shipped and immutable — pin its hash the same way v1's,
+    v2's and v3's are pinned above. It adds a "Tools" section between "# Categories" and
+    "# Output contract" (PRD §6.3); every other line is byte-identical to v3
+    (`tests/test_prompt_v4_tools.py` pins that). If this fails, do not edit this hash; author
+    `triage-v5.md` instead."""
+    text = (PROMPTS_DIR / "triage-v4.md").read_bytes()
+
+    assert hashlib.sha256(text).hexdigest() == _TRIAGE_V4_SHA256
