@@ -95,7 +95,8 @@ history fixtures for the five fixture IPs land under `tests/fixtures/tools/get_a
                     "required": ["ip", "window_hours"], "additionalProperties": False}
       def __init__(self, *, max_window_hours: int) -> None: ...          # < 1 -> ValueError
       async def run(self, arguments, ctx) -> dict[str, Any]: ...
-          # ip missing / not str / ipaddress.ip_address raises      -> unavailable("invalid_arguments")
+          # ip missing / not str / ipaddress.ip_address raises      -> unavailable("invalid_arguments"); then ip = str(ipaddress.ip_address(ip)) —
+          #   the canonical spelling is what reaches the service predicate and result["ip"] (M4 task-05 review I1 ruling; matches task-04)
           # window_hours missing, bool, non-int, or < 1              -> unavailable("invalid_arguments")   (bool is excluded explicitly: True is an int)
           # window_hours > max_window_hours                          -> clamped (effective value reported)
           # ctx.session is None                                      -> unavailable("no_database")
