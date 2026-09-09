@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { AlertHeader } from "@/components/alerts/AlertHeader";
 import type { AlertDetail } from "@/types/api";
@@ -46,5 +46,19 @@ describe("AlertHeader", () => {
       expect(time.getAttribute("title")).toMatch(/Z$/);
     }
     expect(times[1]!).toHaveTextContent("(3m ago)");
+  });
+
+  it("renders the country flag in the heading and none when null", () => {
+    const withFlag = makeAlert({ country: "BR" });
+    const { unmount } = render(<AlertHeader alert={withFlag} now={now} />);
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(within(heading).getByRole("img", { name: "Country BR" })).toBeInTheDocument();
+    expect(heading).toHaveTextContent(withFlag.src_ip);
+    unmount();
+
+    const withoutFlag = makeAlert({ country: null });
+    render(<AlertHeader alert={withoutFlag} now={now} />);
+    expect(screen.queryByRole("img")).toBeNull();
   });
 });
