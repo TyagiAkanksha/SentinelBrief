@@ -30,6 +30,7 @@ empty, and never raises a traceback:
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model or
         --strong-model, unknown --prompt), raised before any case runs
         ("price before spend")                                                config_error
+    `ValueError` from `TriagePipeline` (--strong-model equal to --model)       config_error
     output directory not writable                                            output_error
     every case failed in every prompt run (a per-case failure alone still
         exits 0 -- it is captured as `CaseResult.error`, not a run failure)   all_cases_failed
@@ -304,6 +305,8 @@ async def _run_all(
                 )
             except ConfigError as e:
                 return _fail(e.code, str(e))
+            except ValueError as e:
+                return _fail("config_error", str(e))
 
             # Captured before the run, not after: this is the run's *start* time, not its finish
             # time — a downstream consumer correlating this JSON against logs or computing

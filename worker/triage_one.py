@@ -14,9 +14,11 @@ when routing never fired.
 Exit codes:
     0: success — the JSON verdict envelope is on stdout.
     1: a CLI usage error (missing/unknown argument), the alert file is unreadable/invalid,
-       `Settings()` itself fails to parse (e.g. a malformed `MODEL_PRICES_JSON`), or a
-       `ConfigError`/`LLMCallError` was raised — including a `ConfigError` raised from inside the
-       pipeline run (e.g. `--model` naming a model absent from `MODEL_PRICES_JSON`).
+       `Settings()` itself fails to parse (e.g. a malformed `MODEL_PRICES_JSON`), `--strong-model`
+       naming a model absent from `MODEL_PRICES_JSON` (checked up front, before any client is
+       built — "price before spend", m5 task-03 fix-1), or a `ConfigError`/`LLMCallError` was
+       raised — including a `ConfigError` raised from inside the pipeline run (e.g. `--model`
+       naming a model absent from `MODEL_PRICES_JSON`).
     2: `VerdictValidationError` — the reply failed validation on both PRD §6.5 attempts.
 """
 
@@ -112,6 +114,14 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
         args = parser.parse_args(argv)
     except UsageError as e:
         return _fail(e.code, str(e))
+
+    # Price before spend for --strong-model (m5 task-03 fix-1, review M3), mirroring
+    # `evals/run.py`: only on the real-client path, before any client (or the cheap tier's own
+    # network call) is built — an unpriced strong id must never reach a real spend either.
+    if llm is None and args.strong_model and args.strong_model not in settings.model_prices_json:
+        return _fail(
+            "config_error", f"model {args.strong_model!r} has no entry in MODEL_PRICES_JSON"
+        )
 
     try:
         raw = Path(args.alert_path).read_text()

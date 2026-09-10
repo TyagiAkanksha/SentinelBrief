@@ -381,9 +381,9 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     Returns:
         `0` on success (`created=<n> skipped=<n> failed=<n>` printed to stdout — failed triages
         are reported, never fatal); `1` on a usage error, a `Settings()` validation failure, a
-        missing database URL, `--live` without `LLM_API_KEY`, a `--live` client construction
-        `ConfigError`, an invalid/missing golden file, an invalid/missing fixtures directory, or
-        a database error.
+        missing database URL, `--live` without `LLM_API_KEY`, `--live` with `STRONG_MODEL` equal
+        to `CHEAP_MODEL`, a `--live` client construction `ConfigError`, an invalid/missing golden
+        file, an invalid/missing fixtures directory, or a database error.
     """
     parser = _Parser(prog="seed_dev.py")
     parser.add_argument("--database-url", default=None)
@@ -417,6 +417,10 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     # Two-tier routing (m5 task-03): only `--live` opts in, since a canned `FakeLLMClient` never
     # has a strong-tier reply scripted (PRD §6.4).
     strong_model = (settings.strong_model or None) if args.live else None
+    # Checked up front (m5 task-03 fix-1, review I1), before any insert: `TriagePipeline` itself
+    # raises a bare `ValueError` for this, which would otherwise escape `seed()` as a traceback.
+    if args.live and strong_model == model:
+        return _fail("config_error", "STRONG_MODEL must differ from CHEAP_MODEL")
     if client is None and args.live:
         try:
             client = OpenAICompatibleLLMClient.from_settings(settings)
