@@ -65,21 +65,37 @@ def test_verdict_created_payload_shape() -> None:
 
 
 class _RaisingRedis:
-    """A fake Redis whose `publish` always raises `redis.exceptions.ConnectionError` (m5 task-02
-    brief, resolution 7) — the one external seam this module touches."""
+    """A fake Redis whose `publish` always raises the given exception (m5 task-02 brief,
+    resolution 7; fix-1 A8/M5) — the one external seam this module touches.
+    `publish_verdict_created` catches both `redis.exceptions.RedisError` and `OSError`
+    (`worker/publish.py`'s Interfaces line, `except (RedisError, OSError)`); the test below
+    exercises both families so neither arm can silently widen to swallow more, or narrow to catch
+    less, without a test going red."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
 
     async def publish(self, channel: str, message: str) -> int:
-        raise redis.exceptions.ConnectionError("down")
+        raise self._exc
 
 
-async def test_publish_failure_is_a_warning_not_a_raise(caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize(
+    ("raised", "expected_class"),
+    [
+        (redis.exceptions.ConnectionError("down"), "ConnectionError"),
+        (OSError("down"), "OSError"),
+    ],
+)
+async def test_publish_failure_is_a_warning_not_a_raise(
+    raised: Exception, expected_class: str, caplog: pytest.LogCaptureFixture
+) -> None:
     alert_id = uuid.uuid4()
     verdict_id = uuid.uuid4()
     verdict = _verdict()
 
     with caplog.at_level(logging.WARNING):
         result = await publish_verdict_created(
-            _RaisingRedis(), alert_id=alert_id, verdict_id=verdict_id, verdict=verdict
+            _RaisingRedis(raised), alert_id=alert_id, verdict_id=verdict_id, verdict=verdict
         )
 
     assert result is False
@@ -89,6 +105,6 @@ async def test_publish_failure_is_a_warning_not_a_raise(caplog: pytest.LogCaptur
     message = warnings[0].getMessage()
     assert str(alert_id) in message
     assert str(verdict_id) in message
-    assert "exc=ConnectionError" in message
+    assert f"exc={expected_class}" in message
     # Never leak the exception's own message text (CONVENTIONS.md: log ids/counts/class names).
     assert "down" not in message

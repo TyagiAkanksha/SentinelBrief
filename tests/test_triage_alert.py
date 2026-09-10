@@ -218,6 +218,17 @@ async def test_triage_attempt_rolls_back_and_raises_on_failure(
     with pytest.raises(VerdictValidationError):
         await pipeline.triage_attempt(db_session, result_a.alert_id)
 
+    # The rollback is only observable from *this* session: a session that was never rolled back
+    # still holds the dirty `attempt-rollback-b-002` row in its identity map / transaction.
+    assert not db_session.in_transaction() or not db_session.new
+    await db_session.commit()  # committing after a real rollback must persist nothing new
+    async with db_session_factory() as after:
+        assert (
+            await after.execute(
+                select(AlertRow).where(AlertRow.fingerprint == alert_b.fingerprint())
+            )
+        ).scalar_one_or_none() is None
+
     async with db_session_factory() as fresh_session:
         row_a = await fresh_session.get(AlertRow, result_a.alert_id)
         assert row_a is not None

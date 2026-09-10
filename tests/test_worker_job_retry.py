@@ -19,6 +19,7 @@ Every DB-touching test uses the throwaway-schema fixtures; every Redis-touching 
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import logging
@@ -32,7 +33,7 @@ import pytest
 import redis.exceptions
 from arq.connections import ArqRedis
 from arq.jobs import Job
-from arq.worker import Worker
+from arq.worker import Retry, Worker
 from arq.worker import func as arq_func
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -198,6 +199,19 @@ class _KeyedFakeLLMClient(FakeLLMClient):
             messages=messages, response_model=response_model, model=model
         )
 
+    async def complete_with_tools(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[Any],
+        response_model: type[Any],
+        model: str,
+    ) -> Any:
+        """No test in this file registers tools; without this guard, `_responses` being rebound
+        per `complete_structured` call (above) would let a future tool-using test silently pop
+        from whichever alert's queue was selected last — a cross-alert bleed (fix-1 M4)."""
+        raise AssertionError("_KeyedFakeLLMClient does not script tool turns")
+
 
 async def test_poison_alert_fails_after_max_tries_and_the_queue_keeps_draining(
     db_session: AsyncSession,
@@ -265,11 +279,26 @@ async def test_unexpected_exception_retries_then_fails_with_the_class_logged(
     redis_url: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Ruling I1-a (fix-1): NO job log line ever carries a traceback — Python's traceback
+    rendering includes the exception's own `str()`, and an unexpected exception raised deeper in
+    the pipeline (e.g. a `pydantic.ValidationError` off `alerts.raw`, PRD §10.6) could embed
+    attacker-controlled session data. The terminal record instead logs `chain=<ExceptionClass>`
+    (the class-name chain along `__cause__`/`__context__`) beside `reason=`; the WARNING/ERROR
+    level split (SentinelBriefError vs. everything else) is unchanged. `PAYLOAD-MARKER-7f3a`
+    stands in for that attacker-controlled text: it must never appear anywhere in the captured
+    log output, traceback or not.
+    """
     alert_id = await seed_alert(db_session, "alert4", session_id="unexpected-family")
     await db_session.commit()
     await enqueue_triage(arq_redis, alert_id)
 
-    fake = FakeLLMClient([RuntimeError("boom"), RuntimeError("boom"), RuntimeError("boom")])
+    fake = FakeLLMClient(
+        [
+            RuntimeError("PAYLOAD-MARKER-7f3a"),
+            RuntimeError("PAYLOAD-MARKER-7f3a"),
+            RuntimeError("PAYLOAD-MARKER-7f3a"),
+        ]
+    )
     worker = _worker(
         redis_url=redis_url,
         session_factory=db_session_factory,
@@ -296,9 +325,13 @@ async def test_unexpected_exception_retries_then_fails_with_the_class_logged(
         if r.levelno == logging.ERROR and "reason=RuntimeError" in r.getMessage()
     ]
     assert len(terminal) == 1
-    # Unexpected (non-SentinelBriefError) families keep their traceback (message text is not the
-    # contract either way — no "boom" assertion, per the brief).
-    assert terminal[0].exc_info is not None
+    # Unexpected (non-SentinelBriefError) families are still logged at ERROR, but never with a
+    # traceback (ruling I1-a) — no `exc_info` on any job log line, ever.
+    assert terminal[0].exc_info is None
+    assert "chain=RuntimeError" in terminal[0].getMessage()
+    # A traceback would render the exception's own message; a bare `%s` format string would too.
+    # Neither is present anywhere in the captured log output (PRD §10.6).
+    assert "PAYLOAD-MARKER-7f3a" not in caplog.text
 
 
 async def test_missing_alert_is_not_retried(
@@ -325,6 +358,103 @@ async def test_missing_alert_is_not_retried(
     assert await job.result() == "missing"
     assert worker.jobs_complete == 1
     assert worker.jobs_retried == 0
+
+
+class _CancellingLLMClient:
+    """Raises `asyncio.CancelledError` from `complete_structured` — the one thing FakeLLMClient
+    cannot script (it raises only `Exception` instances)."""
+
+    async def complete_structured(self, *, messages, response_model, model):
+        raise asyncio.CancelledError()
+
+
+async def test_cancellation_propagates_and_is_never_turned_into_failed(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """`worker/jobs.py`'s boundary catches `Exception`, never `BaseException`: an
+    `asyncio.CancelledError` propagates so ARQ's cancel/abort/re-run semantics hold
+    (CONVENTIONS.md §4 third carve-out; m5 task-02 Acceptance)."""
+    alert_id = await seed_alert(db_session, "alert4", session_id="cancel-propagates")
+    await db_session.commit()
+    ctx: dict[str, Any] = {
+        "pipeline": TriagePipeline(
+            llm=_CancellingLLMClient(),
+            model="fake-model",
+            prompt_version="triage-v1",
+        ),
+        "session_factory": db_session_factory,
+        "settings": _retry_settings(),
+        "job_id": "triage:test",
+        "job_try": 3,  # the last try: a caught CancelledError would write `failed`
+    }
+    with pytest.raises(asyncio.CancelledError):
+        await triage_alert_job(ctx, str(alert_id))
+    async with db_session_factory() as fresh:
+        row = await fresh.get(AlertRow, alert_id)
+        assert row is not None
+        assert row.status == "pending"  # never marked failed by a cancellation
+
+
+async def test_retry_defers_by_the_computed_backoff(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """The job hands `decide_retry`'s own `defer_s` to `arq.worker.Retry` — not a constant
+    (m5 task-02 Interfaces: `raise Retry(defer=decision.defer_s) from exc`)."""
+    alert_id = await seed_alert(db_session, "alert4", session_id="defer-4000")
+    await db_session.commit()
+
+    ctx: dict[str, Any] = {
+        "pipeline": TriagePipeline(
+            llm=FakeLLMClient([LLMCallError("x")]), model="fake-model", prompt_version="triage-v1"
+        ),
+        "session_factory": db_session_factory,
+        "settings": _retry_settings(base_s=2.0, max_s=60.0),
+        "job_id": "triage:test",
+        "job_try": 2,
+    }
+    with pytest.raises(Retry) as excinfo:
+        await triage_alert_job(ctx, str(alert_id))
+    assert excinfo.value.defer_score == 4000  # arq stores the deferral in ms: 2.0 * 2**(2-1)
+
+
+async def test_terminal_sentinelbrief_error_is_a_warning_without_traceback_or_message_text(
+    db_session: AsyncSession,
+    db_session_factory: async_sessionmaker[AsyncSession],
+    arq_redis: ArqRedis,
+    redis_url: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Mirrors `test_unexpected_exception_retries_then_fails_with_the_class_logged` for the other
+    branch of the WARNING/ERROR split: a `SentinelBriefError` (here `LLMCallError`) is an
+    *expected* family — logged at WARNING, never ERROR — and, like every job log line (ruling
+    I1-a), never with a traceback or the exception's own message text (m5 task-02 fix-1, I4).
+    """
+    alert_id = await seed_alert(db_session, "alert4", session_id="terminal-warning-no-leak")
+    await db_session.commit()
+    await enqueue_triage(arq_redis, alert_id)
+
+    fake = FakeLLMClient([LLMCallError("boom"), LLMCallError("boom"), LLMCallError("boom")])
+    worker = _worker(
+        redis_url=redis_url,
+        session_factory=db_session_factory,
+        settings=_retry_settings(),
+        llm=fake,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await worker.main()
+    await worker.close()
+
+    terminal = [r for r in caplog.records if "triage job failed" in r.getMessage()]
+    assert len(terminal) == 1
+    assert terminal[0].levelno == logging.WARNING  # a SentinelBriefError is expected, not a bug
+    assert terminal[0].exc_info is None  # ...so it carries no traceback
+    # ids, counters, reason and class names only — never the exception's own message text.
+    for record in caplog.records:
+        assert "boom" not in record.getMessage()
+
+    assert "reason=llm_call_failed" in terminal[0].getMessage()
+    assert "chain=LLMCallError" in terminal[0].getMessage()
 
 
 async def test_failed_terminal_write_propagates_and_arq_records_the_failure(
@@ -462,7 +592,9 @@ async def test_successful_job_publishes_verdict_created_once(
         await worker2.main()
         await worker2.close()
 
-        assert await _drain_pubsub(pubsub) == []
+        # M6: a negative drain only needs to outlast worker2's own completed run, not the full
+        # 5 s default deadline — worker2 has already finished by the time we get here.
+        assert await _drain_pubsub(pubsub, timeout_total_s=1.0) == []
     finally:
         await pubsub.aclose()
 
