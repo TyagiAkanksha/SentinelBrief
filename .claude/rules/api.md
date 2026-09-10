@@ -19,8 +19,10 @@ paths: api/**
   export). Read request-scoped things from `app.state` through `api/deps.py`, never from module
   globals or `os.environ`.
 - Ingest (`POST /api/v1/alerts`): verify the HMAC signature over the **raw body before parsing
-  JSON** (401 precedes 422); insert with `ON CONFLICT DO NOTHING`; duplicates return 200 and
-  never re-trigger triage; from M5 the route only enqueues and must answer in under 100 ms.
+  JSON** (401 precedes 422); insert with `ON CONFLICT DO NOTHING`; duplicates return 200; a
+  duplicate of a triaged/failed alert never re-triggers triage, while a still-`pending` duplicate
+  is re-enqueued (idempotent at the queue by job id — spine M5-a); from M5 the route only
+  enqueues and must answer in under 100 ms.
 - Public GET paths never compute: no LLM, no tool call, no retriage. `retriage` is admin-token
   gated and globally capped (M8).
 - Validation errors are enveloped as 422 with location and message only — never echo the input.

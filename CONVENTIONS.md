@@ -40,7 +40,7 @@ core/
   services/        # business logic that touches the ORM (alerts, verdicts, stats) — session-first
 api/
   factory.py       # create_app() — DB-less constructible
-  main.py          # wiring ONLY: settings, engine, session factory, triage seam; nothing imports main
+  main.py          # wiring ONLY: settings, engine, session factory, Redis + enqueue seam; nothing imports main
   deps.py          # get_settings / get_session / get_enqueue / require_signature
   errors.py        # register_error_handlers(app) — the one place the §8 envelope is produced
   routes/          # FastAPI routers (health, alerts, stats, stream)
@@ -146,8 +146,10 @@ no contract forbids the import.
   OpenAPI baseline export (§8) and DB-less tests possible. Dependencies that need something
   unwired raise `RuntimeError` at request time rather than silently working.
 - `api/main.py` is the only wiring point: configure logging, load settings, fail fast on empty
-  required secrets (`DATABASE_URL`, `INGEST_HMAC_SECRET`, `LLM_API_KEY`, `CHEAP_MODEL`), build the
-  engine + session factory, build the triage seam, call `create_app(...)`, expose `app`.
+  required secrets (`DATABASE_URL`, `INGEST_HMAC_SECRET`, `REDIS_URL`), build the engine +
+  session factory, build the Redis client and the `enqueue` seam (`core/queue.py`), call
+  `create_app(...)`, expose `app`. `LLM_API_KEY`/`CHEAP_MODEL` are `worker/main.py`'s
+  concern (spine M5-b) — `api/` never builds an LLM client.
 - Every route declares an explicit, stable, unique `operation_id`. The frontend's
   `openapi-typescript` codegen keys on them; renaming one is a breaking wire change (§8 gate).
 - All routes live under `/api/v1` (PRD §8), applied once in the factory. Exception: `GET /healthz`
@@ -297,7 +299,8 @@ All five must be clean before every commit that touches Python. Additionally, ru
   retry (m0 task-04)`.
 - Every commit carries both trailers:
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` and
-  `Claude-Session: https://claude.ai/code/session_016MeBkZ55JJW3CbfRgWwmty`.
+  `Claude-Session: <the session URL the Claude Code harness supplies for the current session>`
+  (it changes when the session is resumed; the dispatch carries the current value).
 - **Path-scoped `git add` only** — never `git add .` / `-A`. Never stage `.env` or secrets.
 
 ## 13. Prompts
