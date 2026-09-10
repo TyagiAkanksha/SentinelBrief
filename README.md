@@ -174,6 +174,9 @@ Each `--prompt` value runs the full pipeline over the golden set and produces on
 in the printed table; the full per-case results land as JSON under `evals/results/` (gitignored).
 Golden set v1 is synthetic and its numbers are never published; v2 is real, hand-labeled honeypot
 traffic and is the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*.
+`--strong-model` wires the same two-tier routing (PRD §6.4) into the run, defaulting to
+`STRONG_MODEL`; the printed table's `escalation_rate` column reports the fraction of cases each
+run escalated to the strong model.
 
 ## Deployment
 

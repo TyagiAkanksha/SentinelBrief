@@ -253,6 +253,7 @@ async def seed(
     prompt_version: str,
     recorder: ToolRecorder,
     settings: Settings,
+    strong_model: str | None = None,
 ) -> SeedCounts:
     """Insert and triage every candidate through the production write path.
 
@@ -276,6 +277,10 @@ async def seed(
         prompt_version: The prompt version every alert is triaged with.
         recorder: How the five enrichment tools are executed (`select_recorder`).
         settings: The config surface `build_registry` wires every tool's bounds from.
+        strong_model: Two-tier routing's strong id (PRD §6.4, m5 task-03); `None` (default) keeps
+            routing off. `main()` only ever passes a value on `--live` — a canned
+            `FakeLLMClient` has no strong-tier reply scripted, so the fake path always leaves this
+            `None`.
 
     Returns:
         Counts of created, skipped, and failed-triage alerts.
@@ -316,6 +321,9 @@ async def seed(
                     prompt_version=prompt_version,
                     tools=registry,
                     tool_loop_max_iter=settings.tool_loop_max_iter,
+                    strong_model=strong_model,
+                    escalate_severity_gte=settings.escalate_severity_gte,
+                    escalate_confidence_lt=settings.escalate_confidence_lt,
                 )
                 status = await pipeline.triage_alert(session, result.alert_id)
                 created += 1
@@ -406,6 +414,9 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     # cheap_model routing tier (only --live prices verdicts against a real model id).
     client: LLMClient | None = llm
     model = settings.cheap_model if args.live else FAKE_MODEL
+    # Two-tier routing (m5 task-03): only `--live` opts in, since a canned `FakeLLMClient` never
+    # has a strong-tier reply scripted (PRD §6.4).
+    strong_model = (settings.strong_model or None) if args.live else None
     if client is None and args.live:
         try:
             client = OpenAICompatibleLLMClient.from_settings(settings)
@@ -454,6 +465,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
                 prompt_version=settings.triage_prompt_version,
                 recorder=recorder,
                 settings=settings,
+                strong_model=strong_model,
             )
         )
     except (OSError, SQLAlchemyError) as e:

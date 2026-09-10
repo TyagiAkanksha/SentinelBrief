@@ -1,14 +1,19 @@
 """`evals.run`: drive the real `TriagePipeline` over a golden set and score it (PRD §7.2, §7.3).
 
 `python -m evals.run --golden <path> --prompt <version> [--prompt <version> ...] [--model ID]
-[--concurrency N] [--output-dir DIR] [--tool-fixtures DIR]` runs one `TriagePipeline` per
-`--prompt` value over every case in the golden set (`evals.golden.load_golden`), scores each run
-(`evals.scoring.score`), and prints one comparable table row per prompt
-(`evals.scoring.format_table`) — two different prompt versions in one invocation is how PRD §12
-M1's acceptance criterion is demonstrated. Each run's full per-case result (including its
-`tool_calls` count, PRD §7.2) is written as JSON under the gitignored `evals/results/`; per
-`.claude/rules/evals.md` v1's numbers are synthetic and are **never published** outside that JSON
-and task/ledger reports — never `docs/results.md`, the README, or a commit message.
+[--strong-model ID] [--concurrency N] [--output-dir DIR] [--tool-fixtures DIR]` runs one
+`TriagePipeline` per `--prompt` value over every case in the golden set
+(`evals.golden.load_golden`), scores each run (`evals.scoring.score`), and prints one comparable
+table row per prompt (`evals.scoring.format_table`) — two different prompt versions in one
+invocation is how PRD §12 M1's acceptance criterion is demonstrated. Each run's full per-case
+result (including its `tool_calls` count, PRD §7.2, and whether routing escalated it, PRD §6.4,
+m5 task-03) is written as JSON under the gitignored `evals/results/`; per `.claude/rules/evals.md`
+v1's numbers are synthetic and are **never published** outside that JSON and task/ledger reports —
+never `docs/results.md`, the README, or a commit message.
+
+`--strong-model` (default `settings.strong_model`; empty means routing is off, same rule as
+`worker.triage.TriagePipeline`) wires two-tier routing into every prompt version's pipeline; the
+printed table's `escalation_rate` column reports the fraction of cases each run escalated.
 
 `--tool-fixtures DIR` (default `tests/fixtures/tools`) is where every external tool
 (`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
@@ -22,8 +27,9 @@ empty, and never raises a traceback:
         --tool-fixtures not a directory)                                     usage
     `Settings()` fails validation (e.g. malformed MODEL_PRICES_JSON)          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
-    `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model,
-        unknown --prompt), raised before any case runs ("price before spend") config_error
+    `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model or
+        --strong-model, unknown --prompt), raised before any case runs
+        ("price before spend")                                                config_error
     output directory not writable                                            output_error
     every case failed in every prompt run (a per-case failure alone still
         exits 0 -- it is captured as `CaseResult.error`, not a run failure)   all_cases_failed
@@ -173,6 +179,7 @@ async def run_golden(
                 latency_ms=outcome.latency_ms,
                 error=None,
                 tool_calls=len(outcome.tool_calls),
+                escalated=outcome.escalated_model,
             )
 
     return list(await asyncio.gather(*(_run_one(case) for case in cases)))
@@ -241,13 +248,26 @@ async def _run_all(
     """
     try:
         model: str = args.model if args.model is not None else settings.cheap_model
+        strong_model: str | None = (
+            args.strong_model if args.strong_model is not None else settings.strong_model
+        ) or None
 
         # Price before spend for the flag itself: a fake never prices, so this only applies to
         # the real client, and it must fail here rather than mid-run inside `TriagePipeline`/
         # `complete_structured` (`worker/llm_client.py`), which price-checks per call, deep
         # inside `run_golden`'s `asyncio.gather` — too late to keep every case from starting.
+        # `--strong-model` gets the same check (m5 task-03): an unpriced strong id must never
+        # reach a real spend either.
         if llm is None and model not in settings.model_prices_json:
             return _fail("config_error", f"model {model!r} has no entry in MODEL_PRICES_JSON")
+        if (
+            llm is None
+            and strong_model is not None
+            and strong_model not in settings.model_prices_json
+        ):
+            return _fail(
+                "config_error", f"model {strong_model!r} has no entry in MODEL_PRICES_JSON"
+            )
 
         try:
             cases = load_golden(args.golden)
@@ -278,6 +298,9 @@ async def _run_all(
                     prompt_version=prompt_version,
                     tools=registry,
                     tool_loop_max_iter=settings.tool_loop_max_iter,
+                    strong_model=strong_model,
+                    escalate_severity_gte=settings.escalate_severity_gte,
+                    escalate_confidence_lt=settings.escalate_confidence_lt,
                 )
             except ConfigError as e:
                 return _fail(e.code, str(e))
@@ -352,6 +375,7 @@ def main(
     parser.add_argument("--golden", required=True, type=Path)
     parser.add_argument("--prompt", action="append", required=True)
     parser.add_argument("--model", default=None)
+    parser.add_argument("--strong-model", default=None)
     parser.add_argument("--concurrency", type=_positive_int, default=4)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)

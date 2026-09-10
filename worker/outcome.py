@@ -9,6 +9,9 @@ either, so both can import it directly with no cycle. `worker/triage.py` re-expo
 
 Both are `frozen=True`: a triage result and its tool-call trace are immutable facts about one
 completed run, never mutated after construction.
+
+`TriageOutcome` gains `model_primary`/`escalated_model` at m5 task-03 (PRD §6.4, two-tier
+routing): both default so every pre-task-03 construction keeps working unchanged.
 """
 
 from __future__ import annotations
@@ -48,3 +51,9 @@ class TriageOutcome:
     latency_ms: int
     retried: bool
     tool_calls: tuple[ToolCallRecord, ...] = ()
+    model_primary: str | None = None
+    """The cheap-tier model id, when routing escalated; `None` means no routing happened (`model`
+    is already the only model this run used) — `persist_verdict` receives `model_primary or
+    model` (m5 task-03, PRD §6.4)."""
+    escalated_model: bool = False
+    """Whether routing escalated this run to the strong model (m5 task-03, PRD §6.4)."""

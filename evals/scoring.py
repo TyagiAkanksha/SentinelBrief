@@ -8,6 +8,9 @@ LLM or pipeline invocation (those live in `evals/golden/__init__.py` and `evals/
 Per `.claude/rules/evals.md`: failed cases (`CaseResult.verdict is None`) count in every rate's
 denominator and are always wrong; costs and latencies aggregate over every case, failed included,
 because that spend/time already happened.
+
+`escalation_rate` (m5 task-03, PRD §6.4) is `escalated ÷ n_cases`: a failed case never counts as
+escalated, same rule as every other rate here.
 """
 
 from __future__ import annotations
@@ -43,6 +46,9 @@ class CaseResult:
     """Number of enrichment tool calls the pipeline made for this case (PRD §7.2, m4 task-06);
     `0` on a failed case. Not scored — informational only, carried through to the per-case result
     JSON so a run can be inspected for tool usage without re-running it."""
+    escalated: bool = False
+    """Whether routing escalated this case to the strong model (PRD §6.4, m5 task-03); always
+    `False` on a failed case. Defaulted so every pre-task-03 construction keeps working."""
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,9 @@ class RunMetrics:
     escalate_precision: float
     escalate_recall: float
     critical_recall: float
+    escalation_rate: float
+    """Fraction of cases routing escalated to the strong model (PRD §6.4, m5 task-03): `escalated
+    ÷ n_cases`; `0.0` when `n_cases == 0`. A failed case never counts as escalated."""
     cost_mean_usd: Decimal
     cost_p95_usd: Decimal
     cost_total_usd: Decimal
@@ -123,6 +132,8 @@ def score(results: Sequence[CaseResult]) -> RunMetrics:
     critical_labeled = 0
     critical_hit = 0
 
+    escalated_count = 0
+
     for r in results:
         verdict = r.verdict
         if verdict is not None:
@@ -143,6 +154,8 @@ def score(results: Sequence[CaseResult]) -> RunMetrics:
             critical_labeled += 1
             if verdict is not None and verdict.severity >= 4:
                 critical_hit += 1
+        if r.escalated:
+            escalated_count += 1
 
     severity_exact = severity_exact_count / n_cases if n_cases else 0.0
     severity_within_one = severity_within_one_count / n_cases if n_cases else 0.0
@@ -150,6 +163,7 @@ def score(results: Sequence[CaseResult]) -> RunMetrics:
     escalate_precision = true_positive / predicted_positive if predicted_positive else 0.0
     escalate_recall = true_positive / labeled_positive if labeled_positive else 0.0
     critical_recall = critical_hit / critical_labeled if critical_labeled else 0.0
+    escalation_rate = escalated_count / n_cases if n_cases else 0.0
 
     costs = [r.cost_usd for r in results]
     cost_total_usd = sum(costs, Decimal("0"))
@@ -180,6 +194,7 @@ def score(results: Sequence[CaseResult]) -> RunMetrics:
         escalate_precision=escalate_precision,
         escalate_recall=escalate_recall,
         critical_recall=critical_recall,
+        escalation_rate=escalation_rate,
         cost_mean_usd=cost_mean_usd,
         cost_p95_usd=cost_p95_usd,
         cost_total_usd=cost_total_usd,
@@ -208,6 +223,7 @@ COLUMNS: tuple[str, ...] = (
     "esc_prec",
     "esc_rec",
     "critical_rec",
+    "escalation_rate",
     "cost_mean",
     "cost_p95",
     "cost_total",
@@ -244,6 +260,7 @@ def format_table(rows: Sequence[ResultRow]) -> str:
             f"{m.escalate_precision:.2f}",
             f"{m.escalate_recall:.2f}",
             f"{m.critical_recall:.2f}",
+            f"{m.escalation_rate:.2f}",
             f"{m.cost_mean_usd:.6f}",
             f"{m.cost_p95_usd:.6f}",
             f"{m.cost_total_usd:.6f}",

@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     llm_json_mode: Literal["json_object", "json_schema"] = "json_object"
     cheap_model: str = ""
     strong_model: str = ""
+    escalate_severity_gte: Annotated[int, Field(ge=1, le=5)] = 4
+    """Escalate to `strong_model` when the cheap verdict's severity is at least this (PRD §6.4);
+    `STRONG_MODEL` empty means routing never fires regardless of this threshold (m5 task-03)."""
+    escalate_confidence_lt: Annotated[float, Field(ge=0.0, le=1.0)] = 0.6
+    """Escalate to `strong_model` when the cheap verdict's confidence is strictly below this
+    (PRD §6.4), independent of `escalate_severity_gte` — either threshold alone triggers
+    escalation (m5 task-03)."""
     # NoDecode: pydantic-settings' own complex-field env decoding raises SettingsError on
     # malformed JSON before any field validator runs. Skipping it lets the `mode="before"`
     # validator below do the json.loads itself, so malformed input surfaces as a pydantic

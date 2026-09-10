@@ -1,11 +1,15 @@
 """CLI entrypoint: read one alert, triage it, print the verdict as JSON (PRD §12 M0).
 
-`python -m worker.triage_one <alert.json> [--model MODEL] [--prompt VERSION]` reads `Settings()`
-once, for its `--model`/`--prompt` defaults and (when `llm` isn't injected) to build the real
-`OpenAICompatibleLLMClient`; runs one `TriagePipeline.run(alert)`; and maps every typed failure to
-a clean one-line stderr message and a stable exit code — never a Python traceback
-(CONVENTIONS.md §4). `llm=` lets tests inject `FakeLLMClient` (or force the config-error path with
-`llm=None`) without a network call.
+`python -m worker.triage_one <alert.json> [--model MODEL] [--prompt VERSION]
+[--strong-model MODEL]` reads `Settings()` once, for its `--model`/`--prompt`/`--strong-model`
+defaults and (when `llm` isn't injected) to build the real `OpenAICompatibleLLMClient`; runs one
+`TriagePipeline.run(alert)`; and maps every typed failure to a clean one-line stderr message and a
+stable exit code — never a Python traceback (CONVENTIONS.md §4). `llm=` lets tests inject
+`FakeLLMClient` (or force the config-error path with `llm=None`) without a network call.
+
+`--strong-model` (default `settings.strong_model`; empty disables routing, PRD §6.4, m5 task-03)
+wires two-tier routing; the printed JSON always carries `model_primary`/`escalated_model`, `false`
+when routing never fired.
 
 Exit codes:
     0: success — the JSON verdict envelope is on stdout.
@@ -90,7 +94,8 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
 
     Returns:
         `0` on success; `1` on a usage error, an unreadable/invalid alert file, `Settings()`
-        itself failing to parse, a `ConfigError`, or a `LLMCallError`; `2` on a
+        itself failing to parse, a `ConfigError`, a `ValueError` from `TriagePipeline` (e.g.
+        `--strong-model` equal to `--model`), or a `LLMCallError`; `2` on a
         `VerdictValidationError`.
     """
     try:
@@ -102,6 +107,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     parser.add_argument("alert_path")
     parser.add_argument("--model", default=settings.cheap_model)
     parser.add_argument("--prompt", default=settings.triage_prompt_version)
+    parser.add_argument("--strong-model", default=settings.strong_model)
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
@@ -116,9 +122,16 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     try:
         if llm is None:
             llm = OpenAICompatibleLLMClient.from_settings(settings)
-        pipeline = TriagePipeline(llm=llm, model=args.model, prompt_version=args.prompt)
-    except ConfigError as e:
-        return _fail(e.code, str(e))
+        pipeline = TriagePipeline(
+            llm=llm,
+            model=args.model,
+            prompt_version=args.prompt,
+            strong_model=args.strong_model or None,
+            escalate_severity_gte=settings.escalate_severity_gte,
+            escalate_confidence_lt=settings.escalate_confidence_lt,
+        )
+    except (ConfigError, ValueError) as e:
+        return _fail("config_error", str(e))
 
     try:
         outcome = asyncio.run(pipeline.run(alert))
@@ -137,6 +150,8 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
             {
                 "verdict": outcome.verdict.model_dump(),
                 "model": outcome.model,
+                "model_primary": outcome.model_primary or outcome.model,
+                "escalated_model": outcome.escalated_model,
                 "prompt_version": outcome.prompt_version,
                 "input_tokens": outcome.input_tokens,
                 "output_tokens": outcome.output_tokens,
