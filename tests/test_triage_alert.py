@@ -30,11 +30,22 @@ m5 task-03 (PRD §6.4, §5) adds one more direct pin: `persist_verdict`'s `model
 `model_final` (= `VerdictRow.model_final`, `outcome.model`) / `escalated_model` columns actually
 land on the row when `triage_attempt` runs a pipeline with routing turned on, both when it
 escalates and when it doesn't.
+
+m5 task-04 (PRD §6.1 idempotency, §12 M5) adds the lock/skip pins: `triage_attempt` now loads the
+alert through `get_alert_for_update` and holds that lock for the whole attempt, so
+`test_triage_attempt_returns_verdict_id_and_commits` gains a follow-up lock-release assertion, a
+new `test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call` pins the skip
+branch (both terminal statuses, plus the `triage_alert` "skipped" -> "triaged" mapping), and
+`test_no_pending_orm_state_before_the_tool_loop` re-proves the M4 task-05 "clean identity map"
+guarantee now that the loaded row also carries a lock.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -42,10 +53,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.errors import LLMCallError, NotFoundError, VerdictValidationError
 from core.models import AlertRow, VerdictRow
-from core.services.alerts import insert_alert
-from tests.fakes import FakeLLMClient
-from tests.helpers import VALID1, VALID4, VALID4_STRONG, load_alert
-from worker.triage import TriagePipeline
+from core.schemas.verdict import Verdict
+from core.services.alerts import get_alert_for_update, insert_alert
+from tests.fakes import FakeLLMClient, ScriptedToolCall
+from tests.helpers import VALID1, VALID4, VALID4_STRONG, load_alert, make_registry, seed_alert
+from worker.tools import ToolContext
+from worker.triage import AttemptResult, TriagePipeline
 
 _VALID_VERDICT_JSON = (
     '{"severity": 4, "category": "successful_intrusion", "confidence": 0.9, '
@@ -189,6 +202,16 @@ async def test_triage_attempt_returns_verdict_id_and_commits(
     assert verdict.model_primary == "fake-model"
     assert verdict.prompt_version == "triage-v1"
 
+    # The row lock is released with the attempt's own commit (m5 task-04): a fresh session's
+    # `get_alert_for_update` must return promptly, not hang behind a lock triage_attempt forgot
+    # to release.
+    async with db_session_factory() as lock_check_session:
+        locked_row = await asyncio.wait_for(
+            get_alert_for_update(lock_check_session, result.alert_id), timeout=2.0
+        )
+        assert locked_row.id == result.alert_id
+        await lock_check_session.commit()
+
 
 async def test_triage_attempt_rolls_back_and_raises_on_failure(
     db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
@@ -320,3 +343,98 @@ async def test_non_escalated_attempt_persists_the_same_model_twice(
     assert verdict.model_primary == "fake-model"
     assert verdict.model_final == "fake-model"
     assert verdict.escalated_model is False
+
+
+async def test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """`AttemptResult` skip mapping (m5 task-04, PRD §6.1 idempotency, §12 M5 "kill the worker
+    mid-job -> job re-runs, no duplicate verdicts"): once the locked row's status is no longer
+    `pending`, the attempt releases the lock and returns before any LLM call, on EITHER terminal
+    status (`triaged` or `failed`) -- a re-run after a crash that had already committed, or an
+    overlapping run, can never write a second verdict row or spend a second set of tokens.
+    `triage_alert` (the unchanged M2 contract) reports a `skipped` `AttemptResult` as `"triaged"`:
+    the alert IS triaged, whichever run actually did the work.
+    """
+    triaged_id = await seed_alert(
+        db_session,
+        "alert4",
+        verdict=Verdict.model_validate_json(VALID4),
+        session_id="skip-triaged-001",
+    )
+    failed_id = await seed_alert(
+        db_session, "alert4", status="failed", session_id="skip-failed-002"
+    )
+    await db_session.commit()
+
+    fake = FakeLLMClient([])
+    pipeline = TriagePipeline(llm=fake, model="fake-model", prompt_version="triage-v1")
+
+    triaged_attempt = await pipeline.triage_attempt(db_session, triaged_id)
+    assert triaged_attempt == AttemptResult(status="skipped", verdict_id=None, outcome=None)
+
+    failed_attempt = await pipeline.triage_attempt(db_session, failed_id)
+    assert failed_attempt == AttemptResult(status="skipped", verdict_id=None, outcome=None)
+
+    assert len(fake.calls) == 0
+
+    async with db_session_factory() as fresh_session:
+        verdict_count = await fresh_session.scalar(
+            select(func.count()).select_from(VerdictRow).where(VerdictRow.alert_id == triaged_id)
+        )
+    assert verdict_count == 1  # still exactly the one verdict seeded above, never a second
+
+    status = await pipeline.triage_alert(db_session, triaged_id)
+    assert status == "triaged"
+
+
+class SessionSpyTool:
+    """Records the triage session's ORM/transaction state the instant a tool executes (m5
+    task-04): if the locked row came back dirty, or a leftover pending write sat in the identity
+    map, `persist_verdict`'s own writes later in the same transaction could autoflush out of
+    order. Local to this test only -- not one of the `tests/helpers.py` lifted stubs (m5 task-03).
+    """
+
+    name = "session_spy"
+    description = "Records ctx.session state; always returns an empty result."
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    external = False
+
+    def __init__(self) -> None:
+        self.dirty: set[Any] | None = None
+        self.new: set[Any] | None = None
+        self.in_transaction: bool | None = None
+
+    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        assert ctx.session is not None
+        self.dirty = set(ctx.session.dirty)
+        self.new = set(ctx.session.new)
+        self.in_transaction = ctx.session.in_transaction()
+        return {}
+
+
+async def test_no_pending_orm_state_before_the_tool_loop(db_session: AsyncSession) -> None:
+    alert = load_alert(session_id="no-dirty-orm-state-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    spy = SessionSpyTool()
+    fake = FakeLLMClient([[ScriptedToolCall(name="session_spy", arguments={})], VALID1])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        tools=make_registry(spy),
+        tool_loop_max_iter=6,
+    )
+
+    attempt = await pipeline.triage_attempt(db_session, result.alert_id)
+
+    assert attempt.status == "triaged"
+    assert spy.dirty == set()
+    assert spy.new == set()
+    assert spy.in_transaction is True
