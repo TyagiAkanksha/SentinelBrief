@@ -136,7 +136,8 @@ no contract forbids the import.
   ::triage_alert_job` (M5): it catches `Exception` — never `BaseException` — around the whole
   attempt so a poison alert can never wedge the queue (PRD §6.2); the decision is delegated to the
   pure `worker/retry.py`, the terminal write is `failed`, and the log carries
-  `reason=<code | ExceptionClass>` only.
+  `reason=<code | ExceptionClass>` only and the exception-class chain — never a traceback or a
+  message, either of which may render attacker-derived text (PRD §10.6).
 
 ## 5. App construction
 

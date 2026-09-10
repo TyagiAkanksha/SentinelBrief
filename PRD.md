@@ -184,9 +184,9 @@ The golden set lives in the repo as JSONL (`evals/golden/*.jsonl`), not in the d
 3. Enqueue `triage(alert_id)` on ARQ. Return. Total budget: <100 ms. *(M2 runs triage inline inside the request as a stepping stone; the queue split is M5.)*
 
 ### 6.2 Worker loop
-For each job: load raw alert → run the tool-calling loop (§6.3) → validate structured output (§6.5) → persist verdict + tool trace + metrics in one transaction → set alert `status='triaged'` → publish `verdict.created` on Redis pub/sub (for SSE). On unrecoverable failure after 3 retries with backoff: `status='failed'`, log, move on. A poison alert must never wedge the queue.
+For each job: load raw alert → run the tool-calling loop (§6.3) → validate structured output (§6.5) → persist verdict + tool trace + metrics in one transaction → set alert `status='triaged'` → publish `verdict.created` on Redis pub/sub (for SSE). On unrecoverable failure after `TRIAGE_JOB_MAX_TRIES` total attempts with exponential backoff: `status='failed'`, log, move on. A poison alert must never wedge the queue.
 
-**Retry budget, stated explicitly (v1.1, amended v1.3):** the structured-output retry (§6.5) happens once *inside* a job; the job is attempted at most `TRIAGE_JOB_MAX_TRIES` = 3 times in total — the first run plus two retries with exponential backoff (M5). A poison alert can therefore cost at most `(TOOL_LOOP_MAX_ITER + 2) × 3` LLM calls (8 × 3 = 24 at the defaults: six tool turns, the forced final verdict and the one validation retry, times three job retries) before it is marked `failed`, and the daily token budget (§10.3) counts every one of them.
+**Retry budget, stated explicitly (v1.1, amended v1.3):** the structured-output retry (§6.5) happens once *inside* a job; the job is attempted at most `TRIAGE_JOB_MAX_TRIES` = 3 times in total — the first run plus two retries with exponential backoff (M5). A poison alert can therefore cost at most `(TOOL_LOOP_MAX_ITER + 2) × 3` LLM calls (8 × 3 = 24 at the defaults: six tool turns, the forced final verdict and the one validation retry, times three total attempts) before it is marked `failed`, and the daily token budget (§10.3) counts every one of them.
 
 ### 6.3 Enrichment tools
 The model decides which tools to call; the worker executes them and returns results. Hard cap: **6 tool-call iterations** per alert, then force a final verdict.
@@ -413,7 +413,7 @@ Terraform stack live; migration documented.
 **v1.4 — 2026-09-10.** M5 build-time amendment; no scope change.
 - §6.2: the job's own retry count is named explicitly as `TRIAGE_JOB_MAX_TRIES` = 3 total attempts
   (the first run plus two retries with exponential backoff), replacing the looser "retried up to 3
-  times" wording (M5 task-02).
+  times" wording (M5 task-02); §6.2 first paragraph aligned to total attempts.
 
 **v1.3 — 2026-09-09.** M4 build-time amendment; no scope change.
 - §6.2: the v1.1 retry-budget bound is corrected for M4's tool-calling loop (§6.3): at most `(TOOL_LOOP_MAX_ITER + 2) × 3` LLM calls per poison alert (24 at the defaults), not 6 — the earlier number predated the tool loop.

@@ -10,6 +10,11 @@ documented carve-out to CONVENTIONS.md §4's typed-exception rule: this boundary
 `Exception`, never `BaseException`, so `asyncio.CancelledError` still propagates). A missing alert
 (`NotFoundError`) is never retried. A successful commit publishes one `verdict.created` message
 (best-effort; a publish failure never fails the job).
+
+Every job log line carries ids, counters, `reason=` and `chain=` (exception class names) only —
+NEVER `exc_info`/a traceback and NEVER the exception's own message text. Either could render
+attacker-derived data (a `pydantic.ValidationError` over `alerts.raw`, or SQLAlchemy's
+`[parameters: …]`) straight into the log (PRD §10.6; ruling R9/I1-a).
 """
 
 from __future__ import annotations
@@ -34,6 +39,20 @@ logger = logging.getLogger(__name__)
 JobResult = Literal["triaged", "failed", "skipped", "missing"]
 """`"skipped"` is minted by task-04 (FOR UPDATE skip on a concurrently-claimed alert); declared
 now so the type alias never changes shape underneath callers."""
+
+
+def _exc_chain(exc: BaseException) -> str:
+    """Exception class names along `__cause__`/`__context__` (at most 5), e.g.
+    "RuntimeError<-ValueError" — never a message or a traceback: either may embed attacker-derived
+    text (PRD §10.6)."""
+    names: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(names) < 5:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    return "<-".join(names)
 
 
 async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
@@ -89,13 +108,13 @@ async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
             raise Retry(defer=decision.defer_s) from exc
         log_call = logger.warning if isinstance(exc, SentinelBriefError) else logger.error
         log_call(
-            "triage job failed alert_id=%s job_id=%s try=%d/%d reason=%s",
+            "triage job failed alert_id=%s job_id=%s try=%d/%d reason=%s chain=%s",
             alert_id,
             job_id,
             job_try,
             settings.triage_job_max_tries,
             decision.reason,
-            exc_info=not isinstance(exc, SentinelBriefError),
+            _exc_chain(exc),
         )
         await mark_alert_failed(factory, alert_uuid)
         return "failed"
