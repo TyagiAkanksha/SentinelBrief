@@ -56,8 +56,11 @@ down for the milestone's acceptance walk. M8's retriage is told how to opt out o
 - Create (test-author): `tests/test_job_idempotency.py`
 - Modify (test-author, re-pinned): `tests/test_triage_alert.py` (+ the lock/skip pins),
   `tests/test_alert_service.py` (+ `get_alert_for_update`)
-- Modify: `core/services/alerts.py`, `worker/triage.py`, `worker/jobs.py` (docstring only: the
-  `"skipped"` result and the M8 note), `docs/plans/m5-queue-routing.md` (Acceptance walk: the
+- Modify: `core/services/alerts.py`, `worker/triage.py`, `worker/jobs.py` (the docstring gains
+  the `"skipped"` result and the M8 note; AND the task-02 review's M7 lift: the `except Exception`
+  body of `triage_alert_job` moves into `async def _handle_attempt_failure(exc: Exception, *,
+  ctx-derived args) -> JobResult` so the happy path stays about ten lines — behaviour-preserving,
+  every task-02 pin stays green unchanged, the reviewer mutation-tests it), `docs/plans/m5-queue-routing.md` (Acceptance walk: the
   kill procedure row gets its timings — see Step 6), `README.md` (one sentence in Quickstart:
   a worker restart re-runs interrupted jobs without duplicating verdicts)
 
