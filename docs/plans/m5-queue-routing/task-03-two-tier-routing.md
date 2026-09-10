@@ -228,7 +228,7 @@ Roles: the **test-author** writes Steps 1–2; the **implementer** does Steps 3�
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run pytest -q -rs tests/test_routing.py tests/test_tool_loop.py tests/test_tool_loop_db.py tests/test_tool_registry.py tests/test_triage_pipeline.py tests/test_triage_alert.py tests/test_scoring.py tests/test_evals_run.py tests/test_triage_one.py tests/test_seed_dev.py   # all pass, 0 skipped
 grep -c "class EchoTool" tests/*.py | grep -v ':0'                      # tests/helpers.py:1 only
-grep -nE 'gpt-|claude-|o[0-9]-|>= ?[1-5]\b|< ?0\.[0-9]' worker/triage.py worker/routing.py ; echo "exit=$?"   # exit=1 — no model id or threshold literal in the pipeline/routing (the two ValueError message strings are not literals of either kind — review M2)
+grep -nE '"(gpt|claude|o[0-9])[^"]*"|(severity_gte|confidence_lt) *= *[0-9]' worker/triage.py worker/routing.py ; echo "exit=$?"   # exit=1 — no quoted model id and no threshold assigned from a numeric literal in the pipeline/routing (message text such as "must be >= 1" is not a threshold — review M2, re-review N1)
 uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
 ```
 
