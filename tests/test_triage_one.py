@@ -11,6 +11,9 @@ on the empty `CHEAP_MODEL` before any network call.
 
 m5 task-03 (PRD §6.4) adds `--strong-model` and the two routing fields the output JSON gains
 (`model_primary`, `escalated_model`) — present on every run, not only an escalating one.
+
+m5 task-03 fix-1 (review M3) adds `--strong-model`'s own price-before-spend pin, mirroring
+`evals.run`'s (this CLI had none).
 """
 
 from __future__ import annotations
@@ -249,6 +252,31 @@ def test_exit_1_on_unpriced_model_flag(capsys: pytest.CaptureFixture[str]) -> No
     lines = captured.err.splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
+
+
+def test_exit_1_on_unpriced_strong_model_flag(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """m5 task-03 fix-1 (review M3): mirrors `test_exit_1_on_unpriced_model_flag` for
+    `--strong-model`. `CHEAP_MODEL=fake-model` (the autouse fixture) is priced; `--strong-model
+    ghost` is not. `LLM_API_KEY`/`LLM_BASE_URL` (an unroutable address) are set so that if the
+    price check ran too late — or not at all — the cheap tier's own real call would hang or fail
+    as `llm_call_failed` instead of a clean, fast `config_error`; that would also mean an
+    `OpenAICompatibleLLMClient` got constructed, which this pin forbids ("no LLM constructed").
+    """
+    monkeypatch.setenv("LLM_API_KEY", "test")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9")
+
+    rc = main(["fixtures/alerts/alert1.json", "--strong-model", "ghost"], llm=None)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "ghost" in lines[0]
     assert "Traceback" not in captured.err
 
 

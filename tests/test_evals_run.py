@@ -15,6 +15,9 @@ collection with `ModuleNotFoundError: No module named 'evals.run'`, not merely a
 
 m5 task-03 (PRD §6.4) adds `--strong-model` and its price-before-spend check: two more tests near
 the bottom of this module, past the m5 task-01 registry-lifecycle test.
+
+m5 task-03 fix-1 (review I1) adds one more: `--strong-model` equal to `--model` must fail as a
+clean `config_error`, not escape `TriagePipeline.__init__`'s bare `ValueError` as a traceback.
 """
 
 from __future__ import annotations
@@ -791,3 +794,36 @@ def test_unpriced_strong_model_exit_1_before_any_case(
     assert "ghost" in lines[0]
     assert "Traceback" not in captured.err
     assert list(output_dir.glob("*.json")) == []
+
+
+# --- m5 task-03 fix-1 (review I1): --strong-model equal to --model must not escape as a traceback
+
+
+def test_strong_model_equal_to_model_exit_1_config_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--model",
+            "fake-model",
+            "--strong-model",
+            "fake-model",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=FakeLLMClient([VALID_VERDICT_JSON]),
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert len(captured.err.splitlines()) == 1
+    assert captured.err.startswith("error: config_error:")
+    assert "Traceback" not in captured.err

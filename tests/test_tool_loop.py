@@ -20,6 +20,11 @@ touching a real tool's own behavior — those are pinned by tasks 02-05. `EchoTo
 task-01 N5 carry-over): they were byte-for-byte duplicated across this file,
 `tests/test_tool_loop_db.py` and `tests/test_tool_registry.py`. Documentation-range IPs only (PRD
 §1.4/CLAUDE.md).
+
+m5 task-03 fix-1 (review I2/I3) adds two more pins on the escalation outcome: the cheap tier's own
+`retried` flag surviving the `dataclasses.replace` an escalation stamps onto it, and
+`output_tokens`/`latency_ms` summing across both tiers exactly like `input_tokens`/`cost_usd`
+already did.
 """
 
 from __future__ import annotations
@@ -714,7 +719,29 @@ async def test_severity_escalation_runs_the_strong_model_over_the_same_conversat
     assert len(outcome.tool_calls) == 1  # the strong pass adds no tool calls
     assert outcome.input_tokens == 300  # 3 calls x 100 (tool turn + cheap final + strong)
     assert outcome.cost_usd == Decimal("0.000300")
+    assert outcome.output_tokens == 150  # 3 calls x 50
+    assert outcome.latency_ms == 15  # 3 calls x 5
     assert outcome.retried is False
+
+
+async def test_cheap_tier_retry_is_still_reported_after_an_escalation() -> None:
+    """`retried = cheap.retried or strong.retried`: a cheap-tier PRD §6.5 retry must survive the
+    `dataclasses.replace` that stamps the strong tier's verdict onto the outcome."""
+    fake = FakeLLMClient(["{}", VALID4, VALID4_STRONG])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    outcome = await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 3  # failed cheap + retried cheap + strong (first try)
+    assert outcome.retried is True  # the CHEAP tier retried; the strong tier did not
+    assert outcome.escalated_model is True
 
 
 async def test_low_confidence_escalates_without_tools(caplog: pytest.LogCaptureFixture) -> None:

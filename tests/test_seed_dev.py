@@ -13,6 +13,11 @@ own `asyncio.run`, which cannot nest inside pytest-asyncio's already-running loo
 `tests/conftest.py`); they count rows and inspect columns through the module-private psycopg
 helpers below rather than the async `tests.helpers` row counters, since `main()`'s own connection
 and this test's assertions must go through two independent connections anyway.
+
+m5 task-03 (PRD §6.4) adds `test_fake_path_never_routes_even_with_strong_model_set` (GREEN on
+arrival — the fake path's own `--live` gate already keeps routing off). m5 task-03 fix-1 (review
+I1) adds `test_live_with_strong_equal_to_cheap_exit_1`, RED until Part B lands the `ValueError`
+handling `--live` needs.
 """
 
 from __future__ import annotations
@@ -143,6 +148,28 @@ def test_seed_verdicts_match_golden_labels(
         assert severity == case.label.severity
         assert category == case.label.category
         assert escalate == case.label.escalate
+
+
+def test_fake_path_never_routes_even_with_strong_model_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_schema: tuple[str, str],
+    seed_dev: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without `--live`, routing must stay off no matter what `STRONG_MODEL` says: a canned
+    `FakeLLMClient` has no strong-tier reply scripted, so an escalation would exhaust its queue
+    (PRD §6.4, m5 task-03)."""
+    monkeypatch.setenv("STRONG_MODEL", "strong-x")
+    url, schema = tmp_schema
+
+    rc = seed_dev.main(["--database-url", url, "--schema", schema])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == "created=25 skipped=0 failed=0\n"
+    assert captured.err == ""
+    assert _count_table(url, schema, "alerts") == 25
+    assert _count_table(url, schema, "verdicts") == 25
 
 
 # --- failed triage counted, not fatal (DB, `llm=` seam) -----------------------------------------
@@ -347,6 +374,41 @@ def test_live_with_unpriced_model_exit_1(
     assert lines[0].startswith("error: config_error:")
     assert "MODEL_PRICES_JSON" in lines[0]
     assert "unpriced-model" in lines[0]
+
+
+def test_live_with_strong_equal_to_cheap_exit_1(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_schema: tuple[str, str],
+    seed_dev: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """m5 task-03 fix-1 (review I1): `--live` with `STRONG_MODEL == CHEAP_MODEL` (both priced, so
+    `OpenAICompatibleLLMClient.from_settings` itself is happy) must still fail as a clean
+    `config_error` — `TriagePipeline.__init__`'s own equal-id `ValueError` (raised from inside
+    `seed()`, after the first alert's `insert_alert`/commit) must never escape
+    `asyncio.run(seed(...))` as a traceback. A REAL, reachable `tmp_schema` is required here
+    (unlike the bogus `--database-url` other `--live` failure-path tests use): this failure fires
+    from inside `seed()`'s per-alert loop, after the first `insert_alert` already succeeded — an
+    unreachable database would surface as `error: database_error:` first and never exercise the
+    `ValueError` path this test pins."""
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    monkeypatch.setenv("CHEAP_MODEL", "fake-model")
+    monkeypatch.setenv("STRONG_MODEL", "fake-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+    url, schema = tmp_schema
+
+    rc = seed_dev.main(["--live", "--database-url", url, "--schema", schema])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
 
 
 # --- never referenced from compose (DB-less; no `seed_dev` fixture -> green on arrival) ---------
