@@ -134,7 +134,9 @@ bound gains the strong tier's two calls (v1.4). The M4 "first touch" carry-overs
   #   a non-empty strong model absent from MODEL_PRICES_JSON -> exit 1 `config_error` before any case runs (only when llm is None, like --model);
   #   every TriagePipeline gets strong_model=<value or None>, escalate_severity_gte/lt from settings; CaseResult(escalated=outcome.escalated_model)
   # scripts/seed_dev.py — `--live` passes strong_model=settings.strong_model or None + the thresholds; the fake path passes strong_model=None
-  #   (a canned fake has no strong reply scripted: routing must stay off there — pinned by the existing 25-row seed tests staying green)
+  #   (a canned fake has no strong reply scripted: routing must stay off there — pinned by
+  #   tests/test_seed_dev.py::test_fake_path_never_routes_even_with_strong_model_set, which exports STRONG_MODEL; the existing
+  #   25-row seed tests run with STRONG_MODEL unset and therefore cannot pin it — review PC1, fix-1)
   ```
 
   **PRD v1.4 (docs step, same commit):** §6.2 bound → "at most `(TOOL_LOOP_MAX_ITER + 4) × 3` LLM
@@ -226,7 +228,7 @@ Roles: the **test-author** writes Steps 1–2; the **implementer** does Steps 3�
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run pytest -q -rs tests/test_routing.py tests/test_tool_loop.py tests/test_tool_loop_db.py tests/test_tool_registry.py tests/test_triage_pipeline.py tests/test_triage_alert.py tests/test_scoring.py tests/test_evals_run.py tests/test_triage_one.py tests/test_seed_dev.py   # all pass, 0 skipped
 grep -c "class EchoTool" tests/*.py | grep -v ':0'                      # tests/helpers.py:1 only
-grep -n "strong_model\|escalate_" worker/triage.py | grep -c '"'         # no quoted model id or threshold literal in the pipeline
+grep -nE 'gpt-|claude-|o[0-9]-|>= ?[1-5]\b|< ?0\.[0-9]' worker/triage.py worker/routing.py ; echo "exit=$?"   # exit=1 — no model id or threshold literal in the pipeline/routing (the two ValueError message strings are not literals of either kind — review M2)
 uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
 ```
 
