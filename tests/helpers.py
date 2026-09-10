@@ -9,7 +9,9 @@ ingest and triage actually produce.
 m5 task-03 (the M4 task-01 "N5" carry-over) lifts `EchoTool`, `BoomTool`, `make_registry` and
 `minimal_alert` here from their three separate per-file copies in `tests/test_tool_loop.py`,
 `tests/test_tool_loop_db.py` and `tests/test_tool_registry.py` — a pure move, no behavior change
-(PRD §6.3, §6.4).
+(PRD §6.3, §6.4). The same task adds `verdict_json` and the `VALID1..VALID5`/`*_STRONG` two-tier
+routing literals (PRD §6.4) the routing test table names, built through `Verdict(...)
+.model_dump_json()` (never hand-written JSON) so every one is schema-valid by construction.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from sqlalchemy import func, select
 
 from core.models import AlertRow, AlertStatus, Base, VerdictRow
 from core.schemas.alert import SessionAlert
-from core.schemas.verdict import Verdict
+from core.schemas.verdict import Verdict, VerdictCategory
 from core.services.alerts import insert_alert, set_alert_status
 from core.signing import SIGNATURE_HEADER, sign_body
 from worker.store import ToolCallRecord, persist_verdict
@@ -38,6 +40,57 @@ if TYPE_CHECKING:
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "alerts"
 TEST_SECRET = "test-secret"  # matches conftest's `settings` fixture's `ingest_hmac_secret`
+
+
+def verdict_json(
+    *,
+    severity: int,
+    category: VerdictCategory,
+    confidence: float,
+    escalate: bool,
+    strong: bool = False,
+) -> str:
+    """One canonical `Verdict`, serialized through `model_dump_json()` (m5 task-03 rule 3: never
+    hand-written verdict JSON, so every literal below is schema-valid by construction).
+
+    `strong=True` prefixes `reasoning` with `"strong tier: "` (rule 7) so a strong-model reply's
+    text is always distinguishable from its cheap counterpart's in an assertion — e.g. proving
+    the cheap verdict was never appended to the strong call's conversation.
+    """
+    reasoning = "synthetic test reasoning citing session evidence."
+    if strong:
+        reasoning = f"strong tier: {reasoning}"
+    return Verdict(
+        severity=severity,
+        category=category,
+        confidence=confidence,
+        reasoning=reasoning,
+        recommended_action="synthetic recommended action, distinct from the reasoning text.",
+        escalate=escalate,
+    ).model_dump_json()
+
+
+# The two-tier routing literals named in the m5 task-03 brief's Interfaces → test table preamble:
+# built once here (never hand-written JSON) so every test file that needs one imports it instead
+# of re-deriving its exact severity/category/confidence tuple.
+VALID1 = verdict_json(severity=1, category="scanning", confidence=0.9, escalate=False)
+VALID2 = verdict_json(severity=2, category="brute_force", confidence=0.99, escalate=False)
+VALID3_LOW = verdict_json(severity=3, category="reconnaissance", confidence=0.2, escalate=False)
+VALID4 = verdict_json(severity=4, category="successful_intrusion", confidence=0.9, escalate=True)
+VALID5 = verdict_json(severity=5, category="malware_delivery", confidence=0.95, escalate=True)
+
+VALID1_STRONG = verdict_json(
+    severity=1, category="scanning", confidence=0.9, escalate=False, strong=True
+)
+VALID2_STRONG = verdict_json(
+    severity=2, category="brute_force", confidence=0.99, escalate=False, strong=True
+)
+VALID3_STRONG = verdict_json(
+    severity=3, category="reconnaissance", confidence=0.2, escalate=False, strong=True
+)
+VALID4_STRONG = verdict_json(
+    severity=4, category="successful_intrusion", confidence=0.9, escalate=True, strong=True
+)
 
 
 def fixture_body(name: str = "alert4") -> bytes:

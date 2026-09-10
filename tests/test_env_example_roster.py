@@ -6,6 +6,11 @@ direction.
 
 Both tests read the real, tracked `.env.example` (no fixture, no mock: this is the file
 `git diff` sees) and are expected **green on arrival** — M1 adds no `Settings` field.
+
+m5 task-03 (PRD §6.4) graduates `ESCALATE_SEVERITY_GTE`/`ESCALATE_CONFIDENCE_LT` out of
+`_SCHEDULED`: `.env.example` already carries both uncommented (m5 task-01/02), so
+`test_env_example_has_no_unknown_settings_lines` goes RED the moment they leave the allowlist,
+and stays RED until `core.config.Settings` gains the matching fields.
 """
 
 from __future__ import annotations
@@ -23,11 +28,11 @@ _ENV_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / ".env.example"
 # appearing in .env.example, or a new uncommented name appears that isn't listed here, that is a
 # real drift the second test below must catch. A name graduates OUT of this set in the same
 # commit its field lands on `Settings` (m2 task-01 fix r1: `DATABASE_URL` graduated when
-# `core.config.Settings.database_url` shipped; m5 task-01: `REDIS_URL` graduates the same way) —
-# a stale entry here would silently stop guarding against a typo in that name.
+# `core.config.Settings.database_url` shipped; m5 task-01: `REDIS_URL` graduates the same way;
+# m5 task-03: `ESCALATE_SEVERITY_GTE`/`ESCALATE_CONFIDENCE_LT` graduate when
+# `escalate_severity_gte`/`escalate_confidence_lt` ship) — a stale entry here would silently
+# stop guarding against a typo in that name.
 _SCHEDULED = {
-    "ESCALATE_SEVERITY_GTE",
-    "ESCALATE_CONFIDENCE_LT",
     "DAILY_TOKEN_BUDGET",
     "ADMIN_TOKEN",
     "RETRIAGE_PER_DAY",

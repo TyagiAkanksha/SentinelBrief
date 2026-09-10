@@ -25,6 +25,11 @@ block): the load-run-persist-and-commit body that used to be inline in `triage_a
 pins above, unchanged). Unlike `triage_alert`, a failing `triage_attempt` never marks the alert
 `failed` itself — it rolls back and RAISES, because deciding retry-vs-fail from there is the job's
 job (`worker/jobs.py`, `worker/retry.py`), not the attempt's.
+
+m5 task-03 (PRD §6.4, §5) adds one more direct pin: `persist_verdict`'s `model_primary` /
+`model_final` (= `VerdictRow.model_final`, `outcome.model`) / `escalated_model` columns actually
+land on the row when `triage_attempt` runs a pipeline with routing turned on, both when it
+escalates and when it doesn't.
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ from core.errors import LLMCallError, NotFoundError, VerdictValidationError
 from core.models import AlertRow, VerdictRow
 from core.services.alerts import insert_alert
 from tests.fakes import FakeLLMClient
-from tests.helpers import load_alert
+from tests.helpers import VALID1, VALID4, VALID4_STRONG, load_alert
 from worker.triage import TriagePipeline
 
 _VALID_VERDICT_JSON = (
@@ -240,3 +245,78 @@ async def test_triage_attempt_rolls_back_and_raises_on_failure(
             )
         ).scalar_one_or_none()
     assert row_b is None
+
+
+async def test_escalated_attempt_persists_both_models(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Routing on, escalated: the persisted row carries the cheap id as `model_primary`, the
+    strong id as `model_final`, and `escalated_model=True` — tokens summed across both tiers
+    (PRD §6.4, §5)."""
+    alert = load_alert(session_id="escalated-attempt-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    llm = FakeLLMClient([VALID4, VALID4_STRONG])
+    pipeline = TriagePipeline(
+        llm=llm,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    attempt = await pipeline.triage_attempt(db_session, result.alert_id)
+
+    assert attempt.status == "triaged"
+    assert attempt.outcome is not None
+    assert attempt.outcome.escalated_model is True
+
+    async with db_session_factory() as fresh_session:
+        verdict = (
+            await fresh_session.execute(
+                select(VerdictRow).where(VerdictRow.alert_id == result.alert_id)
+            )
+        ).scalar_one()
+    assert verdict.model_primary == "fake-model"
+    assert verdict.model_final == "strong-model"
+    assert verdict.escalated_model is True
+    assert verdict.input_tokens == 200  # 2 calls x 100 (cheap + strong)
+
+
+async def test_non_escalated_attempt_persists_the_same_model_twice(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Routing on, NOT escalated (the cheap verdict clears neither threshold): the persisted row
+    still carries `model_primary == model_final == the cheap id` and `escalated_model=False`,
+    same as routing being off entirely (PRD §6.4)."""
+    alert = load_alert(session_id="non-escalated-attempt-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    llm = FakeLLMClient([VALID1])
+    pipeline = TriagePipeline(
+        llm=llm,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    attempt = await pipeline.triage_attempt(db_session, result.alert_id)
+
+    assert attempt.status == "triaged"
+    assert attempt.outcome is not None
+    assert attempt.outcome.escalated_model is False
+
+    async with db_session_factory() as fresh_session:
+        verdict = (
+            await fresh_session.execute(
+                select(VerdictRow).where(VerdictRow.alert_id == result.alert_id)
+            )
+        ).scalar_one()
+    assert verdict.model_primary == "fake-model"
+    assert verdict.model_final == "fake-model"
+    assert verdict.escalated_model is False

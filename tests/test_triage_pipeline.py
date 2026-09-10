@@ -6,6 +6,10 @@ CONVENTIONS.md §13 / `.claude/rules/worker.md` ("retry exactly once with the va
 appended; then raise `VerdictValidationError(attempts=2, ...)`; `LLMCallError` is not retried
 here"). Uses `tests.fakes.FakeLLMClient` — the only LLM double in the suite — never a hand-rolled
 mock of our own code.
+
+m5 task-03 (PRD §6.4) adds one routing pin: with `strong_model=None` (the default), routing is
+off and this module's own pre-existing tests above stay byte-for-byte unchanged — the mechanical
+definition of "unchanged" the task-03 brief requires.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from core.llm import LLMUsage, parse_structured
 from core.schemas.alert import SessionAlert
 from core.schemas.verdict import Verdict
 from tests.fakes import FakeLLMClient
+from tests.helpers import VALID5
 from worker.triage import RETRY_INSTRUCTION, TriageOutcome, TriagePipeline
 
 # The task brief's fixed valid-verdict example, reused across every test that needs one.
@@ -174,3 +179,18 @@ async def test_run_uses_configured_model_and_prompt_version() -> None:
     assert fake.calls[0].model == "fake-model"
     assert outcome.model == "fake-model"
     assert outcome.prompt_version == "triage-v1"
+
+
+async def test_no_strong_model_never_escalates_even_at_severity_5() -> None:
+    """With `strong_model` left at its default (`None`), routing is off — even a severity-5,
+    `escalate=True` cheap verdict (`VALID5`) never triggers a second call (PRD §6.4): today's M4
+    behavior, byte for byte."""
+    fake = FakeLLMClient([VALID5])
+    pipeline = TriagePipeline(llm=fake, model="fake-model", prompt_version="triage-v1")
+
+    outcome = await pipeline.run(_minimal_alert())
+
+    assert len(fake.calls) == 1
+    assert outcome.model == "fake-model"
+    assert outcome.model_primary is None
+    assert outcome.escalated_model is False

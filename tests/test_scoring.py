@@ -10,6 +10,10 @@ All nine tests build `CaseResult` values by hand via the `_label`/`_verdict`/`_r
 below -- no golden-set file, no DB, no LLM. `evals.scoring` does not exist yet, so every test in
 this module is RED at collection with `ModuleNotFoundError: No module named 'evals.scoring'`, not
 merely at first use.
+
+m5 task-03 (PRD §6.4) adds `CaseResult.escalated` and `RunMetrics.escalation_rate`: this module's
+own tests go RED again on `CaseResult(...)`/`RunMetrics(...)` rejecting the new `escalated`/
+`escalation_rate` keywords, until those fields exist.
 """
 
 from __future__ import annotations
@@ -58,8 +62,13 @@ def _result(
     cost: str = "0.000100",
     latency: int = 10,
     error: str | None = None,
+    escalated: bool = False,
 ) -> CaseResult:
-    """Build a `CaseResult` with a unique `case_id` and fixed token counts (irrelevant here)."""
+    """Build a `CaseResult` with a unique `case_id` and fixed token counts (irrelevant here).
+
+    `escalated` defaults to `False` (m5 task-03): every pre-existing call site above keeps
+    producing the exact same `CaseResult` it always did, byte for byte.
+    """
     return CaseResult(
         case_id=f"case-{next(_case_id_counter)}",
         label=label,
@@ -69,6 +78,7 @@ def _result(
         cost_usd=Decimal(cost),
         latency_ms=latency,
         error=error,
+        escalated=escalated,
     )
 
 
@@ -317,6 +327,25 @@ def test_score_empty_results_returns_zeros() -> None:
     assert metrics.latency_p95_ms == 0
 
 
+def test_escalation_rate_counts_escalated_over_all_cases() -> None:
+    """4 results: 2 escalated, 1 non-escalated success, 1 failed case (never counted as
+    escalated, even though its own label is positively escalated) -> 2/4 = 0.5 (m5 task-03, PRD
+    §6.4). `n_cases == 0` -> `0.0`, not a `ZeroDivisionError`. `escalation_rate` sits immediately
+    after `critical_rec` in `COLUMNS` — the abbreviated header string `format_table` actually
+    renders, not the `RunMetrics.critical_recall` field name.
+    """
+    escalated_a = _result(_label(4), _verdict(4), escalated=True)
+    escalated_b = _result(_label(5), _verdict(5), escalated=True)
+    not_escalated = _result(_label(1), _verdict(1), escalated=False)
+    failed = _result(_label(4, esc=True), None, error="llm timeout", escalated=False)
+
+    metrics = score([escalated_a, escalated_b, not_escalated, failed])
+
+    assert metrics.escalation_rate == 0.5
+    assert score([]).escalation_rate == 0.0
+    assert COLUMNS.index("escalation_rate") == COLUMNS.index("critical_rec") + 1
+
+
 def test_escalate_recall_zero_when_no_labeled_positives() -> None:
     """escalate_recall's denominator-is-zero branch (t2-M2): no case in the run has
     `label.escalate == True` (`labeled_positive == 0`), so recall must be `0.0` by definition,
@@ -334,7 +363,8 @@ def test_escalate_recall_zero_when_no_labeled_positives() -> None:
 def test_format_table_one_row_per_result_with_headers() -> None:
     """`format_table` renders a markdown table: header = `COLUMNS`, a separator line, then one
     body line per `ResultRow`. Rates render at 2 dp (`0.50`), costs at 6 dp (`0.000123`), and
-    latencies as plain ints (`12`).
+    latencies as plain ints (`12`). Re-pinned at m5 task-03 for the `escalation_rate` column,
+    rendered like the other ratios immediately after `critical_rec`.
     """
     row_a = ResultRow(
         prompt_version="triage-v1",
@@ -348,6 +378,7 @@ def test_format_table_one_row_per_result_with_headers() -> None:
             escalate_precision=0.60,
             escalate_recall=0.40,
             critical_recall=0.90,
+            escalation_rate=0.20,
             cost_mean_usd=Decimal("0.000123"),
             cost_p95_usd=Decimal("0.000456"),
             cost_total_usd=Decimal("0.001230"),
@@ -367,6 +398,7 @@ def test_format_table_one_row_per_result_with_headers() -> None:
             escalate_precision=1.0,
             escalate_recall=1.0,
             critical_recall=0.0,
+            escalation_rate=1.0,
             cost_mean_usd=Decimal("0.000001"),
             cost_p95_usd=Decimal("0.000002"),
             cost_total_usd=Decimal("0.000005"),
@@ -399,6 +431,7 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "0.60",
         "0.40",
         "0.90",
+        "0.20",
         "0.000123",
         "0.000456",
         "0.001230",
@@ -418,6 +451,7 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "1.00",
         "1.00",
         "0.00",
+        "1.00",
         "0.000001",
         "0.000002",
         "0.000005",

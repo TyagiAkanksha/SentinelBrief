@@ -1,4 +1,7 @@
-"""Pins the PRD §6.3 tool loop in `worker.triage.TriagePipeline.run` (m4 task-06).
+"""Pins the PRD §6.3 tool loop in `worker.triage.TriagePipeline.run` (m4 task-06); m5 task-03 adds
+the two-tier routing constructor bounds and the strong-model second pass over the SAME conversation
+(PRD §6.4) to this module, since routing sits directly on top of the tool loop the rest of this
+file pins.
 
 Without a `tools=` registry `run` is byte-for-byte the M3 `complete_structured` pipeline
 (`tests/test_triage_pipeline.py` stays untouched and green). With one, `run` alternates
@@ -33,12 +36,25 @@ import pytest
 from pydantic import SecretStr
 
 from core.cache import InMemoryTTLCache
-from core.config import Settings
-from core.errors import LLMCallError, VerdictValidationError
+from core.config import ModelPrice, Settings
+from core.errors import ConfigError, LLMCallError, VerdictValidationError
 from core.llm import LLMUsage
 from core.schemas.alert import SessionAlert
 from tests.fakes import FakeLLMClient, ScriptedToolCall
-from tests.helpers import BoomTool, EchoTool, make_registry, minimal_alert
+from tests.helpers import (
+    VALID1,
+    VALID1_STRONG,
+    VALID2,
+    VALID2_STRONG,
+    VALID3_LOW,
+    VALID3_STRONG,
+    VALID4,
+    VALID4_STRONG,
+    BoomTool,
+    EchoTool,
+    make_registry,
+    minimal_alert,
+)
 from worker.outcome import TriageOutcome
 from worker.prompts import ALERT_DATA_BEGIN, ALERT_DATA_END
 from worker.tools import LiveToolRecorder, ToolContext, unavailable
@@ -609,3 +625,270 @@ async def test_build_registry_uses_the_supplied_cache_and_http_client() -> None:
     assert execution.result.get("unavailable") is not True
     assert len(recorded_sets) == 1
     assert recorded_sets[0][0] == "abuseipdb:203.0.113.10"
+
+
+# --- two-tier routing (m5 task-03, PRD §6.4): constructor bounds ------------------------------
+
+
+def test_strong_model_requires_thresholds_and_a_different_id() -> None:
+    # `strong_model` given, no thresholds at all -> ValueError.
+    with pytest.raises(ValueError):
+        TriagePipeline(
+            llm=FakeLLMClient([]),
+            model="fake-model",
+            prompt_version="triage-v1",
+            strong_model="strong-model",
+        )
+
+    # `strong_model` given, only one threshold -> still ValueError (both are required together).
+    with pytest.raises(ValueError):
+        TriagePipeline(
+            llm=FakeLLMClient([]),
+            model="fake-model",
+            prompt_version="triage-v1",
+            strong_model="strong-model",
+            escalate_severity_gte=4,
+        )
+
+    # `strong_model == model`, thresholds present -> ValueError (isolates the equal-id check from
+    # the "thresholds required" check above).
+    with pytest.raises(ValueError):
+        TriagePipeline(
+            llm=FakeLLMClient([]),
+            model="fake-model",
+            prompt_version="triage-v1",
+            strong_model="fake-model",
+            escalate_severity_gte=4,
+            escalate_confidence_lt=0.6,
+        )
+
+    # Thresholds given, no `strong_model` -> constructs fine; routing stays off.
+    TriagePipeline(
+        llm=FakeLLMClient([]),
+        model="fake-model",
+        prompt_version="triage-v1",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+
+# --- two-tier routing: the strong pass over the SAME cheap conversation -----------------------
+
+
+async def test_severity_escalation_runs_the_strong_model_over_the_same_conversation() -> None:
+    fake = FakeLLMClient([S, VALID4, VALID4_STRONG])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        tools=make_registry(EchoTool()),
+        tool_loop_max_iter=6,
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    outcome = await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 3
+    tool_turn_call, cheap_final_call, strong_call = fake.calls
+    assert strong_call.model == "strong-model"
+    assert strong_call.tools is None
+    # The strong call sees EXACTLY the conversation the cheap final call saw: same system prompt,
+    # delimited summary, tool-call turn and delimited tool result (`FakeCall` snapshots the list
+    # per call, so this is exact list equality, not a subset/prefix check).
+    assert strong_call.messages == cheap_final_call.messages
+    # The cheap verdict's own text (VALID4's reasoning) is never appended ahead of the strong
+    # call (no anchoring) — `VALID4`'s category is likewise absent from every outgoing message.
+    for message in strong_call.messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            assert "synthetic test reasoning citing session evidence." not in content
+            assert "successful_intrusion" not in content
+
+    assert outcome.verdict.reasoning.startswith("strong tier: ")
+    assert outcome.model == "strong-model"
+    assert outcome.model_primary == "fake-model"
+    assert outcome.escalated_model is True
+    assert len(outcome.tool_calls) == 1  # the strong pass adds no tool calls
+    assert outcome.input_tokens == 300  # 3 calls x 100 (tool turn + cheap final + strong)
+    assert outcome.cost_usd == Decimal("0.000300")
+    assert outcome.retried is False
+
+
+async def test_low_confidence_escalates_without_tools(caplog: pytest.LogCaptureFixture) -> None:
+    fake = FakeLLMClient([VALID3_LOW, VALID3_STRONG])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    with caplog.at_level(logging.INFO):
+        outcome = await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 2
+    assert fake.calls[1].model == "strong-model"
+    assert fake.calls[1].tools is None
+    assert outcome.escalated_model is True
+    assert outcome.model_primary == "fake-model"
+    info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("reason=confidence" in message for message in info_messages)
+
+
+async def test_no_escalation_below_both_thresholds() -> None:
+    fake = FakeLLMClient([VALID1])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    outcome = await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 1
+    assert outcome.escalated_model is False
+    assert outcome.model_primary is None
+    assert outcome.model == "fake-model"
+
+
+async def test_strong_tier_validation_failure_is_retried_once() -> None:
+    fake = FakeLLMClient([VALID4, "{}", VALID4_STRONG])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    outcome = await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 3
+    assert outcome.retried is True
+    assert outcome.model == "strong-model"
+    assert outcome.escalated_model is True
+    # The failed strong reply's usage still counts (StructuredOutputError carries it): cheap (100)
+    # + failed strong attempt (100) + retried strong success (100).
+    assert outcome.input_tokens == 300
+
+
+async def test_strong_tier_failing_twice_raises_verdict_validation_error() -> None:
+    fake = FakeLLMClient([VALID4, "{}", "{}"])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    # No fallback to the cheap verdict: the failure propagates instead of `run` returning `cheap`.
+    with pytest.raises(VerdictValidationError) as exc_info:
+        await pipeline.run(minimal_alert())
+
+    assert exc_info.value.attempts == 2
+    assert len(fake.calls) == 3
+
+
+async def test_strong_tier_llm_call_error_propagates() -> None:
+    fake = FakeLLMClient([VALID4, LLMCallError("x")])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    with pytest.raises(LLMCallError):
+        await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 2
+
+
+async def test_cap_path_then_escalation_keeps_the_final_instruction() -> None:
+    fake = FakeLLMClient([S, VALID4, VALID4_STRONG])
+    pipeline = TriagePipeline(
+        llm=fake,
+        model="fake-model",
+        prompt_version="triage-v1",
+        tools=make_registry(EchoTool()),
+        tool_loop_max_iter=1,
+        strong_model="strong-model",
+        escalate_severity_gte=4,
+        escalate_confidence_lt=0.6,
+    )
+
+    outcome = await pipeline.run(minimal_alert())
+
+    assert len(fake.calls) == 3  # 1 scripted turn + 1 forced final (cheap) + 1 strong
+    strong_call = fake.calls[2]
+    assert strong_call.model == "strong-model"
+    final_instruction_occurrences = sum(
+        1 for message in strong_call.messages if message.get("content") == FINAL_VERDICT_INSTRUCTION
+    )
+    assert final_instruction_occurrences == 1
+    assert outcome.escalated_model is True
+
+
+async def test_from_settings_wires_strong_model_and_thresholds() -> None:
+    """Two runs, each isolating one branch of `should_escalate` by construction: `VALID2`
+    (severity 2, confidence 0.99) only clears `escalate_severity_gte=2`; `VALID1` (severity 1,
+    confidence 0.9) only clears `escalate_confidence_lt=0.95`. Both escalating proves each
+    threshold was actually wired from `Settings`, not left at the defaults (which neither verdict
+    would clear: PRD §6.4 defaults are severity >= 4 / confidence < 0.6)."""
+    priced = {
+        "fake-model": ModelPrice(input_per_mtok=Decimal("0"), output_per_mtok=Decimal("0")),
+        "strong-x": ModelPrice(input_per_mtok=Decimal("0"), output_per_mtok=Decimal("0")),
+    }
+    settings = Settings(
+        cheap_model="fake-model",
+        strong_model="strong-x",
+        escalate_severity_gte=2,
+        escalate_confidence_lt=0.95,
+        model_prices_json=priced,
+    )
+
+    fake_severity = FakeLLMClient([VALID2, VALID2_STRONG])
+    pipeline_severity = TriagePipeline.from_settings(settings, llm=fake_severity)
+    assert pipeline_severity.strong_model == "strong-x"
+
+    outcome_severity = await pipeline_severity.run(minimal_alert())
+
+    assert outcome_severity.escalated_model is True
+    assert outcome_severity.model_primary == "fake-model"
+    assert fake_severity.calls[1].model == "strong-x"
+
+    fake_confidence = FakeLLMClient([VALID1, VALID1_STRONG])
+    pipeline_confidence = TriagePipeline.from_settings(settings, llm=fake_confidence)
+
+    outcome_confidence = await pipeline_confidence.run(minimal_alert())
+
+    assert outcome_confidence.escalated_model is True
+    assert outcome_confidence.model_primary == "fake-model"
+    assert fake_confidence.calls[1].model == "strong-x"
+
+
+def test_from_settings_rejects_strong_equal_to_cheap() -> None:
+    settings = Settings(
+        cheap_model="fake-model",
+        strong_model="fake-model",
+        model_prices_json={
+            "fake-model": ModelPrice(input_per_mtok=Decimal("0"), output_per_mtok=Decimal("0"))
+        },
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        TriagePipeline.from_settings(settings, llm=FakeLLMClient([]))
+
+    assert "STRONG_MODEL" in str(exc_info.value)

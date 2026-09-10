@@ -12,6 +12,9 @@ Every test builds its own tiny golden set from `fixtures/alerts/alert*.json` via
 content, not test fixture material) and injects `tests.fakes.FakeLLMClient` so nothing here
 touches the network. `evals.run` does not exist yet, so every test in this module is RED at
 collection with `ModuleNotFoundError: No module named 'evals.run'`, not merely at first use.
+
+m5 task-03 (PRD §6.4) adds `--strong-model` and its price-before-spend check: two more tests near
+the bottom of this module, past the m5 task-01 registry-lifecycle test.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from evals.golden import GoldenCase, GoldenLabel
 from evals.run import main, run_golden
 from evals.scoring import COLUMNS, CaseResult, RunMetrics
 from tests.fakes import FakeLLMClient
+from tests.helpers import VALID4, VALID4_STRONG
 from worker.triage import TriagePipeline
 
 FIXTURES_DIR = Path("fixtures/alerts")
@@ -704,3 +708,86 @@ def test_main_closes_the_injected_http_client_on_success_and_failure(tmp_path: P
 
     assert rc_failed == 1
     assert failing_client.is_closed
+
+
+# --- m5 task-03: --strong-model, PRD §6.4 ------------------------------------------------------
+
+
+def test_strong_model_flag_flows_to_the_pipeline_and_the_table(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """3 golden cases, `--concurrency 1` so the fake's queue order is deterministic (rule 9): case
+    0 runs to completion (cheap `VALID4`, then the strong pass `VALID4_STRONG` — 2 calls) before
+    case 1 starts, then case 2 (1 non-escalating call each) — 1 of 3 cases escalates ->
+    `escalation_rate == 1/3`, rendered `"0.33"` like every other ratio column.
+    """
+    golden_path = _write_golden(
+        tmp_path / "golden.jsonl",
+        [_golden_case("alert1.json"), _golden_case("alert2.json"), _golden_case("alert3.json")],
+    )
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([VALID4, VALID4_STRONG, VALID_VERDICT_JSON, VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--strong-model",
+            "strong-model",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+    assert fake.calls[1].model == "strong-model"
+
+    lines = captured.out.rstrip("\n").splitlines()
+    body_cells = [cell.strip() for cell in lines[2].strip("|").split("|")]
+    assert body_cells[COLUMNS.index("escalation_rate")] == "0.33"
+
+
+def test_unpriced_strong_model_exit_1_before_any_case(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mirrors `test_main_exit_1_on_unpriced_model_flag_before_any_case` (C1) for `--strong-model`:
+    the real-client path (`llm=None`) must fail as `config_error` naming the unpriced id, before
+    any case runs — `CHEAP_MODEL` stays priced (the autouse fixture), only `--strong-model ghost`
+    is absent from `MODEL_PRICES_JSON`.
+    """
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--strong-model",
+            "ghost",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ]
+        # no llm= kwarg: exercises the real OpenAICompatibleLLMClient.from_settings path.
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "ghost" in lines[0]
+    assert "Traceback" not in captured.err
+    assert list(output_dir.glob("*.json")) == []

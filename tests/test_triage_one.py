@@ -8,6 +8,9 @@ document on success (exit 0), a single `error: <code>: <message>` line on stderr
 these tests never touch the network (CONVENTIONS.md §10); the config-error test passes `llm=None`
 so `main` builds the real client via `OpenAICompatibleLLMClient.from_settings`, which fails fast
 on the empty `CHEAP_MODEL` before any network call.
+
+m5 task-03 (PRD §6.4) adds `--strong-model` and the two routing fields the output JSON gains
+(`model_primary`, `escalated_model`) — present on every run, not only an escalating one.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import pytest
 
 from core.errors import LLMCallError
 from tests.fakes import FakeLLMClient
+from tests.helpers import VALID4, VALID4_STRONG
 from worker.triage_one import main
 
 # The task brief's fixed valid-verdict example, redefined locally (tests/test_triage_pipeline.py
@@ -78,6 +82,8 @@ def test_prints_verdict_json_exit_zero(capsys: pytest.CaptureFixture[str]) -> No
     assert set(out.keys()) == {
         "verdict",
         "model",
+        "model_primary",
+        "escalated_model",
         "prompt_version",
         "input_tokens",
         "output_tokens",
@@ -307,3 +313,33 @@ def test_model_flag_overrides_default(capsys: pytest.CaptureFixture[str]) -> Non
     out = json.loads(captured.out)
     assert out["model"] == "other-model"
     assert fake.calls[0].model == "other-model"
+
+
+# --- m5 task-03: --strong-model, PRD §6.4 -------------------------------------------------------
+
+
+def test_strong_model_flag_escalates_and_prints_routing_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake = FakeLLMClient([VALID4, VALID4_STRONG])
+
+    rc = main(["fixtures/alerts/alert1.json", "--strong-model", "strong-model"], llm=fake)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    out = json.loads(captured.out)
+    assert out["model_primary"] == "fake-model"
+    assert out["escalated_model"] is True
+    assert out["model"] == "strong-model"
+
+    # Without the flag, and STRONG_MODEL unset (the autouse fixture clears it): routing stays
+    # off, so `escalated_model` is false regardless of the verdict's own severity/confidence.
+    fake_no_strong = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc_no_strong = main(["fixtures/alerts/alert1.json"], llm=fake_no_strong)
+
+    captured_no_strong = capsys.readouterr()
+    assert rc_no_strong == 0
+    out_no_strong = json.loads(captured_no_strong.out)
+    assert out_no_strong["escalated_model"] is False
+    assert out_no_strong["model_primary"] == "fake-model"
