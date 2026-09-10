@@ -61,7 +61,8 @@ never actually trips.
 - Modify: `worker/jobs.py`, `worker/triage.py`, `worker/main.py` (`max_tries`),
   `core/queue.py` (`VERDICT_CREATED_CHANNEL`), `core/config.py`, `.env.example`,
   `CONVENTIONS.md` §4 (third carve-out), `PRD.md` (§6.2 wording + `Version: 1.4` header + §15
-  entry)
+  entry), `.claude/rules/worker.md` (:22 the retries land here; :24-25 the attempt rolls back
+  and raises, the job decides — review M3/P3)
 
 ## Interfaces
 
@@ -143,8 +144,10 @@ never actually trips.
       #     if decision.action == "retry":
       #         logger.warning("triage job retry alert_id=%s job_id=%s try=%d/%d reason=%s defer_s=%.1f", alert_id, job_id, job_try, max_tries, decision.reason, decision.defer_s)
       #         raise Retry(defer=decision.defer_s) from exc
-      #     log_call = logger.warning if isinstance(exc, SentinelBriefError) else logger.error       # unexpected families keep their traceback
-      #     log_call("triage job failed alert_id=%s job_id=%s try=%d/%d reason=%s", ..., exc_info=not isinstance(exc, SentinelBriefError))
+      #     log_call = logger.warning if isinstance(exc, SentinelBriefError) else logger.error       # expected families WARNING, unexpected ERROR
+      #     log_call("triage job failed alert_id=%s job_id=%s try=%d/%d reason=%s chain=%s", ..., _exc_chain(exc))
+      #         # NEVER exc_info: a traceback renders str(exc), which may embed attacker-derived text (PRD §10.6; review I1, ruling R9).
+      #         # _exc_chain = the exception-class names along __cause__/__context__ (≤ 5), e.g. "RuntimeError<-ValueError".
       #     await mark_alert_failed(factory, alert_uuid)                     # its own fresh session + commit; if THIS raises, the exception propagates,
       #     return "failed"                                                  #   ARQ records the job as failed and the alert rests `pending` — the one documented residual
       # if attempt.status == "triaged" and attempt.verdict_id is not None and attempt.outcome is not None:
@@ -165,7 +168,10 @@ never actually trips.
 
   **PRD v1.4 amendment (docs step):** §6.2 second paragraph, "the job itself is retried up to 3
   times (M5)" → "the job is attempted at most `TRIAGE_JOB_MAX_TRIES` = 3 times in total — the first
-  run plus two retries with exponential backoff (M5)"; `Version: 1.4` in the header; §15 gains
+  run plus two retries with exponential backoff (M5)"; the first paragraph's "On unrecoverable
+  failure after 3 retries with backoff" → "On unrecoverable failure after `TRIAGE_JOB_MAX_TRIES`
+  total attempts with exponential backoff"; the second paragraph's tail "times three job
+  retries" → "times three total attempts" (review M1/P2); `Version: 1.4` in the header; §15 gains
   `**v1.4 — <date>.** M5 build-time amendment; no scope change.` with a bullet for this wording
   (task-03 appends its own bullet to the same entry).
 
@@ -204,6 +210,11 @@ call `triage_alert_job` directly put a fake Redis (`publish` recorded or raising
 | `triage_attempt` commits | `tests/test_triage_alert.py::test_triage_attempt_returns_verdict_id_and_commits` | `AttemptResult(status="triaged", verdict_id=<uuid>, outcome=<TriageOutcome>)`; a fresh session sees the verdict row with that id |
 | `triage_alert` unchanged | `tests/test_triage_alert.py` (existing four pins) | still green — the M2 contract stands |
 | task-01 file re-pinned | `tests/test_worker_job.py::test_job_failure_marks_the_alert_failed` → `…_after_max_tries` | now scripts three `LLMCallError`s and asserts `failed`, `jobs_retried == 2` (the single-attempt assertion is deleted) |
+| no traceback / no message text (review I1, I4; fix-1) | `tests/test_worker_job_retry.py::test_unexpected_exception_retries_then_fails_with_the_class_logged` (+ marker), `::test_terminal_sentinelbrief_error_is_a_warning_without_traceback_or_message_text` | the terminal record is WARNING for a `SentinelBriefError` and ERROR otherwise, `exc_info is None` on both, carries `reason=` and `chain=<Class>`; a `RuntimeError("PAYLOAD-MARKER-7f3a")` never reaches `caplog.text`; `"boom"` appears in no record. Mutants K (always ERROR), L (always `exc_info`), G (`str(exc)` appended) all die |
+| rollback observable (review I2; fix-1) | `tests/test_triage_alert.py::test_triage_attempt_rolls_back_and_raises_on_failure` | after the raise: `not db_session.in_transaction() or not db_session.new`, then `commit()` on the same session persists nothing (mutant E — no rollback — fails it) |
+| backoff reaches ARQ (review I3; fix-1) | `tests/test_worker_job_retry.py::test_retry_defers_by_the_computed_backoff` | direct call, `job_try=2`, base 2.0 → `pytest.raises(Retry)` with `defer_score == 4000` (mutant N — `Retry(defer=0)` — fails it) |
+| cancellation propagates (review I5; fix-1) | `tests/test_worker_job_retry.py::test_cancellation_propagates_and_is_never_turned_into_failed` | a local stub LLM raising `asyncio.CancelledError` on the last try → the error propagates and the alert stays `pending` (mutant B — `except BaseException` — fails it) |
+| OSError publish arm (review M5; fix-1) | `tests/test_publish.py::test_publish_failure_is_a_warning_not_a_raise[…]` | parametrized over `ConnectionError("down")` and `OSError("down")` → `exc=ConnectionError` / `exc=OSError` (mutant P fails it) |
 
 ## Steps (TDD)
 
