@@ -11,9 +11,12 @@ is preserved and always tool-less. Tokens/cost/LLM latency are summed over every
 execution time never leaks into `latency_ms` (CONVENTIONS.md §10: the LLM-latency seam is
 `verdicts.latency_ms`'s own meaning since M0).
 
-In-file `Tool` stubs (`EchoTool`, `SlowEchoTool`, `FailingLookup`, `BoomTool`, `CtxSpyTool`) drive
-the loop without touching a real tool's own behavior — those are pinned by tasks 02-05.
-Documentation-range IPs only (PRD §1.4/CLAUDE.md).
+In-file `Tool` stubs (`SlowEchoTool`, `FailingLookup`, `CtxSpyTool`) drive the loop without
+touching a real tool's own behavior — those are pinned by tasks 02-05. `EchoTool`, `BoomTool`,
+`make_registry` and `minimal_alert` moved to `tests/helpers.py` at m5 task-03 (a pure move, M4
+task-01 N5 carry-over): they were byte-for-byte duplicated across this file,
+`tests/test_tool_loop_db.py` and `tests/test_tool_registry.py`. Documentation-range IPs only (PRD
+§1.4/CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -35,9 +38,10 @@ from core.errors import LLMCallError, VerdictValidationError
 from core.llm import LLMUsage
 from core.schemas.alert import SessionAlert
 from tests.fakes import FakeLLMClient, ScriptedToolCall
+from tests.helpers import BoomTool, EchoTool, make_registry, minimal_alert
 from worker.outcome import TriageOutcome
 from worker.prompts import ALERT_DATA_BEGIN, ALERT_DATA_END
-from worker.tools import LiveToolRecorder, ToolContext, ToolRegistry, unavailable
+from worker.tools import LiveToolRecorder, ToolContext, unavailable
 from worker.tools.wiring import TOOL_NAMES, build_registry
 from worker.triage import FINAL_VERDICT_INSTRUCTION, RETRY_INSTRUCTION, TriagePipeline
 
@@ -53,36 +57,6 @@ VALID = (
 
 # One scripted call to the `echo` tool, reused across most of this module (per the brief).
 S = [ScriptedToolCall("echo", {"x": 1})]
-
-
-def _minimal_alert() -> SessionAlert:
-    """Copied from `tests/test_triage_pipeline.py` (test files never import from each other)."""
-    events: list[dict[str, Any]] = [
-        {
-            "eventid": "cowrie.session.connect",
-            "timestamp": _BASE_TS.isoformat(),
-            "session": "pipeline-test",
-            "src_ip": "203.0.113.9",
-            "sensor": "hp-test-01",
-        },
-        {
-            "eventid": "cowrie.session.closed",
-            "timestamp": (_BASE_TS + timedelta(seconds=5)).isoformat(),
-            "session": "pipeline-test",
-            "src_ip": "203.0.113.9",
-            "sensor": "hp-test-01",
-            "duration_ms": 5000,
-        },
-    ]
-    return SessionAlert.model_validate(
-        {
-            "source": "cowrie",
-            "session_id": "pipeline-test",
-            "src_ip": "203.0.113.9",
-            "sensor": "hp-test-01",
-            "events": events,
-        }
-    )
 
 
 def _alert_with_many_commands(count: int) -> SessionAlert:
@@ -133,22 +107,6 @@ def _alert_with_many_commands(count: int) -> SessionAlert:
 # --- in-file Tool stubs (PRD §6.3's Tool Protocol; every one never raises except BoomTool) -----
 
 
-class EchoTool:
-    """Echoes its arguments back as the result — deterministic, no external seam."""
-
-    name = "echo"
-    description = "Echo the arguments back as the result."
-    parameters: dict[str, Any] = {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": True,
-    }
-    external = False
-
-    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
-        return dict(arguments)
-
-
 class SlowEchoTool:
     """Like `EchoTool`, but sleeps 20ms first — proves tool execution time never leaks into
     `TriageOutcome.latency_ms` (that field is LLM-turn time only, PRD §6.3)."""
@@ -183,23 +141,6 @@ class FailingLookup:
         return unavailable("network_error")
 
 
-class BoomTool:
-    """Violates the "tools never raise" contract on purpose — the registry's backstop must catch
-    it (`ToolRegistry.execute`, controller ruling Q6), not the pipeline."""
-
-    name = "boom"
-    description = "Always raises RuntimeError."
-    parameters: dict[str, Any] = {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": True,
-    }
-    external = False
-
-    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
-        raise RuntimeError("boom")
-
-
 class CtxSpyTool:
     """Records the `ToolContext` it was called with, for `run`'s plumbing assertions."""
 
@@ -220,10 +161,6 @@ class CtxSpyTool:
         return {}
 
 
-def _registry(*tools: Any, max_result_chars: int = 4000) -> ToolRegistry:
-    return ToolRegistry(list(tools), recorder=LiveToolRecorder(), max_result_chars=max_result_chars)
-
-
 # --- no registry / empty registry = the M3 pipeline, byte for byte --------------------------
 
 
@@ -231,7 +168,7 @@ async def test_without_tools_run_calls_complete_structured_exactly_as_before() -
     fake = FakeLLMClient([VALID])
     pipeline = TriagePipeline(llm=fake, model="fake-model", prompt_version="triage-v1")
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert isinstance(outcome, TriageOutcome)
     assert len(fake.calls) == 1
@@ -245,11 +182,11 @@ async def test_registry_with_no_tools_skips_the_loop() -> None:
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(),
+        tools=make_registry(),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 1
     assert fake.calls[0].tools is None
@@ -265,11 +202,11 @@ async def test_tool_turn_executes_appends_delimited_result_and_records_the_call(
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 2
     second_messages = fake.calls[1].messages
@@ -301,11 +238,11 @@ async def test_tool_result_cannot_forge_the_markers() -> None:
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
-    await pipeline.run(_minimal_alert())
+    await pipeline.run(minimal_alert())
 
     content = fake.calls[1].messages[-1]["content"]
     assert content.count(ALERT_DATA_BEGIN) == 1
@@ -324,11 +261,11 @@ async def test_multiple_calls_in_one_turn_get_sequential_seq_and_one_tool_messag
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert [record.seq for record in outcome.tool_calls] == [0, 1, 2]
     tool_messages = [m for m in fake.calls[1].messages if m["role"] == "tool"]
@@ -345,11 +282,11 @@ async def test_loop_stops_at_cap_and_forces_verdict() -> None:
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=2,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 3
     final_call = fake.calls[2]
@@ -363,11 +300,11 @@ async def test_loop_stops_at_cap_and_forces_verdict() -> None:
         llm=fake_one,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=1,
     )
 
-    outcome_one = await pipeline_one.run(_minimal_alert())
+    outcome_one = await pipeline_one.run(minimal_alert())
 
     assert len(fake_one.calls) == 2
     assert fake_one.calls[1].tools is None
@@ -375,7 +312,7 @@ async def test_loop_stops_at_cap_and_forces_verdict() -> None:
 
 
 def test_tools_without_a_cap_is_a_value_error() -> None:
-    registry = _registry(EchoTool())
+    registry = make_registry(EchoTool())
 
     with pytest.raises(ValueError):
         TriagePipeline(
@@ -401,7 +338,7 @@ async def test_from_settings_uses_tool_loop_max_iter_setting() -> None:
     settings = Settings(tool_loop_max_iter=3)
 
     pipeline = TriagePipeline.from_settings(settings, llm=fake)
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 4
     assert fake.calls[3].tools is None
@@ -417,11 +354,11 @@ async def test_unknown_tool_is_recorded_as_unavailable_and_the_loop_continues() 
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert isinstance(outcome, TriageOutcome)
     assert outcome.tool_calls[0].tool_name == "nope"
@@ -434,11 +371,11 @@ async def test_tool_unavailable_result_flows_back_and_run_succeeds() -> None:
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(FailingLookup()),
+        tools=make_registry(FailingLookup()),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     tool_msg = fake.calls[1].messages[-1]
     assert '"unavailable": true' in tool_msg["content"]
@@ -454,12 +391,12 @@ async def test_loop_treats_a_raising_tool_as_unavailable(
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(BoomTool()),
+        tools=make_registry(BoomTool()),
         tool_loop_max_iter=6,
     )
 
     with caplog.at_level(logging.ERROR):
-        outcome = await pipeline.run(_minimal_alert())
+        outcome = await pipeline.run(minimal_alert())
 
     assert outcome.tool_calls[0].result == {
         "unavailable": True,
@@ -481,11 +418,11 @@ async def test_oversized_tool_result_is_truncated_before_feedback_and_in_the_rec
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool(), max_result_chars=100),
+        tools=make_registry(EchoTool(), max_result_chars=100),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     tool_msg = fake.calls[1].messages[-1]
     assert '"truncated": true' in tool_msg["content"]
@@ -503,11 +440,11 @@ async def test_invalid_content_reply_after_a_tool_turn_is_retried_once_without_t
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 3
     retry_call = fake.calls[2]
@@ -524,12 +461,12 @@ async def test_invalid_content_reply_after_a_tool_turn_is_retried_once_without_t
         llm=fake_twice_bad,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
     with pytest.raises(VerdictValidationError) as exc_info:
-        await pipeline_twice_bad.run(_minimal_alert())
+        await pipeline_twice_bad.run(minimal_alert())
     assert exc_info.value.attempts == 2
 
 
@@ -544,11 +481,11 @@ async def test_tokens_cost_and_latency_sum_over_every_llm_turn_but_not_tool_time
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(SlowEchoTool()),
+        tools=make_registry(SlowEchoTool()),
         tool_loop_max_iter=6,
     )
 
-    outcome = await pipeline.run(_minimal_alert())
+    outcome = await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 3
     assert outcome.input_tokens == 30
@@ -563,12 +500,12 @@ async def test_llm_call_error_during_a_tool_turn_propagates() -> None:
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(EchoTool()),
+        tools=make_registry(EchoTool()),
         tool_loop_max_iter=6,
     )
 
     with pytest.raises(LLMCallError):
-        await pipeline.run(_minimal_alert())
+        await pipeline.run(minimal_alert())
 
     assert len(fake.calls) == 2
 
@@ -583,10 +520,10 @@ async def test_run_passes_alert_session_and_now_into_the_tool_context() -> None:
         llm=fake,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(spy),
+        tools=make_registry(spy),
         tool_loop_max_iter=6,
     )
-    alert = _minimal_alert()
+    alert = minimal_alert()
     now = datetime(2026, 6, 1, tzinfo=UTC)
 
     await pipeline.run(alert, now=now)
@@ -602,7 +539,7 @@ async def test_run_passes_alert_session_and_now_into_the_tool_context() -> None:
         llm=fake_no_now,
         model="fake-model",
         prompt_version="triage-v1",
-        tools=_registry(spy_no_now),
+        tools=make_registry(spy_no_now),
         tool_loop_max_iter=6,
     )
     before = datetime.now(UTC)
@@ -665,7 +602,7 @@ async def test_build_registry_uses_the_supplied_cache_and_http_client() -> None:
     registry = build_registry(
         settings, recorder=LiveToolRecorder(), cache=RecordingCache(), http=http_client
     )
-    ctx = ToolContext(alert=_minimal_alert(), session=None, now=datetime.now(UTC))
+    ctx = ToolContext(alert=minimal_alert(), session=None, now=datetime.now(UTC))
 
     execution = await registry.execute("lookup_ip_reputation", {"ip": "203.0.113.10"}, ctx)
 
