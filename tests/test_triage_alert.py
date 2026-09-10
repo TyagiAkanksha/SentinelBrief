@@ -18,6 +18,13 @@ exist.
 moved from `api.main`'s M2 inline-triage wiring to nothing (m5 task-01 deletes the
 `ignore_imports` lines outright), so the pin now asserts the entrypoint pulls in neither `worker`
 nor `core.llm` at all — not just that the route layer stays clean.
+
+m5 task-02 adds two direct pins of the new `TriagePipeline.triage_attempt` (PRD §6.2, Interfaces
+block): the load-run-persist-and-commit body that used to be inline in `triage_alert` and is now
+`triage_alert`'s own building block (`triage_alert` re-expressed over it stays covered by the four
+pins above, unchanged). Unlike `triage_alert`, a failing `triage_attempt` never marks the alert
+`failed` itself — it rolls back and RAISES, because deciding retry-vs-fail from there is the job's
+job (`worker/jobs.py`, `worker/retry.py`), not the attempt's.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.errors import LLMCallError, NotFoundError
+from core.errors import LLMCallError, NotFoundError, VerdictValidationError
 from core.models import AlertRow, VerdictRow
 from core.services.alerts import insert_alert
 from tests.fakes import FakeLLMClient
@@ -148,3 +155,77 @@ async def test_triage_alert_unknown_alert_raises_not_found(db_session: AsyncSess
 
     with pytest.raises(NotFoundError):
         await pipeline.triage_alert(db_session, uuid.uuid4())
+
+
+async def test_triage_attempt_returns_verdict_id_and_commits(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    alert = load_alert(session_id="attempt-commits-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    llm = FakeLLMClient([_VALID_VERDICT_JSON])
+    pipeline = TriagePipeline(llm=llm, model="fake-model", prompt_version="triage-v1")
+
+    attempt = await pipeline.triage_attempt(db_session, result.alert_id)
+
+    assert attempt.status == "triaged"
+    assert attempt.verdict_id is not None
+    assert attempt.outcome is not None
+
+    # A fresh session (not `db_session`) must already see the verdict: `triage_attempt` commits.
+    async with db_session_factory() as fresh_session:
+        verdict = (
+            await fresh_session.execute(
+                select(VerdictRow).where(VerdictRow.alert_id == result.alert_id)
+            )
+        ).scalar_one()
+    assert verdict.id == attempt.verdict_id
+    assert verdict.model_primary == "fake-model"
+    assert verdict.prompt_version == "triage-v1"
+
+
+async def test_triage_attempt_rolls_back_and_raises_on_failure(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """The M2 `rollback-b-002` pattern (`test_triage_alert_failure_rolls_back_dirty_session`
+    above), replayed against `triage_attempt` directly: the attempt rolls back any dirty write in
+    the same session on failure, same as `triage_alert` — but it RAISES rather than returning a
+    `"failed"` status, and never writes the alert's status itself. Deciding retry-vs-fail (and
+    making the terminal `failed` write) is the job's decision (`worker/jobs.py`,
+    `worker/retry.py`), not the attempt's (PRD §6.2, m5 task-02).
+    """
+    alert_a = load_alert(session_id="attempt-rollback-a-001")
+    result_a = await insert_alert(db_session, alert_a)
+    await db_session.commit()
+
+    # A second, still-uncommitted write in the *same* session: the failure path's rollback must
+    # discard this dirty row along with anything else pending.
+    alert_b = load_alert(session_id="attempt-rollback-b-002")
+    db_session.add(
+        AlertRow(
+            fingerprint=alert_b.fingerprint(),
+            source=alert_b.source,
+            event_time=alert_b.connect_time,
+            raw=alert_b.model_dump(mode="json"),
+        )
+    )
+    await db_session.flush()
+
+    llm = FakeLLMClient(["{}", "{}"])
+    pipeline = TriagePipeline(llm=llm, model="fake-model", prompt_version="triage-v1")
+
+    with pytest.raises(VerdictValidationError):
+        await pipeline.triage_attempt(db_session, result_a.alert_id)
+
+    async with db_session_factory() as fresh_session:
+        row_a = await fresh_session.get(AlertRow, result_a.alert_id)
+        assert row_a is not None
+        assert row_a.status == "pending"  # the attempt itself never marks the alert failed
+
+        row_b = (
+            await fresh_session.execute(
+                select(AlertRow).where(AlertRow.fingerprint == alert_b.fingerprint())
+            )
+        ).scalar_one_or_none()
+    assert row_b is None

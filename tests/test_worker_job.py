@@ -27,6 +27,7 @@ from arq.worker import func as arq_func
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.config import Settings
 from core.errors import LLMCallError
 from core.models import AlertRow, VerdictRow
 from core.queue import (
@@ -126,16 +127,20 @@ async def test_job_for_a_missing_alert_returns_missing_without_retry(
     assert str(alert_id) in warnings[0].getMessage()
 
 
-async def test_job_failure_marks_the_alert_failed(
+async def test_job_failure_marks_the_alert_failed_after_max_tries(
     db_session: AsyncSession,
     db_session_factory: async_sessionmaker[AsyncSession],
     arq_redis: ArqRedis,
     redis_url: str,
 ) -> None:
-    """This task keeps M2's one-attempt semantics: an `LLMCallError` marks the alert `failed`
-    immediately, the job itself still completes successfully (it is not a job-level failure).
-    Task-02 re-pins this exact test with the retry policy once `worker/retry.py` lands — a
-    transient `LLMCallError` will retry with backoff instead of failing on the first try.
+    """m5 task-02 re-pin: `worker/retry.py` lands, and an `LLMCallError` now retries with
+    backoff instead of failing on the first try (task-01's one-attempt semantics are gone). Three
+    scripted `LLMCallError`s exhaust `TRIAGE_JOB_MAX_TRIES=3` (the first run plus two retries);
+    the alert is marked `failed` in its own transaction on the last try and the job itself still
+    completes normally (`jobs_complete`, not `jobs_failed` — only the alert's status is "failed").
+    The full retry-policy arithmetic (backoff values, family-blind retry-vs-fail) is pinned once,
+    in `tests/test_retry_policy.py`; this test only proves the job wires that policy in through a
+    real, draining `Worker`.
     """
     alert_id = await seed_alert(db_session, "alert4")
     await db_session.commit()
@@ -143,7 +148,12 @@ async def test_job_failure_marks_the_alert_failed(
     await enqueue_triage(arq_redis, alert_id)
 
     pipeline = TriagePipeline(
-        llm=FakeLLMClient([LLMCallError("boom")]), model="fake-model", prompt_version="triage-v1"
+        llm=FakeLLMClient([LLMCallError("boom"), LLMCallError("boom"), LLMCallError("boom")]),
+        model="fake-model",
+        prompt_version="triage-v1",
+    )
+    settings = Settings(
+        triage_job_max_tries=3, triage_job_backoff_base_s=0.01, triage_job_backoff_max_s=0.05
     )
     worker = Worker(
         functions=[arq_func(triage_alert_job, name=TRIAGE_JOB_NAME)],
@@ -151,7 +161,8 @@ async def test_job_failure_marks_the_alert_failed(
         redis_settings=redis_settings(redis_url),
         burst=True,
         poll_delay=0.01,
-        ctx={"pipeline": pipeline, "session_factory": db_session_factory},
+        max_tries=3,
+        ctx={"pipeline": pipeline, "session_factory": db_session_factory, "settings": settings},
     )
 
     await worker.main()
@@ -165,6 +176,7 @@ async def test_job_failure_marks_the_alert_failed(
             select(func.count()).select_from(VerdictRow).where(VerdictRow.alert_id == alert_id)
         )
     assert verdict_count == 0
+    assert worker.jobs_retried == 2
     assert worker.jobs_complete == 1
     assert worker.jobs_failed == 0  # the job itself completed; only the alert's status is "failed"
 
