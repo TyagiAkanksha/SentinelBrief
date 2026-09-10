@@ -138,9 +138,10 @@ bound gains the strong tier's two calls (v1.4). The M4 "first touch" carry-overs
   ```
 
   **PRD v1.4 (docs step, same commit):** §6.2 bound → "at most `(TOOL_LOOP_MAX_ITER + 4) × 3` LLM
-  calls (12 × 3 = 36 at the defaults: six tool turns, the forced final verdict and the one
+  calls (10 × 3 = 30 at the defaults: six tool turns, the forced final verdict and the one
   validation retry on the cheap tier, plus the strong tier's call and its one validation retry,
-  times three attempts)"; §6.4 gains: "The strong model receives the cheap pass's conversation
+  times three attempts)" — **computed (rule 3): 6 + 1 + 1 + 1 + 1 = 10 per attempt; the briefing
+  draft's "12 × 3 = 36" was an arithmetic slip, corrected 2026-09-10**; §6.4 gains: "The strong model receives the cheap pass's conversation
   as it stands (system prompt, delimited summary, every tool call and its delimited result) and
   answers with no tools — routing never re-runs the tool loop and never shows the cheap verdict
   to the strong model. A strong-tier failure fails the attempt (§6.2 retries it); there is no
@@ -182,7 +183,7 @@ true — the M2 literal), `VALID5` (sev 5, conf 0.95, `malware_delivery`, true),
 | same id | `tests/test_tool_loop.py::test_from_settings_rejects_strong_equal_to_cheap` | `strong_model="fake-model"` → `ConfigError` mentioning `STRONG_MODEL` |
 | persisted routing fields | `tests/test_triage_alert.py::test_escalated_attempt_persists_both_models` | `triage_attempt` with routing on → the verdict row has `model_primary == "fake-model"`, `model_final == "strong-model"`, `escalated_model is True`, `input_tokens == 200`; a non-escalated run → `model_primary == model_final == "fake-model"`, `escalated_model is False` |
 | settings | `tests/test_routing.py::test_routing_settings_defaults_and_bounds` | literals with a comment: `4` / `0.6`; `escalate_severity_gte=0` and `=6`, `escalate_confidence_lt=1.5` → `ValidationError`; roster green after graduation |
-| scoring | `tests/test_scoring.py::test_escalation_rate_counts_escalated_over_all_cases` | 4 results, 2 escalated, 1 failed (not escalated) → `0.5`; `n_cases == 0` → `0.0`; `COLUMNS.index("escalation_rate") == COLUMNS.index("critical_recall") + 1`; `test_format_table_one_row_per_result_with_headers` re-pinned for the extra column |
+| scoring | `tests/test_scoring.py::test_escalation_rate_counts_escalated_over_all_cases` | 4 results, 2 escalated, 1 failed (not escalated) → `0.5`; `n_cases == 0` → `0.0`; `COLUMNS.index("escalation_rate") == COLUMNS.index("critical_rec") + 1` (the header cell is the abbreviated `critical_rec`; the briefing draft wrote the `RunMetrics` field name — test-author judgment call 1, accepted; `critical_rec` is NOT renamed); the new header cell is the full word `escalation_rate` so it cannot be confused with the verdict-flag columns `esc_prec`/`esc_rec`; `test_format_table_one_row_per_result_with_headers` re-pinned for the extra column |
 | evals flag | `tests/test_evals_run.py::test_strong_model_flag_flows_to_the_pipeline_and_the_table` | `main([... --strong-model strong-model], llm=fake)` with a fake scripted so 1 of N cases escalates → exit 0; some `fake.calls[i].model == "strong-model"`; the printed table's `escalation_rate` cell equals `1/N` formatted like the other ratios |
 | evals price check | `tests/test_evals_run.py::test_unpriced_strong_model_exit_1_before_any_case` | real-client path (`llm=None`), `--strong-model ghost` → `1`, stderr `error: config_error: …ghost…`, zero cases run (no result JSON written) |
 | CLI | `tests/test_triage_one.py::test_strong_model_flag_escalates_and_prints_routing_fields` | `main([path, "--strong-model", "strong-model"], llm=fake)` → stdout JSON has `"model_primary": "fake-model"`, `"escalated_model": true`, `"model": "strong-model"`; without the flag and `STRONG_MODEL` unset → `escalated_model` false |
