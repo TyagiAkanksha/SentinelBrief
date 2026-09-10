@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 TRIAGE_JOB_NAME = "triage_alert"
 TRIAGE_QUEUE_NAME = "sentinelbrief:triage"
+VERDICT_CREATED_CHANNEL = "sentinelbrief:verdict.created"
+"""Redis pub/sub channel a successful triage commit publishes on (PRD §8 `/stream` row, §6.2; m5
+task-02). `worker/publish.py::publish_verdict_created` is the only publisher; M8's SSE feed is the
+only subscriber."""
 
 
 def triage_job_id(alert_id: uuid.UUID) -> str:

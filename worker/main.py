@@ -98,4 +98,4 @@ class WorkerSettings:
     max_jobs = settings.worker_max_jobs
     health_check_interval = settings.worker_health_check_interval_s
     retry_jobs = True
-    # max_tries is set by task-02 (from TRIAGE_JOB_MAX_TRIES); ARQ's default (5) stands until then.
+    max_tries = settings.triage_job_max_tries

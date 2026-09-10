@@ -127,6 +127,15 @@ class Settings(BaseSettings):
     tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6
     """Hard cap on tool-call turns per alert before a tool-less verdict is forced (PRD §6.3, m4
     task-06). Never a literal in `worker/triage.py`."""
+    triage_job_max_tries: Annotated[int, Field(ge=1)] = 3
+    """Total attempts per triage job — the first run plus retries — before the alert is marked
+    `failed` (PRD §6.2, m5 task-02). `worker/retry.py::decide_retry` reads this, never a literal."""
+    triage_job_backoff_base_s: Annotated[float, Field(ge=0)] = 2.0
+    """Delay before the first retry, in seconds; doubles each retry (exponential backoff, PRD
+    §6.2, m5 task-02). `worker/retry.py::backoff_seconds` reads this, never a literal."""
+    triage_job_backoff_max_s: Annotated[float, Field(ge=0)] = 60.0
+    """Cap on the retry delay, in seconds (PRD §6.2, m5 task-02). `worker/retry.py
+    ::backoff_seconds` reads this, never a literal."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

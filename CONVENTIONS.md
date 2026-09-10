@@ -20,7 +20,7 @@ invariants: **no LLM call outside `worker/`** and **one transaction per verdict 
   PRD section that mandates the behavior (e.g. "PRD §6.1: duplicates never re-trigger triage").
 - Prefer `collections.abc` types (`Callable`, `Sequence`, `Mapping`, `AsyncIterator`) in
   annotations.
-- No bare `except Exception`/`raise Exception(...)` — use the typed family (two carve-outs, §4).
+- No bare `except Exception`/`raise Exception(...)` — use the typed family (three carve-outs, §4).
 - Keep files small; each function serves **one purpose**. A module accumulating unrelated
   responsibilities is a split-smell — raise it rather than growing it.
 
@@ -132,7 +132,11 @@ no contract forbids the import.
   truncating its result), logs the tool name and argument keys only, and returns
   `{"unavailable": true, "reason": "<ExceptionClass>: tool raised"}` or
   `{"unavailable": true, "reason": "<ExceptionClass>: result not serializable"}` respectively, so
-  a tool failure can never fail the triage job.
+  a tool failure can never fail the triage job. The third carve-out is `worker/jobs.py
+  ::triage_alert_job` (M5): it catches `Exception` — never `BaseException` — around the whole
+  attempt so a poison alert can never wedge the queue (PRD §6.2); the decision is delegated to the
+  pure `worker/retry.py`, the terminal write is `failed`, and the log carries
+  `reason=<code | ExceptionClass>` only.
 
 ## 5. App construction
 

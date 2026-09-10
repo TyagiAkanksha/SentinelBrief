@@ -22,18 +22,23 @@ tool turns, the forced final, and the retry — but never across tool execution 
 recorded per row in `TriageOutcome.tool_calls` instead (`verdicts.latency_ms` keeps its M0
 meaning: LLM time only).
 
-`triage_alert` loads an alert, runs it through the pipeline, and persists the outcome — verdict,
+`triage_attempt` loads an alert, runs it through the pipeline, and persists the outcome — verdict,
 tool-call trace, and status — as one transaction (PRD §6.2): success commits `persist_verdict`'s
-write; a validation or LLM-call failure rolls that write back and marks the alert `failed` in its
-own transaction instead.
+write and returns an `AttemptResult`; any failure rolls that write back and RAISES (never
+returning a status itself) — deciding retry-vs-fail from there is `worker/jobs.py`'s job (m5
+task-02, with `worker/retry.py`), not the attempt's. `triage_alert` is `triage_attempt` plus the
+M2 terminal write, unchanged: a validation or LLM-call failure marks the alert `failed` in its own
+transaction instead of propagating.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +69,19 @@ FINAL_VERDICT_INSTRUCTION = (
     "The tool budget is exhausted. Using only the evidence already gathered, reply with ONLY a "
     "JSON object that matches the schema in the system message."
 )
+
+
+@dataclass(frozen=True)
+class AttemptResult:
+    """One `triage_attempt` outcome: a committed verdict, or (task-04) a skip.
+
+    `"skipped"` is minted by task-04 (a FOR UPDATE skip on a concurrently-claimed alert);
+    declared now so the type never changes shape underneath `worker/jobs.py`.
+    """
+
+    status: Literal["triaged", "skipped"]
+    verdict_id: uuid.UUID | None
+    outcome: TriageOutcome | None
 
 
 class TriagePipeline:
@@ -282,15 +300,53 @@ class TriagePipeline:
         # No tools (or an empty registry): the M3 tool-less pipeline, byte for byte.
         return await _final(messages)
 
-    async def triage_alert(self, session: AsyncSession, alert_id: uuid.UUID) -> AlertStatus:
+    async def triage_attempt(self, session: AsyncSession, alert_id: uuid.UUID) -> AttemptResult:
         """Load `alert_id`, run it through the pipeline, and persist the outcome as one unit.
 
         Success persists the verdict and its tool-call trace (`worker.store.persist_verdict`) and
-        commits once, per PRD §6.2. A validation or LLM-call failure rolls that write back and
-        marks the alert `failed` in its own transaction instead — never a 5xx, never a
-        half-written verdict. The alert is loaded and `run` completes fully before any write, so a
-        tool's own SAVEPOINT (`get_alert_history`'s `session.begin_nested()`) never autoflushes
-        pending ORM state ahead of `persist_verdict`'s own writes.
+        commits once, per PRD §6.2. ANY failure (including cancellation) rolls that write back and
+        RAISES unchanged — deciding retry-vs-fail is `worker/jobs.py`'s job (m5 task-02), not this
+        method's. The alert is loaded and `run` completes fully before any write, so a tool's own
+        SAVEPOINT (`get_alert_history`'s `session.begin_nested()`) never autoflushes pending ORM
+        state ahead of `persist_verdict`'s own writes.
+
+        Args:
+            session: The request/job-scoped `AsyncSession`; this method owns its commit.
+            alert_id: The alert to triage.
+
+        Returns:
+            `AttemptResult(status="triaged", verdict_id=<the new row's id>, outcome=<the run's
+            TriageOutcome>)` on success.
+
+        Raises:
+            NotFoundError: `alert_id` does not exist (propagates from `get_alert`).
+            VerdictValidationError | LLMCallError: The run failed; the session was rolled back
+                first.
+        """
+        row = await get_alert(session, alert_id)
+        alert = SessionAlert.model_validate(row.raw)
+        try:
+            outcome = await self.run(alert, session=session)
+            verdict_id = await persist_verdict(
+                session,
+                alert_id=alert_id,
+                outcome=outcome,
+                model_primary=self._model,
+                tool_calls=outcome.tool_calls,
+            )
+            await session.commit()
+        except BaseException:
+            await session.rollback()
+            raise
+        return AttemptResult(status="triaged", verdict_id=verdict_id, outcome=outcome)
+
+    async def triage_alert(self, session: AsyncSession, alert_id: uuid.UUID) -> AlertStatus:
+        """Load `alert_id`, run it through the pipeline, and persist the outcome as one unit.
+
+        Unchanged M2 contract, now expressed over `triage_attempt`: success returns "triaged"
+        (a `"skipped"` `AttemptResult`, minted by task-04, is also reported as "triaged" here —
+        its alert already IS triaged). A validation or LLM-call failure marks the alert `failed`
+        in its own transaction instead — never a 5xx, never a half-written verdict.
 
         Args:
             session: The request/job-scoped `AsyncSession`; this method owns its commit(s).
@@ -302,21 +358,10 @@ class TriagePipeline:
         Raises:
             NotFoundError: `alert_id` does not exist (propagates from `get_alert`).
         """
-        row = await get_alert(session, alert_id)
-        alert = SessionAlert.model_validate(row.raw)
         try:
-            outcome = await self.run(alert, session=session)
-            await persist_verdict(
-                session,
-                alert_id=alert_id,
-                outcome=outcome,
-                model_primary=self._model,
-                tool_calls=outcome.tool_calls,
-            )
-            await session.commit()
+            await self.triage_attempt(session, alert_id)
             return "triaged"
         except (VerdictValidationError, LLMCallError) as exc:
-            await session.rollback()
             await set_alert_status(session, alert_id, "failed")
             await session.commit()
             logger.warning("triage failed alert_id=%s code=%s", alert_id, exc.code)
