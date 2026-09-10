@@ -25,6 +25,7 @@ import logging
 import sys
 import time
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -33,12 +34,14 @@ from arq.connections import ArqRedis
 from arq.jobs import Job
 from arq.worker import Worker
 from arq.worker import func as arq_func
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Settings
 from core.db import make_engine, make_session_factory
 from core.errors import LLMCallError
+from core.llm import ChatMessage, LLMResult
 from core.models import AlertRow, VerdictRow
 from core.queue import (
     TRIAGE_JOB_NAME,
@@ -49,7 +52,7 @@ from core.queue import (
     triage_job_id,
 )
 from core.schemas.alerts_read import reasoning_excerpt
-from tests.fakes import FakeLLMClient
+from tests.fakes import FakeLLMClient, FakeReply
 from tests.helpers import seed_alert
 from worker.jobs import triage_alert_job
 from worker.triage import TriagePipeline
@@ -99,15 +102,18 @@ def _worker(
 
 
 async def _drain_pubsub(pubsub: Any, *, timeout_total_s: float = 5.0) -> list[str]:
-    """Collect every already-queued `message["data"]` off `pubsub`, bounded to
-    `timeout_total_s` total (m5 task-02 brief, resolution 3)."""
+    """Collect `message["data"]` values off `pubsub` until `timeout_total_s` elapses. Keeps polling
+    on `None` (redis-py returns the SUBSCRIBE acknowledgement as a first `None`); once a real
+    message arrives the deadline shrinks to 0.5 s so a second message would still be observed
+    (m5 task-02 brief, publish row; R8 fix)."""
     messages: list[str] = []
     deadline = time.monotonic() + timeout_total_s
     while time.monotonic() < deadline:
         message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.2)
         if message is None:
-            break
+            continue
         messages.append(message["data"])
+        deadline = min(deadline, time.monotonic() + 0.5)
     return messages
 
 
@@ -162,21 +168,52 @@ async def test_llm_call_errors_retry_with_backoff_then_succeed(
     )
 
 
+class _KeyedFakeLLMClient(FakeLLMClient):
+    """One reply queue per alert, chosen by the `session_id` present in the prompt's delimited
+    summary — so two alerts can share one worker in any interleaving (m5 task-02 R8). Replaces the
+    single-shared-queue `FakeLLMClient` for tests where ARQ's own scheduling order across two
+    alerts is not a fact this suite can rely on (R8: neither millisecond-granularity job scores
+    nor `start_jobs`' slot-handout timing guarantee alert A's attempts run before alert B's)."""
+
+    def __init__(self, scripts: dict[str, list[FakeReply]]) -> None:
+        super().__init__([])
+        self._scripts = scripts
+        self.calls_by_key: dict[str, int] = dict.fromkeys(scripts, 0)
+
+    def _select(self, messages: Sequence[ChatMessage]) -> str:
+        text = "\n".join(str(m.get("content") or "") for m in messages)
+        matches = [key for key in self._scripts if f'"session_id": "{key}"' in text]
+        assert len(matches) == 1, (
+            f"expected exactly one session_id key in the prompt, got {matches}"
+        )
+        return matches[0]
+
+    async def complete_structured[T: BaseModel](
+        self, *, messages: Sequence[ChatMessage], response_model: type[T], model: str
+    ) -> LLMResult[T]:
+        key = self._select(messages)
+        self.calls_by_key[key] += 1
+        self._responses = self._scripts[key]  # the parent pops from this list
+        return await super().complete_structured(
+            messages=messages, response_model=response_model, model=model
+        )
+
+
 async def test_poison_alert_fails_after_max_tries_and_the_queue_keeps_draining(
     db_session: AsyncSession,
     db_session_factory: async_sessionmaker[AsyncSession],
     arq_redis: ArqRedis,
     redis_url: str,
 ) -> None:
-    """Ordering assumption (rule 9): ARQ hands runnable jobs out in ascending queue-score order,
-    and a `Retry(defer=0)` leaves the retried job's score unchanged (arq/worker.py: `incr_score`
-    stays 0 when `e.defer_score` is falsy) — so a job enqueued earlier keeps a strictly lower
-    score than one enqueued later, even after being retried. With `max_jobs=1` there is only ever
-    one runnable slot, so alert A's three attempts (job_try 1-3, each re-queued at its own
-    unchanged, still-lower score) all run before alert B's single attempt. The shared fake LLM
-    queue below is consumed in exactly that order: A's three two-call attempts (each an
-    unrecoverable `VerdictValidationError` — an empty `"{}"` reply fails validation, and the one
-    PRD §6.5 retry, itself `"{}"`, fails again), then B's one one-call attempt.
+    """Order-independent by construction (R8): ARQ's own scheduling order between two alerts
+    sharing one worker slot is not a fact this suite can rely on (job scores are millisecond-
+    granularity with lexicographic tie-breaking by job id, and `start_jobs` can hand B the slot
+    the moment A's first attempt ends, before A's retry is even polled). `_KeyedFakeLLMClient`
+    sidesteps the question entirely: each alert consumes its own reply queue, keyed by its own
+    `session_id`, whatever interleaving ARQ actually picks. Alert A's queue is exhausted after
+    three unrecoverable `VerdictValidationError`s (an empty `"{}"` reply fails validation, and the
+    one PRD §6.5 retry, itself `"{}"`, fails again — two calls per attempt, six total); alert B's
+    queue is one valid reply.
     """
     alert_a = await seed_alert(db_session, "alert4", session_id="poison-a")
     alert_b = await seed_alert(db_session, "alert4", session_id="poison-b")
@@ -185,7 +222,7 @@ async def test_poison_alert_fails_after_max_tries_and_the_queue_keeps_draining(
     await enqueue_triage(arq_redis, alert_a)
     await enqueue_triage(arq_redis, alert_b)
 
-    fake = FakeLLMClient(["{}", "{}", "{}", "{}", "{}", "{}", VALID4])
+    fake = _KeyedFakeLLMClient({"poison-a": ["{}"] * 6, "poison-b": [VALID4]})
     worker = _worker(
         redis_url=redis_url,
         session_factory=db_session_factory,
@@ -218,6 +255,7 @@ async def test_poison_alert_fails_after_max_tries_and_the_queue_keeps_draining(
     assert worker.jobs_failed == 0
     assert await arq_redis.zcard(TRIAGE_QUEUE_NAME) == 0
     assert len(fake.calls) == 7
+    assert fake.calls_by_key == {"poison-a": 6, "poison-b": 1}
 
 
 async def test_unexpected_exception_retries_then_fails_with_the_class_logged(
