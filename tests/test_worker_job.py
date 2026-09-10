@@ -65,13 +65,20 @@ async def test_enqueued_job_triages_the_alert_through_a_burst_worker(
 
     fake = FakeLLMClient([VALID4])
     pipeline = TriagePipeline(llm=fake, model="fake-model", prompt_version="triage-v1")
+    # R7: `triage_alert_job` reads `ctx["settings"]` unconditionally (`worker/main.py
+    # ::WorkerSettings.ctx` supplies it for real; a missing key must fail the first job loudly).
+    # `triage_job_*` kwargs don't exist on `Settings` yet at this RED commit — `extra="ignore"`
+    # accepts them silently today and they become real fields once task-02 lands (GREEN).
+    settings = Settings(
+        triage_job_max_tries=3, triage_job_backoff_base_s=0.01, triage_job_backoff_max_s=0.05
+    )
     worker = Worker(
         functions=[arq_func(triage_alert_job, name=TRIAGE_JOB_NAME)],
         queue_name=TRIAGE_QUEUE_NAME,
         redis_settings=redis_settings(redis_url),
         burst=True,
         poll_delay=0.01,
-        ctx={"pipeline": pipeline, "session_factory": db_session_factory},
+        ctx={"pipeline": pipeline, "session_factory": db_session_factory, "settings": settings},
     )
 
     await worker.main()
@@ -104,13 +111,17 @@ async def test_job_for_a_missing_alert_returns_missing_without_retry(
     await enqueue_triage(arq_redis, alert_id)
 
     pipeline = TriagePipeline(llm=FakeLLMClient([]), model="fake-model", prompt_version="triage-v1")
+    # R7: see the same-shaped comment in test_enqueued_job_triages_the_alert_through_a_burst_worker.
+    settings = Settings(
+        triage_job_max_tries=3, triage_job_backoff_base_s=0.01, triage_job_backoff_max_s=0.05
+    )
     worker = Worker(
         functions=[arq_func(triage_alert_job, name=TRIAGE_JOB_NAME)],
         queue_name=TRIAGE_QUEUE_NAME,
         redis_settings=redis_settings(redis_url),
         burst=True,
         poll_delay=0.01,
-        ctx={"pipeline": pipeline, "session_factory": db_session_factory},
+        ctx={"pipeline": pipeline, "session_factory": db_session_factory, "settings": settings},
     )
 
     with caplog.at_level(logging.WARNING):
