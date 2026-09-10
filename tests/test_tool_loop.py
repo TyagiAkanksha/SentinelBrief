@@ -699,12 +699,13 @@ async def test_severity_escalation_runs_the_strong_model_over_the_same_conversat
     # per call, so this is exact list equality, not a subset/prefix check).
     assert strong_call.messages == cheap_final_call.messages
     # The cheap verdict's own text (VALID4's reasoning) is never appended ahead of the strong
-    # call (no anchoring) — `VALID4`'s category is likewise absent from every outgoing message.
+    # call (no anchoring). Not checked here: category NAMES (e.g. "successful_intrusion") are
+    # not evidence of anchoring — they're listed in the system prompt template on every call,
+    # cheap or strong, as part of the fixed VerdictCategory rubric (R11).
     for message in strong_call.messages:
         content = message.get("content")
         if isinstance(content, str):
             assert "synthetic test reasoning citing session evidence." not in content
-            assert "successful_intrusion" not in content
 
     assert outcome.verdict.reasoning.startswith("strong tier: ")
     assert outcome.model == "strong-model"
