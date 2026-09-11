@@ -191,7 +191,7 @@ uv run pytest -q -rs tests/test_backup_artifacts.py tests/test_env_checklist.py 
 bash -n infra/deploy/prod/backup.sh infra/deploy/prod/restore-rehearsal.sh && echo syntax-ok
 grep -c "cron container" PRD.md docs/deployment.md                 # PRD.md:0 docs/deployment.md:0   (BASE: 1 and 1)
 python3 -c "import json;d=json.load(open('infra/deploy/s3-lifecycle.json'));print(d['Rules'][0]['Expiration']['Days'])"   # 30
-uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ## Acceptance

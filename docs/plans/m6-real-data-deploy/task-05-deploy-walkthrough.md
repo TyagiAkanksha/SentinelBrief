@@ -125,7 +125,11 @@ secret generated in-shell and never printed, every resource name recorded in `do
      …`), `aws ecr get-login-password | docker login …`, `docker compose pull`, the geoip one-off
      from `prod/README.md`, `docker compose run --rm api uv run alembic upgrade head`, `docker
      compose up -d`, `docker compose ps` → six `healthy`/`running`.
-  9. **Honeypot host** — separate VPC (`aws ec2 create-vpc 10.99.0.0/24`, subnet, IGW, route;
+  9. **Honeypot host** (task-02 review notes: install the shipper together with Cowrie so its first
+     read of `cowrie.json` is small; before `systemctl enable --now sentinelbrief-shipper`, prove
+     `sudo -u shipper head -c 1 /opt/sentinelbrief-honeypot/data/log/cowrie.json` succeeds and the
+     directory exists; check `systemctl is-active sentinelbrief-shipper` AFTER 60 s, not immediately,
+     so a `RestartSec=5` loop is visible) — separate VPC (`aws ec2 create-vpc 10.99.0.0/24`, subnet, IGW, route;
      or the console) — the walkthrough gives the CLI sequence; SG `sentinelbrief-honeypot`
      (inbound 22 from everywhere; outbound 443 only — `revoke-security-group-egress` the default
      all-traffic rule first); `run-instances … al2023 arm64 t4g.nano --iam-instance-profile
@@ -243,7 +247,7 @@ bash -n infra/deploy/user-data-app.sh honeypot/user-data.sh && echo syntax-ok
 python3 -m json.tool infra/deploy/iam/app-host-inline.json > /dev/null && echo json-ok
 grep -c "(recorded during deployment)" infra/deploy/VERIFY.md    # >= 12   (BASE: file absent)
 grep -rEc "AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}" infra/deploy honeypot | grep -v ':0$'   # no output
-uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ## Acceptance

@@ -52,6 +52,9 @@ M0–M5 Global Constraints apply verbatim (branch `feat/m6-real-data-deploy`). A
   (spool test).
 - Synthetic fixture shapes are re-checked against the first real sessions; any schema surprise
   is a PRD/SUGGESTIONS note, not a silent fixture edit.
+- **The canonical pytest gate includes `--cov=sentinelbrief_shipper` from task-02 fix-1 on** (review
+  PC2/M6: the milestone's largest new package must be inside the coverage gate) — CI, `/gates`,
+  CONVENTIONS §9 and every brief's Verify block carry the flag; the 90 % floor applies to the union.
 - **Every fenced command in an owner-run runbook has been executed by the implementer in the exact
   form written, or is annotated in the runbook with why it cannot be run here** (task-01 review:
   three Important findings were commands never run as written — a shell-less image, a user-data

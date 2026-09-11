@@ -121,7 +121,9 @@ username, a command, a URL) must be absent from `render()`'s output.
   1. T+0: `VERIFY.md` checks 0–2, 4–6, 9–10 executed and pasted; the honeypot's first sessions
      confirmed `triaged`; `check_real_sessions.py --limit 50` on the box → report pasted into
      the ledger; PRD/SUGGESTIONS notes written for every "Suggested follow-up" line.
-  2. T+24 h: check 7 (the first nightly backup landed; `pg_database_size`), check 8 (rotated log
+  2. T+24 h (also record on the honeypot host: `systemctl show -p MemoryCurrent sentinelbrief-shipper`,
+     `ls /var/lib/sentinelbrief-shipper/spool/dead | wc -l` — a non-empty `dead/` means sessions were
+     permanently rejected and must be explained; task-02 review M9/notes): check 7 (the first nightly backup landed; `pg_database_size`), check 8 (rotated log
      files — the api's json log under attacker traffic), `check_real_sessions.py --limit 500` →
      `database.md`'s retention table filled (`rows/day`, `MB/day`, projected 90-day size).
   3. T+48 h: check 3 re-run (a fresh session end-to-end), check 6 re-run (the 48 h window), the
@@ -140,7 +142,7 @@ export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelb
 uv run pytest -q -rs tests/test_check_real_sessions.py                              # all pass, 0 skipped
 uv run python scripts/check_real_sessions.py --limit 5 2>&1 | head -3               # with DATABASE_URL exported to the dev DB: the summary table's header; without: one stderr line, exit 1
 grep -c "(recorded during deployment)" infra/deploy/VERIFY.md                       # at the soak's end: 0 for checks 0–10 (only check 11's "recorded at M8" placeholders remain)
-uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ## Acceptance

@@ -65,6 +65,7 @@ keeps it `SecretStr` (D12/N-M10), and the `worker/llm_client.py:94` `timeout=60.
   `tests/test_dockerfile_pins.py` (`test_scripts_copied_for_deploy_time_geoip_fetch`),
   `tests/test_llm_client.py` (`test_from_settings_uses_llm_timeout_s`), `tests/test_config.py`
   (`test_llm_timeout_s_default`)
+- Modify (wording, task-02 review note): `.env.example`'s `INGEST_MAX_BODY_BYTES` comment, `PRD.md` §6.1's v1.5 sentence and `docs/deployment.md` say Caddy's `max_size 2MB` (= 2 000 000 bytes, EQUAL to the app cap) is "enforced first, on wire bytes" — not "larger"; nobody later raises the app cap above it.
 - Modify: `infra/docker-compose.yml` (five `restart: on-failure` lines), `infra/Dockerfile.api`
   (`COPY scripts ./scripts` in the builder; `COPY --from=builder --chown=appuser:appuser
   /app/scripts ./scripts` in the runtime), `core/config.py` (`llm_timeout_s`), `worker/llm_client.py`
@@ -306,7 +307,7 @@ grep -c "restart: unless-stopped" infra/deploy/prod/docker-compose.yml   # 6   (
 grep -n "timeout=60.0" worker/llm_client.py                        # no output, exit 1  (BASE: line 94)
 grep -n "latest" infra/deploy/prod/docker-compose.yml              # no output, exit 1
 git ls-files infra/deploy | grep -c '\.env'                        # 0
-uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ## Acceptance

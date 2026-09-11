@@ -205,7 +205,7 @@ uv run pytest -q -rs tests/test_honeypot_compose.py tests/test_asset_info_tool.p
 docker compose -f honeypot/docker-compose.yml config > /dev/null && echo ok           # ok
 grep -c 'sshd' honeypot/README.md                                                     # >= 2 (disable + mask)
 git ls-files honeypot | grep -c '\.env'                                               # 0
-uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ## Acceptance

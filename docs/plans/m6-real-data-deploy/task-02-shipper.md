@@ -188,10 +188,12 @@ client can no longer make the api buffer an unbounded body.
       def reset(self) -> None
   def drain(spool: Spool, poster: Poster, backoff: Backoff) -> int
       # for path in spool.pending(): result = poster.post(path.read_bytes()); retry → backoff.wait(); return delivered (stop draining — the next iteration retries the SAME file first); not retry and 2xx → spool.remove; backoff.reset(); not retry and 4xx → spool.dead(path, status=status). Returns the count delivered.
-  def run_once(tailer: LogTailer, assembler: SessionAssembler, spool: Spool, poster: Poster, backoff: Backoff) -> int
-      # lines = tailer.read_new_lines(); for line: for payload in assembler.feed(line): spool.put(payload); for payload in assembler.flush_idle(): spool.put(payload); return drain(spool, poster, backoff)
+  @dataclass(frozen=True)
+  class RunOnceResult: lines_read: int; delivered: int      # review PC1: the loop needs BOTH numbers — sleep only when lines_read == 0
+  def run_once(tailer: LogTailer, assembler: SessionAssembler, spool: Spool, poster: Poster, backoff: Backoff) -> RunOnceResult
+      # lines = tailer.read_new_lines(); for line: for payload in assembler.feed(line): spool.put(payload); for payload in assembler.flush_idle(): spool.put(payload); delivered = drain(spool, poster, backoff); return RunOnceResult(len(lines), delivered).  `main`'s loop MUST call run_once (never inline the same sequence — review I3).
   def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = None, transport: httpx.BaseTransport | None = None, max_iterations: int | None = None, sleep: Callable[[float], None] = time.sleep) -> int, stop_event: threading.Event | None = None    # test-author's SIGTERM mechanism (permitted judgment call): when given, the loop also stops after the current iteration once it is set; the SIGTERM/SIGINT handlers set the same event
-      # argparse: --once (one run_once, exit 0), --state-dir/--log-path overrides (else config); builds the five collaborators from ShipperConfig.from_env(env or os.environ); loop: run_once; if no line was read this iteration → sleep(poll_interval_s); stops after max_iterations (tests) or SIGTERM/SIGINT (installs handlers that set a flag; the current iteration finishes — a payload is never half-written because the spool writes tmp+replace). Exit 0 on clean stop; 1 on ValueError from config (one stderr line naming the variable) or an unreadable state dir.
+      # argparse: --once (one run_once, exit 0), --state-dir/--log-path overrides (else config); builds the five collaborators from ShipperConfig.from_env(env or os.environ); loop: result = run_once(...); if result.lines_read == 0 → sleep(poll_interval_s); stops after max_iterations (tests) or SIGTERM/SIGINT (installs handlers that set a flag; the current iteration finishes — a payload is never half-written because the spool writes tmp+replace). Exit 0 on clean stop; 1 on ValueError from config (one stderr line naming the variable) or an unreadable state dir.
       # Logging: logging.basicConfig(level=INFO, format="%(levelname)s %(name)s %(message)s") to stderr — journald keeps it. One INFO line per delivered payload: "shipper: delivered session_id=%s status=%d bytes=%d". NEVER a username, password, command, banner, URL or IP from the log in any record (session_id is a Cowrie hex id and is the only per-session field logged).
   # sentinelbrief_shipper/__main__.py: raise SystemExit(main())
   ```
@@ -214,7 +216,7 @@ client can no longer make the api buffer an unbounded body.
   NoNewPrivileges=true
   ProtectSystem=strict
   ProtectHome=true
-  ReadOnlyPaths=/opt/sentinelbrief-honeypot/data/log
+  ReadOnlyPaths=-/opt/sentinelbrief-honeypot/data/log   # the `-` prefix: a missing path must not fail namespace setup (status 226) into a restart loop — review M4/PC3
   PrivateTmp=true
   [Install]
   WantedBy=multi-user.target
@@ -364,7 +366,7 @@ grep -rEn "^(from|import) (core|api|worker|evals|tests)\b" honeypot/shipper/sent
 grep -c "require_content_length(request" api/routes/alerts.py                                        # 1   (BASE: 0)
 grep -n "INGEST_MAX_BODY_BYTES=" .env.example                                                           # one line (BASE: none)
 git diff --exit-code -- api/openapi.json web/src/types/generated && echo "baseline regenerated and committed"
-uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
+uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 pnpm -C web codegen && git diff --exit-code -- web/src/types/generated
 ```
 
