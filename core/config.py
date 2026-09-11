@@ -69,11 +69,18 @@ class Settings(BaseSettings):
     """Redis DSN for the ARQ queue (PRD §4, from M5). SECRET: a deployed URL may embed a
     password."""
     redis_socket_timeout_s: Annotated[float, Field(gt=0)] = 2.0
-    """Connect + socket timeout of every api-side Redis call (enqueue, `/healthz` ping, response
-    cache), in seconds — so a dead Redis fails fast instead of hanging the request (m5 task-01)."""
+    """Connect + socket timeout of every api-side Redis call (enqueue, `/healthz` ping), in
+    seconds — so a dead Redis fails fast instead of hanging the request (m5 task-01)."""
     triage_job_timeout_s: Annotated[int, Field(ge=1)] = 120
-    """ARQ `job_timeout` for one triage job (all attempts share it); ARQ's in-progress lease the
-    worker holds is this + 10 s (m5 task-01)."""
+    """ARQ `job_timeout` for one attempt of a triage job (each try gets its own) — the backstop
+    behind `triage_attempt_timeout_s`; ARQ's in-progress lease is this + 10 s; worst case per
+    alert is `triage_job_max_tries` × this (m5 task-01/02)."""
+    triage_attempt_timeout_s: Annotated[float, Field(gt=0)] = 100.0
+    """Inner deadline for ONE triage attempt inside the job (m5 final review N-I1). A hung
+    attempt becomes a `TimeoutError` the job's `except Exception` boundary sees, so
+    `decide_retry` retries it (reason=TimeoutError) or marks the alert `failed` on the last
+    try. MUST be below `triage_job_timeout_s`: ARQ's own `job_timeout` cancels from outside
+    and records the job failed with NO retry and NO terminal write."""
     worker_max_jobs: Annotated[int, Field(ge=1)] = 4
     """Concurrent triage jobs per worker process — bounds concurrent LLM calls (m5 task-01)."""
     worker_health_check_interval_s: Annotated[int, Field(ge=1)] = 15

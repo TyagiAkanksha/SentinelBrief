@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from core.cache import RedisTTLCache
 from core.config import Settings, require_nonempty
 from core.db import make_engine, make_session_factory
+from core.errors import ConfigError
 from core.queue import TRIAGE_JOB_NAME, TRIAGE_QUEUE_NAME, redis_settings
 from worker.jobs import triage_alert_job
 from worker.llm_client import OpenAICompatibleLLMClient
@@ -40,6 +41,8 @@ require_nonempty("DATABASE_URL", settings.database_url.get_secret_value())
 require_nonempty("REDIS_URL", settings.redis_url.get_secret_value())
 require_nonempty("LLM_API_KEY", settings.llm_api_key.get_secret_value())
 require_nonempty("CHEAP_MODEL", settings.cheap_model)
+if settings.triage_attempt_timeout_s >= settings.triage_job_timeout_s:
+    raise ConfigError("TRIAGE_ATTEMPT_TIMEOUT_S must be below TRIAGE_JOB_TIMEOUT_S")
 
 
 async def startup(ctx: dict[str, Any]) -> None:

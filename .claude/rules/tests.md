@@ -19,6 +19,9 @@ paths: tests/**
   when `TEST_DATABASE_URL` is unset — recorded as skips, never passes. A green run without the
   export line is not evidence; include the export line in every pasted gate output. Point the
   variable at a dedicated `sentinelbrief_test` database.
+- Redis fixtures (`redis_url`, `arq_redis`) skip by name when `TEST_REDIS_URL` is unset; point it
+  at a DEDICATED instance (127.0.0.1:6380) — the fixture `flushdb`s before and after every test, so
+  never the dev compose Redis on 6379.
 - `tmp_schema` is a **sync** fixture (psycopg autocommit + `alembic.command.upgrade`); do not make
   it async — `alembic/env.py` calls `asyncio.run` and cannot nest in the test loop.
 - `@pytest.mark.live` marks anything that calls a real external API; the default `addopts`

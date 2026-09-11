@@ -447,6 +447,8 @@ class TriagePipeline:
             NotFoundError: `alert_id` does not exist (propagates from `get_alert_for_update`).
             VerdictValidationError | LLMCallError: The run failed; the session was rolled back
                 first.
+            ValidationError: `alerts.raw` no longer validates as a `SessionAlert`; the session was
+                rolled back first (m5 task-04 fix-1, review M1).
         """
         row = await get_alert_for_update(session, alert_id)
         status = row.status

@@ -116,8 +116,9 @@ class RedisTTLCache:
 
     `get`/`set` never raise: a dead Redis makes `get` answer a miss and `set` a no-op, each logged
     exactly once at WARNING with the failing key and the exception class — never the connection
-    URL/password (the client already carries that). This is what lets the api's list/stats cache
-    and the worker's AbuseIPDB reputation cache survive Redis blinking without a 500 or a raise.
+    URL/password (the client already carries that). This is what lets the worker's AbuseIPDB
+    reputation cache survive Redis blinking without a raise (the api never wires this class —
+    module docstring, review I2/R14).
     """
 
     def __init__(self, redis: Redis, *, key_prefix: str = REDIS_CACHE_KEY_PREFIX) -> None:

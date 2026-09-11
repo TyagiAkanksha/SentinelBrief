@@ -27,6 +27,10 @@ def make_engine(database_url: str, *, schema: str | None = None) -> AsyncEngine:
     infrastructure that only ever lives in `public` still resolve when connected with a
     non-public search_path.
 
+    `hide_parameters=True`: a `DBAPIError`'s `str()` never renders bound parameters —
+    `alerts.raw` and verdict text are attacker-derived (PRD §10.6) and both `api/errors.py`'s 500
+    handler and ARQ's failure log render `str(exc)`; m5 final review, ledger t02-hide.
+
     Args:
         database_url: a `postgresql://` (or already-qualified `postgresql+psycopg://`) URL.
         schema: when set, the schema to prefer on the connection search_path.
@@ -42,7 +46,7 @@ def make_engine(database_url: str, *, schema: str | None = None) -> AsyncEngine:
     if schema is not None:
         connect_args["options"] = f"-csearch_path={schema},public"
 
-    return create_async_engine(url, connect_args=connect_args)
+    return create_async_engine(url, connect_args=connect_args, hide_parameters=True)
 
 
 def make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

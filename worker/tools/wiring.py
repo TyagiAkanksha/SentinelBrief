@@ -1,8 +1,8 @@
 """`build_registry`: assembles the five PRD §6.3 enrichment tools from `Settings` (m4 task-06).
 
 The one place that wires every tool's `Settings` fields together, in the PRD §6.3 table order
-(`TOOL_NAMES`). `cache` and `http` are the two external seams `api.main`/M5 and the test suite
-override: a missing `cache` builds an in-process `InMemoryTTLCache` sized from
+(`TOOL_NAMES`). `cache` and `http` are the two external seams `worker/main.py::startup` (M5) and
+the test suite override: a missing `cache` builds an in-process `InMemoryTTLCache` sized from
 `abuseipdb_cache_max_entries`; a missing `http` builds an `httpx.AsyncClient` timed from
 `abuseipdb_timeout_s`.
 

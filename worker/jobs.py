@@ -2,18 +2,22 @@
 (PRD §6.2, §8; m5 task-01/task-02).
 
 One attempt per ARQ try, through `TriagePipeline.triage_attempt` (which raises on failure after
-rolling its own writes back). On any `Exception` the pure policy `worker/retry.py::decide_retry`
-says either retry (`raise arq.worker.Retry(defer=...)`, exponential backoff) or, on the last
-allowed try, fail: the alert is marked `failed` in its own fresh transaction and the job returns
-`"failed"` normally so ARQ keeps draining the queue — a poison alert can never wedge it (the third
-documented carve-out to CONVENTIONS.md §4's typed-exception rule: this boundary catches
-`Exception`, never `BaseException`, so `asyncio.CancelledError` still propagates). A missing alert
-(`NotFoundError`) is never retried. A successful commit publishes one `verdict.created` message
-(best-effort; a publish failure never fails the job). A `"skipped"` result (m5 task-04, PRD §6.1
-idempotency) means the alert was already triaged/failed when the attempt looked — a re-run after a
-crash that had already committed, or an overlapping run — and publishes nothing; M8's retriage
-route must flip the status back to `pending` and commit before enqueueing under a fresh job id, or
-its own re-run is skipped by this same design.
+rolling its own writes back). Each attempt is bounded by an inner `asyncio.wait_for(...,
+timeout=settings.triage_attempt_timeout_s)`, strictly below ARQ's own outer `job_timeout` (m5 fix
+wave, final review N-I1): a hung attempt becomes a builtin `TimeoutError` — an `Exception` — so the
+retry/fail policy below sees it, instead of ARQ cancelling the whole job from OUTSIDE with no retry
+and no terminal write. On any `Exception` the pure policy `worker/retry.py::decide_retry` says
+either retry (`raise arq.worker.Retry(defer=...)`, exponential backoff) or, on the last allowed
+try, fail: the alert is marked `failed` in its own fresh transaction and the job returns `"failed"`
+normally so ARQ keeps draining the queue — a poison alert can never wedge it (the third documented
+carve-out to CONVENTIONS.md §4's typed-exception rule: this boundary catches `Exception`, never
+`BaseException`, so `asyncio.CancelledError` still propagates). A missing alert (`NotFoundError`)
+is never retried. A successful commit publishes one `verdict.created` message (best-effort; a
+publish failure never fails the job). A `"skipped"` result (m5 task-04, PRD §6.1 idempotency)
+means the alert was already triaged/failed when the attempt looked — a re-run after a crash that
+had already committed, or an overlapping run — and publishes nothing; M8's retriage route must
+flip the status back to `pending` and commit before enqueueing under a fresh job id, or its own
+re-run is skipped by this same design.
 
 Every job log line carries ids, counters, `reason=` and `chain=` (exception class names) only —
 NEVER `exc_info`/a traceback and NEVER the exception's own message text. Either could render
@@ -23,6 +27,7 @@ attacker-derived data (a `pydantic.ValidationError` over `alerts.raw`, or SQLAlc
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Mapping
@@ -88,7 +93,10 @@ async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
 
     try:
         async with factory() as session:
-            attempt = await pipeline.triage_attempt(session, alert_uuid)
+            attempt = await asyncio.wait_for(
+                pipeline.triage_attempt(session, alert_uuid),
+                timeout=settings.triage_attempt_timeout_s,
+            )
     except NotFoundError:
         logger.warning("triage job: alert not found alert_id=%s job_id=%s", alert_id, job_id)
         return "missing"

@@ -5,7 +5,7 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M4 complete (tool calling); M5 (queue split + routing) next. The build plan
+**Status:** M5 complete (queue split + routing); M6 (real data) next. The build plan
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
@@ -72,8 +72,8 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
-`Settings` (`core/config.py`) never loads `.env` itself — only the compose `api` service does, via
-`env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
+`Settings` (`core/config.py`) never loads `.env` itself — the compose `api` and `worker` services
+do, via `env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
 triage_one`) reads plain environment variables, so load `.env` into your shell first:
 
 ```sh
@@ -129,9 +129,9 @@ uv run python scripts/fetch_geoip.py   # needs MAXMIND_LICENSE_KEY exported (ste
 ```
 
 Then set `GEOIP_DB_PATH=infra/geoip/GeoLite2-Country.mmdb` and
-`GEOIP_ASN_DB_PATH=infra/geoip/GeoLite2-ASN.mmdb` in `.env` (the compose `api` service mounts
-`infra/geoip` read-only at the same path). `ABUSEIPDB_API_KEY` is optional too. Without keys both
-tools answer `{"unavailable": true}`.
+`GEOIP_ASN_DB_PATH=infra/geoip/GeoLite2-ASN.mmdb` in `.env` (the compose `api` and `worker`
+services mount `infra/geoip` read-only at the same path — the worker is where the tool runs).
+`ABUSEIPDB_API_KEY` is optional too. Without keys both tools answer `{"unavailable": true}`.
 
 ### 4. Tear down
 

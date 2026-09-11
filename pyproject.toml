@@ -103,7 +103,6 @@ name = "api never imports worker or core.llm"
 type = "forbidden"
 source_modules = ["api"]
 forbidden_modules = ["worker", "core.llm"]
-allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "worker and evals never import api"

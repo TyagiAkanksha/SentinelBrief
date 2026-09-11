@@ -50,7 +50,8 @@ def create_app(
             (task-05's `/healthz` answers `redis="unconfigured"` in that case).
         cache: The `TTLCache` the read routes cache list/stats responses through, or `None` to
             install a fresh `InMemoryTTLCache` — `app.state.cache` is always installed, never
-            `None` (M5 swaps in a `RedisTTLCache` here).
+            `None` (production passes no cache= — a public route must never grow the shared
+            Redis; review I2, ruling R14).
 
     Returns:
         A configured `FastAPI` instance. Never touches the network or the filesystem.
