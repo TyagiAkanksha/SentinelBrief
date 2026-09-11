@@ -123,8 +123,10 @@ secret generated in-shell and never printed, every resource name recorded in `do
      `backup.env`'s bucket name edited to the real one — and committed back).
   8. **Secrets, geoip, migrate, up** — `./fetch-secrets.sh` (expect `OK wrote 5 vars … and 1 var
      …`), `aws ecr get-login-password | docker login …`, `docker compose pull`, the geoip one-off
-     from `prod/README.md`, `docker compose run --rm api uv run alembic upgrade head`, `docker
-     compose up -d`, `docker compose ps` → six `healthy`/`running`.
+     from `prod/README.md`, `docker compose run --rm api uv run alembic upgrade head`, `docker compose up -d`, `docker compose ps` → six `healthy`/`running` (task-03 review M8:
+     `caddy` starts on `service_started`, so the web vhost may answer 502 for a few seconds until
+     `web` is listening — normal, not a fault; M5: commit before `push_ecr.sh` — the script refuses a
+     dirty tree from fix-1 on).
   9. **Honeypot host** (task-02 review notes: install the shipper together with Cowrie so its first
      read of `cowrie.json` is small; before `systemctl enable --now sentinelbrief-shipper`, prove
      `sudo -u shipper head -c 1 /opt/sentinelbrief-honeypot/data/log/cowrie.json` succeeds and the
@@ -159,11 +161,14 @@ secret generated in-shell and never printed, every resource name recorded in `do
   0. `curl -s $API/healthz` → `{"status":"ok","db":"ok","redis":"ok"}`.
   1. TLS + headers: `curl -sI $WEB | grep -iE 'strict-transport|x-frame|HTTP/'` → `HTTP/2 200`,
      HSTS, `DENY`; same for `$API/healthz`.
-  2. Ingest gates: unsigned POST → `401 {"error":{"code":"unauthorized"…}}`; a 3 MB body
-     (`head -c 3000000 /dev/zero`) → `413` (Caddy's; body `{"error"…}` or Caddy's plain 413 —
-     record which); a 1.9 MB unsigned body → `413 payload_too_large` (the app's — proves the
-     in-app cap independent of Caddy); a chunked unsigned POST (`-H 'Transfer-Encoding: chunked'
-     -H 'Content-Length:'`) → `411`.
+  2. Ingest gates: unsigned POST → `401 {"error":{"code":"unauthorized"…}}`; a 1.9 MB unsigned
+     body → `413 payload_too_large` (the app's declared-length guard — under Caddy's cap); a 3 MB
+     body with a truthful `Content-Length` → ALSO the app's `413` (the declared length is checked
+     before any byte streams — task-03 review M9: Caddy's `max_size` only bites once bytes stream
+     past 2 000 000). To observe CADDY's cap send a 3 MB CHUNKED body
+     (`-H 'Transfer-Encoding: chunked'`): Caddy cuts the stream before the app's `411` — record the
+     client-visible status (Caddy's own error, not 413). A SMALL chunked unsigned POST → `411
+     length_required`.
   3. First real session `triaged` (step 10's outputs).
   4. CORS: `Origin: https://evil.example.com` → no `access-control-allow-origin`; `Origin: $WEB` →
      header echoes `$WEB`.
