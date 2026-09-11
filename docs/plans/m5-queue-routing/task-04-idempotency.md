@@ -82,10 +82,12 @@ down for the milestone's acceptance walk. M8's retriage is told how to opt out o
   # worker/triage.py — triage_attempt after this task
   async def triage_attempt(self, session, alert_id) -> AttemptResult:
       # row = await get_alert_for_update(session, alert_id)            # NotFoundError propagates
-      # if row.status != "pending":
-      #     await session.rollback()                                    # release the lock; nothing was written
-      #     logger.info("triage attempt skipped alert_id=%s status=%s", alert_id, row.status)
+      # status = row.status                                             # capture BEFORE the rollback:
+      # if status != "pending":                                         # rollback() expires the instance and a
+      #     await session.rollback()                                    # later `row.status` read needs IO (MissingGreenlet) — review PC2
+      #     logger.info("triage attempt skipped alert_id=%s status=%s", alert_id, status)
       #     return AttemptResult(status="skipped", verdict_id=None, outcome=None)
+      # alert = SessionAlert.model_validate(row.raw)                    # INSIDE the try below (review M1): a malformed row must release the lock too
       # ... unchanged: run -> persist_verdict -> commit; BaseException -> rollback -> raise
       # The lock is held across the LLM call(s) on purpose: a concurrent duplicate run must wait for the truth, not race it.
       # M8 retriage: PRD §5 wants a NEW verdict row per retriage; the admin route must `set_alert_status(..., "pending")` + commit
@@ -125,7 +127,10 @@ LLM double; the only thing faked is the vendor). Ordering assumptions are stated
 | lock + NotFound | `tests/test_alert_service.py::test_get_alert_for_update_returns_the_row_or_raises` | existing alert → `AlertRow` with the id; `uuid4()` → `NotFoundError` |
 | lock blocks a second reader | `tests/test_alert_service.py::test_get_alert_for_update_blocks_until_the_holder_commits` | session A locks; session B's `get_alert_for_update` (a task) is still pending after `await asyncio.sleep(0.3)`; A commits; B completes within 2 s. Assumption stated: two pooled connections on `db_engine` (pool size ≥ 2 — SQLAlchemy's default 5) |
 | skip when triaged | `tests/test_triage_alert.py::test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call` | seed with a verdict (status `triaged`) → `AttemptResult(status="skipped", verdict_id=None, outcome=None)`; `len(fake.calls) == 0`; verdict count still 1; a `failed` alert → skipped too; `triage_alert` on the same alert → `"triaged"` (the mapping pinned) |
-| pending runs | `tests/test_triage_alert.py::test_triage_attempt_runs_a_pending_alert` | (already covered by task-02's commit pin — keep; add the assertion that the pending row's lock is released after commit: a follow-up `get_alert_for_update` in a fresh session returns within 2 s) |
+| pending runs | `tests/test_triage_alert.py::test_triage_attempt_returns_verdict_id_and_commits` (task-02's pin, extended — review PC3: there is no separate `…_runs_a_pending_alert` test) | + the assertion that the pending row's lock is released after commit: a follow-up `get_alert_for_update` in a fresh session returns within 2 s |
+| skip releases the lock (review I1, fix-1) | `…::test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call` | + a fresh session's `get_alert_for_update` returns within 2 s after the skip (mutant: drop the skip branch's `rollback()` → `TimeoutError`) |
+| FOR UPDATE re-populates (review I3, fix-1) | `tests/test_alert_service.py::test_get_alert_for_update_refreshes_a_stale_identity_map_row` | session A read `pending` and committed; B set `triaged`; A's `get_alert_for_update` returns `triaged` (`populate_existing=True`) |
+| malformed raw releases the lock (review M1, fix-1) | `…::test_triage_attempt_releases_the_lock_when_the_raw_payload_no_longer_validates` | a corrupted `raw` → `pydantic.ValidationError` from the attempt; a fresh session's `get_alert_for_update` returns within 2 s; still `pending`, 0 verdicts |
 | direct double invocation | `tests/test_job_idempotency.py::test_running_the_job_twice_writes_one_verdict_and_spends_once` | `ctx` with `job_try=1`, `triage_alert_job(ctx, str(aid))` → `"triaged"`; again → `"skipped"`; 1 verdict; `len(llm.calls) == 1`; the verdict row's `input_tokens == 100` (one call's usage — "no double token spend recorded") |
 | overlap serialises | `tests/test_job_idempotency.py::test_overlapping_attempts_serialise_on_the_row_lock_and_the_loser_skips` | `BlockingFakeLLMClient([VALID4])` shared by two `TriagePipeline`s; task A `= triage_attempt(session_a, aid)`; `await started.wait()`; task B `= triage_attempt(session_b, aid)`; `await asyncio.sleep(0.3)`: `len(llm.calls) == 1` and B not done (blocked in the DB); `release.set()`; `await asyncio.gather(A, B)` → `{r.status for r in results} == {"triaged", "skipped"}` (set — order-independent); 1 verdict; `len(llm.calls) == 1` |
 | cancel mid-LLM, immediate re-run | `tests/test_job_idempotency.py::test_cancelled_run_is_re_run_by_the_next_worker_with_one_verdict` | enqueue; `worker1 = Worker(..., burst=True, handle_signals=False, ...)` with the blocking fake; `t = asyncio.create_task(worker1.async_run())`; `await started.wait()`; `worker1.handle_sig(signal.SIGTERM)` (ARQ's own graceful path: cancels every running job task and the poll loop — `run_job`'s cancel branch logs "cancelled, will be run again", deletes the in-progress key and leaves the job queued); `await asyncio.gather(t, return_exceptions=True)`; `await worker1.close()`; assert 0 verdicts, status `pending`, `zcard == 1` (still queued), `await arq_redis.exists("arq:in-progress:" + triage_job_id(aid)) == 0`, `worker1.jobs_retried == 1`; `worker2` (a fresh non-blocking fake `[VALID4]` in a fresh pipeline) burst → 1 verdict, `triaged`, `worker2.jobs_complete == 1`; the verdict's `input_tokens == 100`. Assumption stated: the blocking fake never returned, so its usage was never persisted; `release` is set in `finally` |
@@ -166,7 +171,7 @@ Roles: the **test-author** writes Steps 1–2; the **implementer** does Steps 3�
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run pytest -q -rs tests/test_alert_service.py tests/test_triage_alert.py tests/test_job_idempotency.py tests/test_worker_job.py tests/test_worker_job_retry.py   # all pass, 0 skipped
 grep -n "with_for_update" core/services/alerts.py | wc -l     # 1
-grep -n "get_alert_for_update" worker/triage.py | wc -l       # 1 (the attempt) — get_alert stays for every other reader
+grep -c "await get_alert_for_update(" worker/triage.py       # 1 — the single call site, in triage_attempt (review PC1); get_alert stays for every other reader
 uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov-fail-under=90
 ```
 

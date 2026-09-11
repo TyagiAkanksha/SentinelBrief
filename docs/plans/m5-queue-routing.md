@@ -125,7 +125,7 @@ task-03 extends and swaps the caches both entrypoints wire.
 | Two-tier routing live with config thresholds | task-03 tests; live `fixtures/alerts/alert5.json` through the stack shows `escalated_model=true`, `model_final=STRONG_MODEL`, `alert1.json` shows `false` (needs the owner's `STRONG_MODEL` + price) |
 | Retry/poison handling | task-02: the poison test (three attempts, then `failed`, the queue keeps draining) and the transient-retry test with a real `Worker`; live: `docker compose … logs worker` after the burst shows no `pending` survivor |
 | Burst of 50 POSTs → all triaged eventually | the acceptance script polls `alerts.status` until every one of the 50 is `triaged`/`failed`; counts pasted |
-| Kill the worker mid-job → job re-runs, no duplicate verdicts | task-04 tests + the live `docker kill` procedure in its brief (lease = `TRIAGE_JOB_TIMEOUT_S + 10` s; the walk sets 60 s); `count(*)` per alert = 1 pasted |
+| Kill the worker mid-job → job re-runs, no duplicate verdicts | task-04 tests + the live `docker kill` procedure in its brief (lease = `TRIAGE_JOB_TIMEOUT_S + 10` s; the walk sets 60 s); rehearsed 2026-09-10 on the dev stack: kill mid-LLM → ARQ re-ran at `job_try=2` 70.63 s after the enqueue (≈ the 70 s lease), `←` 5.27 s later — ≈ 75.9 s kill-to-`triaged`; `count(*)` per alert = 1 pasted |
 | `/healthz` reports Redis | task-05: `stop redis` → 503 `redis: "error"` and the api container turns unhealthy; `start redis` → 200 |
 
 ## Status
