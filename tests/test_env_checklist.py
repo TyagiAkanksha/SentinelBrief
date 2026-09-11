@@ -91,3 +91,31 @@ def test_checklist_carries_no_value_shaped_secret() -> None:
         assert _inside_a_placeholder(match.span()), (
             f"32+-char hex/base64-looking run outside a <placeholder>: {match.group()!r}"
         )
+
+
+def test_backup_bucket_listed() -> None:
+    """m6 task-04 brief, Interfaces -> test table, `checklist` row: a `BACKUP_S3_BUCKET` row
+    exists (added under a "Host (root) — backup timer" table per the task-04 Files list) and its
+    Secret? cell is marked non-secret — matching this table's own shape, where every non-secret
+    cell starts with `N` and every secret cell starts with `**Y**` (see `POSTGRES_USER`/
+    `POSTGRES_PASSWORD` above) — because a bucket name is instance-specific but not a credential.
+    """
+    text = _read_checklist()
+
+    row_lines = [
+        line
+        for line in text.splitlines()
+        if line.strip().startswith("|") and "`BACKUP_S3_BUCKET`" in line
+    ]
+    assert row_lines, "BACKUP_S3_BUCKET row not present in env-checklist.md"
+
+    cells = [cell.strip() for cell in row_lines[0].split("|")]
+    # A `| Variable | Secret? | Where | Value |` row splits (on "|") into
+    # ["", "`VAR`", "Secret?", "Where", "Value", ""] — index 2 is the Secret? cell.
+    secret_cell = cells[2]
+    assert secret_cell.startswith("N"), (
+        f"BACKUP_S3_BUCKET's Secret? cell is not marked non-secret: {secret_cell!r}"
+    )
+    assert not secret_cell.startswith("**Y**"), (
+        f"BACKUP_S3_BUCKET's Secret? cell reads as secret: {secret_cell!r}"
+    )
