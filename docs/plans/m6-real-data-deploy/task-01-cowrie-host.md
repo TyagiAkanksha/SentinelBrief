@@ -88,7 +88,7 @@ pin the shape of both files.
       logging: *default-logging
   # NO env_file, NO environment secrets, NO other services, NO top-level volumes (the shipper is a
   # systemd unit on the host, task-02). Both bind sources are created by the runbook's user-data,
-  # owned by uid:gid 1000:1000 — the `cowrie` user inside the official image — and are world-readable
+  # owned by uid:gid 999:999 — the `cowrie` user inside the official image (verified by the task-01 implementer against the pinned digest; the briefing's 1000 was wrong) — and are world-readable
   # (Cowrie's files land 0644), which is all the shipper's read access needs.
   ```
 
@@ -117,8 +117,10 @@ pin the shape of both files.
      `gh api repos/docker/compose/releases/latest`); the implementer re-verifies it exists),
      `systemctl disable --now sshd && systemctl mask sshd` (port 22 must be free before Cowrie
      starts; SSM Agent is preinstalled on AL2023 and needs no port), `mkdir -p
-     /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 1000:1000
-     /opt/sentinelbrief-honeypot/data` (uid 1000 = the image's `cowrie` user), `useradd --system
+     /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 999:999
+     /opt/sentinelbrief-honeypot/data` (uid 999 = the image's `cowrie` user — verified on the pinned
+     digest, `cowrie:x:999:999`; the briefing said 1000, which would have left Cowrie unable to write
+     its log on the box), `useradd --system
      --no-create-home --shell /sbin/nologin shipper` (task-02's unit runs as this user),
      `usermod -aG docker ssm-user`.
   4. Copy `honeypot/docker-compose.yml` + `honeypot/etc/cowrie.cfg` to `/opt/sentinelbrief-honeypot/`
