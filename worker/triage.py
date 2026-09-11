@@ -61,7 +61,7 @@ from core.llm import ChatMessage, LLMClient, LLMResult, tool_calls_message
 from core.models.alerts import AlertStatus
 from core.schemas.alert import SessionAlert
 from core.schemas.verdict import VERDICT_JSON_SCHEMA, Verdict
-from core.services.alerts import get_alert, set_alert_status
+from core.services.alerts import get_alert_for_update, set_alert_status
 from worker.outcome import ToolCallRecord, TriageOutcome
 from worker.prompts import build_messages, build_tool_result_message, load_prompt
 from worker.routing import should_escalate
@@ -409,14 +409,30 @@ class TriagePipeline:
         )
 
     async def triage_attempt(self, session: AsyncSession, alert_id: uuid.UUID) -> AttemptResult:
-        """Load `alert_id`, run it through the pipeline, and persist the outcome as one unit.
+        """Load `alert_id` with a row lock, run it through the pipeline, and persist the outcome
+        as one unit — or skip if another attempt already finished it (m5 task-04, PRD §6.1
+        idempotency).
 
-        Success persists the verdict and its tool-call trace (`worker.store.persist_verdict`) and
-        commits once, per PRD §6.2. ANY failure (including cancellation) rolls that write back and
-        RAISES unchanged — deciding retry-vs-fail is `worker/jobs.py`'s job (m5 task-02), not this
+        `get_alert_for_update` takes a blocking `SELECT ... FOR UPDATE` (never `SKIP LOCKED`/
+        `NOWAIT` — the M5 spine's ruling) and this method holds that lock for the WHOLE attempt:
+        through the LLM/tool loop, `persist_verdict`, and the final commit or rollback. This is on
+        purpose — a concurrent duplicate run (an overlapping enqueue, a re-run after a crash or a
+        graceful restart) must wait for the truth (this transaction's outcome), never race it. If
+        the locked row's status is no longer `pending` (an earlier attempt already committed
+        `triaged` or `failed`), the lock is released with a rollback and the attempt returns
+        `AttemptResult(status="skipped", ...)` before any LLM call, so a job that runs twice can
+        never write a second verdict row or spend a second set of tokens. Otherwise, success
+        persists the verdict and its tool-call trace (`worker.store.persist_verdict`) and commits
+        once, per PRD §6.2. ANY failure (including cancellation) rolls that write back and RAISES
+        unchanged — deciding retry-vs-fail is `worker/jobs.py`'s job (m5 task-02), not this
         method's. The alert is loaded and `run` completes fully before any write, so a tool's own
         SAVEPOINT (`get_alert_history`'s `session.begin_nested()`) never autoflushes pending ORM
         state ahead of `persist_verdict`'s own writes.
+
+        M8's retriage: PRD §5 wants a NEW verdict row per retriage, so the admin route must
+        `set_alert_status(..., "pending")` and commit before enqueueing under a fresh job id
+        (`triage:<alert_id>:retriage:<n>`, M8 defines it) — a `triaged` row is otherwise skipped
+        by design.
 
         Args:
             session: The request/job-scoped `AsyncSession`; this method owns its commit.
@@ -424,14 +440,20 @@ class TriagePipeline:
 
         Returns:
             `AttemptResult(status="triaged", verdict_id=<the new row's id>, outcome=<the run's
-            TriageOutcome>)` on success.
+            TriageOutcome>)` on success; `AttemptResult(status="skipped", verdict_id=None,
+            outcome=None)` when the locked row was no longer `pending`.
 
         Raises:
-            NotFoundError: `alert_id` does not exist (propagates from `get_alert`).
+            NotFoundError: `alert_id` does not exist (propagates from `get_alert_for_update`).
             VerdictValidationError | LLMCallError: The run failed; the session was rolled back
                 first.
         """
-        row = await get_alert(session, alert_id)
+        row = await get_alert_for_update(session, alert_id)
+        status = row.status
+        if status != "pending":
+            await session.rollback()
+            logger.info("triage attempt skipped alert_id=%s status=%s", alert_id, status)
+            return AttemptResult(status="skipped", verdict_id=None, outcome=None)
         alert = SessionAlert.model_validate(row.raw)
         try:
             outcome = await self.run(alert, session=session)
@@ -465,7 +487,7 @@ class TriagePipeline:
             `"triaged"` on success, `"failed"` on a validation or LLM-call failure.
 
         Raises:
-            NotFoundError: `alert_id` does not exist (propagates from `get_alert`).
+            NotFoundError: `alert_id` does not exist (propagates from `triage_attempt`).
         """
         try:
             await self.triage_attempt(session, alert_id)

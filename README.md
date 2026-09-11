@@ -117,6 +117,10 @@ docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sen
 Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
 only DDL path.
 
+Triage jobs are idempotent: restarting or `docker kill`-ing the worker mid-job just re-runs the
+interrupted job without duplicating verdicts (the attempt holds a row lock and skips alerts that
+are no longer `pending`).
+
 #### Enrichment tools (optional)
 
 ```sh

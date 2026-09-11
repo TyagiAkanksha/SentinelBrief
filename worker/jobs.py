@@ -9,7 +9,11 @@ allowed try, fail: the alert is marked `failed` in its own fresh transaction and
 documented carve-out to CONVENTIONS.md §4's typed-exception rule: this boundary catches
 `Exception`, never `BaseException`, so `asyncio.CancelledError` still propagates). A missing alert
 (`NotFoundError`) is never retried. A successful commit publishes one `verdict.created` message
-(best-effort; a publish failure never fails the job).
+(best-effort; a publish failure never fails the job). A `"skipped"` result (m5 task-04, PRD §6.1
+idempotency) means the alert was already triaged/failed when the attempt looked — a re-run after a
+crash that had already committed, or an overlapping run — and publishes nothing; M8's retriage
+route must flip the status back to `pending` and commit before enqueueing under a fresh job id, or
+its own re-run is skipped by this same design.
 
 Every job log line carries ids, counters, `reason=` and `chain=` (exception class names) only —
 NEVER `exc_info`/a traceback and NEVER the exception's own message text. Either could render
@@ -67,7 +71,8 @@ async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
 
     Returns:
         `"triaged"` on success; `"failed"` on the last allowed try; `"missing"` when `alert_id`
-        does not exist.
+        does not exist; `"skipped"` when another attempt already triaged/failed the alert (m5
+        task-04).
 
     Raises:
         ValueError: `alert_id` is not a valid UUID (a bug in our own `enqueue_triage`, never real
@@ -88,36 +93,15 @@ async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
         logger.warning("triage job: alert not found alert_id=%s job_id=%s", alert_id, job_id)
         return "missing"
     except Exception as exc:  # the documented third CONVENTIONS.md §4 carve-out (m5 task-02)
-        decision = decide_retry(
+        return await _handle_attempt_failure(
             exc,
+            alert_id=alert_id,
+            alert_uuid=alert_uuid,
+            job_id=job_id,
             job_try=job_try,
-            max_tries=settings.triage_job_max_tries,
-            base_s=settings.triage_job_backoff_base_s,
-            max_s=settings.triage_job_backoff_max_s,
+            settings=settings,
+            factory=factory,
         )
-        if decision.action == "retry":
-            logger.warning(
-                "triage job retry alert_id=%s job_id=%s try=%d/%d reason=%s defer_s=%.1f",
-                alert_id,
-                job_id,
-                job_try,
-                settings.triage_job_max_tries,
-                decision.reason,
-                decision.defer_s,
-            )
-            raise Retry(defer=decision.defer_s) from exc
-        log_call = logger.warning if isinstance(exc, SentinelBriefError) else logger.error
-        log_call(
-            "triage job failed alert_id=%s job_id=%s try=%d/%d reason=%s chain=%s",
-            alert_id,
-            job_id,
-            job_try,
-            settings.triage_job_max_tries,
-            decision.reason,
-            _exc_chain(exc),
-        )
-        await mark_alert_failed(factory, alert_uuid)
-        return "failed"
 
     if (
         attempt.status == "triaged"
@@ -131,6 +115,67 @@ async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
             verdict=attempt.outcome.verdict,
         )
     return attempt.status
+
+
+async def _handle_attempt_failure(
+    exc: Exception,
+    *,
+    alert_id: str,
+    alert_uuid: uuid.UUID,
+    job_id: str | None,
+    job_try: int,
+    settings: Settings,
+    factory: async_sessionmaker[AsyncSession],
+) -> JobResult:
+    """`triage_alert_job`'s exception-handling body (the M7 lift): decide retry-vs-fail for `exc`
+    and act on it.
+
+    Args:
+        exc: The exception `triage_attempt` raised.
+        alert_id: The alert id, as the string `triage_alert_job` was called with (for logging).
+        alert_uuid: The same id, parsed, for `mark_alert_failed`.
+        job_id: The ARQ job id (for logging).
+        job_try: The current ARQ try number.
+        settings: The retry policy's config surface.
+        factory: The session factory `mark_alert_failed` opens its fresh session through.
+
+    Returns:
+        `"failed"` once the alert has been marked `failed` in its own transaction (the last
+        allowed try).
+
+    Raises:
+        arq.worker.Retry: The attempt failed and another try remains.
+    """
+    decision = decide_retry(
+        exc,
+        job_try=job_try,
+        max_tries=settings.triage_job_max_tries,
+        base_s=settings.triage_job_backoff_base_s,
+        max_s=settings.triage_job_backoff_max_s,
+    )
+    if decision.action == "retry":
+        logger.warning(
+            "triage job retry alert_id=%s job_id=%s try=%d/%d reason=%s defer_s=%.1f",
+            alert_id,
+            job_id,
+            job_try,
+            settings.triage_job_max_tries,
+            decision.reason,
+            decision.defer_s,
+        )
+        raise Retry(defer=decision.defer_s) from exc
+    log_call = logger.warning if isinstance(exc, SentinelBriefError) else logger.error
+    log_call(
+        "triage job failed alert_id=%s job_id=%s try=%d/%d reason=%s chain=%s",
+        alert_id,
+        job_id,
+        job_try,
+        settings.triage_job_max_tries,
+        decision.reason,
+        _exc_chain(exc),
+    )
+    await mark_alert_failed(factory, alert_uuid)
+    return "failed"
 
 
 async def mark_alert_failed(factory: async_sessionmaker[AsyncSession], alert_id: uuid.UUID) -> None:
