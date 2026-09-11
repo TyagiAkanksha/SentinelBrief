@@ -7,6 +7,10 @@ These are pure text pins over the Dockerfile's instructions — no `docker build
 needed. `_instructions()` joins Docker's `\\`-continued lines into one logical instruction per
 Dockerfile directive (HEALTHCHECK and CMD both span two source lines in the reference shape) so
 the assertions below read the same instruction a `docker build` would.
+
+m6 task-03 adds `test_scripts_copied_for_deploy_time_geoip_fetch`: the builder stage gains
+`COPY scripts ./scripts` and the runtime stage copies it back out, so `scripts/fetch_geoip.py` can
+run inside a one-off `docker compose run` container on the box (the box has no repo checkout).
 """
 
 from __future__ import annotations
@@ -253,6 +257,36 @@ def test_runtime_stage_copies_venv_and_sources() -> None:
             assert "--chown=appuser:appuser" in block, (
                 f"runtime COPY of {source} is missing --chown=appuser:appuser: {block}"
             )
+
+
+def test_scripts_copied_for_deploy_time_geoip_fetch() -> None:
+    """m6 task-03 brief Interfaces: the builder stage runs `COPY scripts ./scripts`, and the
+    runtime stage copies it back out with `COPY --from=builder ... /app/scripts ./scripts
+    --chown=appuser:appuser` (same non-root ownership as every other runtime source copy) — so
+    `scripts/fetch_geoip.py` is present in a one-off `docker compose run --rm api ...` container on
+    the box (prod/README.md's "geoip one-off"), which has no repo checkout to run it from
+    otherwise.
+    """
+    instructions = _instructions()
+    from_indices = [i for i, block in enumerate(instructions) if block.split()[0].upper() == "FROM"]
+    assert len(from_indices) >= 2, "expected a builder stage and a runtime stage"
+
+    builder_instructions = instructions[from_indices[0] : from_indices[-1]]
+    assert any(
+        block.split() == ["COPY", "scripts", "./scripts"] for block in builder_instructions
+    ), "builder stage is missing `COPY scripts ./scripts`"
+
+    tail = instructions[from_indices[-1] :]
+    entries = _runtime_copy_from_builder(tail)
+    scripts_entries = [
+        (source, dest, block) for source, dest, block in entries if source == "/app/scripts"
+    ]
+    assert scripts_entries, (
+        "runtime stage is missing `COPY --from=builder ... /app/scripts ./scripts`"
+    )
+    for _source, dest, block in scripts_entries:
+        assert dest == "./scripts", block
+        assert "--chown=appuser:appuser" in block, block
 
 
 def test_prompts_not_dockerignored() -> None:
