@@ -18,6 +18,12 @@ m5 task-03 (PRD §6.4) adds `test_fake_path_never_routes_even_with_strong_model_
 arrival — the fake path's own `--live` gate already keeps routing off). m5 task-03 fix-1 (review
 I1) adds `test_live_with_strong_equal_to_cheap_exit_1`, RED until Part B lands the `ValueError`
 handling `--live` needs.
+
+m5 task-05 re-pins `test_load_candidates_returns_fixtures_then_golden` for `load_candidates`'s new
+3-tuple return (`SessionAlert`, canned verdict json, tool names) — `main()` no longer re-globs the
+fixtures directory to line the per-candidate tool names up with `load_candidates`'s own
+(separately re-globbed) fixture order, a duplication `test_main_no_longer_re_globs_the_fixtures_
+directory_for_tool_names` pins away at the source level.
 """
 
 from __future__ import annotations
@@ -228,16 +234,41 @@ def test_load_candidates_returns_fixtures_then_golden(seed_dev: ModuleType) -> N
         SessionAlert.model_validate(json.loads(path.read_text())).session_id
         for path in fixture_paths
     ]
-    actual_first_five_session_ids = [alert.session_id for alert, _ in candidates[:5]]
+    actual_first_five_session_ids = [
+        alert.session_id for alert, _canned, _tool_names in candidates[:5]
+    ]
     assert actual_first_five_session_ids == expected_first_five_session_ids
+
+    # m5 task-05: each of the first five (fixture) rows carries its own `FIXTURE_TOOL_TURNS`
+    # entry, in the same sorted-stem order `load_candidates` loads fixtures in.
+    expected_first_five_tool_names = [
+        seed_dev.FIXTURE_TOOL_TURNS.get(path.stem, ()) for path in fixture_paths
+    ]
+    actual_first_five_tool_names = [names for _alert, _canned, names in candidates[:5]]
+    assert actual_first_five_tool_names == expected_first_five_tool_names
 
     golden_cases = load_golden(seed_dev.DEFAULT_GOLDEN)
     expected_golden_fingerprints = [case.case_id for case in golden_cases]
-    actual_golden_fingerprints = [alert.fingerprint() for alert, _ in candidates[5:]]
+    actual_golden_fingerprints = [
+        alert.fingerprint() for alert, _canned, _tool_names in candidates[5:]
+    ]
     assert actual_golden_fingerprints == expected_golden_fingerprints
 
-    all_fingerprints = [alert.fingerprint() for alert, _ in candidates]
+    # Every golden-set row carries no scripted tool turn (only the fixture rows do).
+    actual_golden_tool_names = [names for _alert, _canned, names in candidates[5:]]
+    assert actual_golden_tool_names == [()] * 20
+
+    all_fingerprints = [alert.fingerprint() for alert, _canned, _tool_names in candidates]
     assert len(set(all_fingerprints)) == 25
+
+
+def test_main_no_longer_re_globs_the_fixtures_directory_for_tool_names() -> None:
+    """m5 task-05: `load_candidates` itself computes each candidate's tool names now (from its
+    own, single glob of `fixtures`), so `main()` no longer needs a second, separately-globbed
+    `fixture_stems`/`tool_names_by_candidate` pass to line them up."""
+    text = SEED_SCRIPT.read_text()
+    assert "fixture_stems" not in text
+    assert "tool_names_by_candidate" not in text
 
 
 # --- main: failure paths (task-06 brief's check-order table) ------------------------------------

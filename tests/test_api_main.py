@@ -22,6 +22,10 @@ No DB/Redis connection is needed here (`make_engine`/`make_redis` never connect 
 below), so `Settings()` never reads a real `.env` file regardless of `cwd` — the only leak vector
 left is real process environment variables, which `monkeypatch.delenv`/`setenv` fully control for
 the secrets under test.
+
+m5 task-05 adds `test_api_main_installs_a_redis_cache`: `app.state.cache` is a `RedisTTLCache`
+over the same `redis_client` `app.state.redis` uses, backing the list/stats response cache
+(m3 task-02's `TTLCache` seam) instead of the default `InMemoryTTLCache`.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ import pytest
 from arq.connections import ArqRedis
 from fastapi import FastAPI
 
+from core.cache import RedisTTLCache
 from core.config import Settings
 from core.errors import ConfigError
 
@@ -114,6 +119,22 @@ def test_required_values_present_builds_app_with_enqueue_and_redis(
         assert callable(module.app.state.enqueue)
         assert isinstance(module.app.state.redis, ArqRedis)
         assert not hasattr(module.app.state, "triage")
+    finally:
+        _reset_api_main()
+
+
+def test_api_main_installs_a_redis_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("INGEST_HMAC_SECRET", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/x")
+    monkeypatch.setenv("INGEST_HMAC_SECRET", "test-secret")
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6399/0")
+    _reset_api_main()
+
+    try:
+        module = importlib.import_module("api.main")
+        assert isinstance(module.app.state.cache, RedisTTLCache)
     finally:
         _reset_api_main()
 

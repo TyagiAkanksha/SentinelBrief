@@ -13,6 +13,12 @@ client and the DB engine, closing both (idempotently) in `shutdown` (M4 task-06 
 Unlike every other new file in this task, `worker.main` is imported **inside** each test after
 `monkeypatch` sets the env — never at module top — so a fresh `importlib.import_module` re-runs
 its top-level wiring every time (mirrors `tests/test_api_main.py::_reset_api_main`).
+
+m5 task-05 adds `test_startup_installs_a_redis_backed_reputation_cache` and threads a real
+`arq_redis` into `ctx["redis"]` for every test that calls `startup(ctx)` directly: in production,
+ARQ has already put its own connection pool at `ctx["redis"]` by the time `on_startup` runs (the
+task-01 `Context`), so a unit test driving `startup` without a running ARQ worker must supply it
+itself — `startup` now builds the worker's `RedisTTLCache` from exactly that key.
 """
 
 from __future__ import annotations
@@ -23,9 +29,11 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from arq.connections import ArqRedis
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from core.cache import RedisTTLCache
 from core.config import ModelPrice, Settings
 from core.errors import ConfigError
 from core.queue import TRIAGE_JOB_NAME, TRIAGE_QUEUE_NAME
@@ -166,6 +174,7 @@ def test_worker_settings_are_read_from_settings(monkeypatch: pytest.MonkeyPatch)
 
 async def test_startup_builds_the_seams_and_shutdown_closes_them(
     monkeypatch: pytest.MonkeyPatch,
+    arq_redis: ArqRedis,
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
@@ -194,7 +203,7 @@ async def test_startup_builds_the_seams_and_shutdown_closes_them(
             database_url=SecretStr("postgresql://u:p@127.0.0.1:1/x"),
             abuseipdb_timeout_s=7.5,
         )
-        ctx: dict[str, Any] = {"settings": settings}
+        ctx: dict[str, Any] = {"settings": settings, "redis": arq_redis}
 
         await module.startup(ctx)
 
@@ -214,8 +223,57 @@ async def test_startup_builds_the_seams_and_shutdown_closes_them(
         _reset_worker_main()
 
 
+async def test_startup_installs_a_redis_backed_reputation_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    arq_redis: ArqRedis,
+) -> None:
+    """m5 task-05 (Interfaces → test table, "worker wiring"): `startup` builds the reputation
+    cache from `ctx["redis"]` — the connection pool ARQ has already installed there by the time
+    `on_startup` runs — so the free tier's quota (and the `429` back-off flag) survive a worker
+    restart, shared across every worker process."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CHEAP_MODEL", raising=False)
+    monkeypatch.delenv("MODEL_PRICES_JSON", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6399/0")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("CHEAP_MODEL", "fake-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON", '{"fake-model":{"input_per_mtok":"0","output_per_mtok":"0"}}'
+    )
+    _reset_worker_main()
+
+    try:
+        module = importlib.import_module("worker.main")
+        settings = Settings(
+            llm_api_key=SecretStr("sk-test"),
+            cheap_model="fake-model",
+            model_prices_json={
+                "fake-model": ModelPrice(input_per_mtok=Decimal("0"), output_per_mtok=Decimal("0"))
+            },
+            database_url=SecretStr("postgresql://u:p@127.0.0.1:1/x"),
+        )
+        ctx: dict[str, Any] = {"settings": settings, "redis": arq_redis}
+
+        try:
+            await module.startup(ctx)
+
+            # Private-attribute access is the accepted pattern for a wiring pin (task-06 fix-1
+            # brief, I1): there is no public accessor for a tool's own configured cache.
+            tools = ctx["pipeline"]._tools  # type: ignore[attr-defined]
+            reputation_tool = tools._by_name["lookup_ip_reputation"]  # type: ignore[attr-defined]
+            assert isinstance(reputation_tool._cache, RedisTTLCache)  # type: ignore[attr-defined]
+        finally:
+            await module.shutdown(ctx)
+    finally:
+        _reset_worker_main()
+
+
 async def test_startup_unpriced_cheap_model_is_a_config_error(
     monkeypatch: pytest.MonkeyPatch,
+    arq_redis: ArqRedis,
 ) -> None:
     """The pin that leaves `tests/test_api_main.py` (spine M5-b): an unpriced `CHEAP_MODEL` is a
     boot-time `ConfigError`, raised from `startup` (`OpenAICompatibleLLMClient.from_settings`),
@@ -242,7 +300,7 @@ async def test_startup_unpriced_cheap_model_is_a_config_error(
             model_prices_json={},
             database_url=SecretStr("postgresql://u:p@127.0.0.1:1/x"),
         )
-        ctx: dict[str, Any] = {"settings": settings}
+        ctx: dict[str, Any] = {"settings": settings, "redis": arq_redis}
 
         with pytest.raises(ConfigError) as exc_info:
             await module.startup(ctx)

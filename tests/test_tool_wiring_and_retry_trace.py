@@ -23,6 +23,10 @@ grows):
 I1/I2/M5 and the http-seam test pin *existing, correct* behavior (mutation-proofed, pasted into
 the test-author report — never mocking our own code, `.claude/rules/tests.md`); I3 is a genuine
 regression and stays RED here until Part B's implementer fix lands.
+
+m5 task-05 extends I1 (`test_build_registry_consumes_every_wired_settings_field`) with
+`abuseipdb_quota_backoff_s=321`, pinning that `build_registry` threads the new AbuseIPDB
+quota-back-off setting into `IpReputationTool` like every other wired field.
 """
 
 from __future__ import annotations
@@ -181,6 +185,7 @@ async def test_build_registry_consumes_every_wired_settings_field(
         alert_history_max_window_hours=5,
         geoip_db_path="/nonexistent/c.mmdb",
         geoip_asn_db_path="/nonexistent/a.mmdb",
+        abuseipdb_quota_backoff_s=321,
     )
 
     with caplog.at_level(logging.WARNING):
@@ -196,6 +201,8 @@ async def test_build_registry_consumes_every_wired_settings_field(
     # previously unpinned by this wiring test.
     assert reputation_tool._cache_ttl_s == 123  # type: ignore[attr-defined]
     assert reputation_tool._max_age_days == 45  # type: ignore[attr-defined]
+    # m5 task-05: the AbuseIPDB 429 quota back-off setting reaches the tool too.
+    assert reputation_tool._quota_backoff_s == 321  # type: ignore[attr-defined]
 
     history_tool = registry._by_name["get_alert_history"]  # type: ignore[attr-defined]
     assert history_tool._max_window_hours == 5  # type: ignore[attr-defined]
