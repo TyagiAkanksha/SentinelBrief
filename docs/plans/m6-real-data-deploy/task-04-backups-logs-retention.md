@@ -82,7 +82,7 @@ service later.
 
   ```ini
   # infra/deploy/prod/backup.env → /opt/sentinelbrief/backup.env (root:root 0600; committed copy carries the REAL bucket name after task-05 — it is not a secret)
-  BACKUP_S3_BUCKET=sentinelbrief-backups-000000000000        # placeholder until the bucket exists: sentinelbrief-backups-<aws-account-id>
+  BACKUP_S3_BUCKET=sentinelbrief-backups-181040156847        # the real bucket name (account id verified 2026-09-11; not a secret) — the bucket itself is created at task-05 step 2
 
   # infra/deploy/prod/sentinelbrief-backup.service → /etc/systemd/system/
   [Unit]

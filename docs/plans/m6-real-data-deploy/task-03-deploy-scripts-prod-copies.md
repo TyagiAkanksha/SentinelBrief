@@ -115,14 +115,14 @@ keeps it `SecretStr` (D12/N-M10), and the `worker/llm_client.py:94` `timeout=60.
       restart: unless-stopped
       logging: *default-logging
     web:
-      image: 000000000000.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:0000000   # placeholder until the first push (task-05 replaces both tags in the same sitting)
+      image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:0000000   # REAL account id (AdvisorDesk's, verified 2026-09-11 via `aws sts get-caller-identity`; not a secret); the SHA stays a placeholder until the first push (task-05 replaces both tags in the same sitting)
       environment: { HOSTNAME: 0.0.0.0, PORT: "3000", API_URL: http://api:8000 }        # no env_file — the web container never sees a backend secret
       expose: ["3000"]
       depends_on: { api: { condition: service_healthy } }
       restart: unless-stopped
       logging: *default-logging
     api:
-      image: 000000000000.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:0000000
+      image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:0000000
       env_file: [/opt/sentinelbrief/.env]
       environment:
         <<: *shared-env
@@ -134,7 +134,7 @@ keeps it `SecretStr` (D12/N-M10), and the `worker/llm_client.py:94` `timeout=60.
       restart: unless-stopped
       logging: *default-logging
     worker:
-      image: 000000000000.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:0000000     # same image + tag as api
+      image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:0000000     # same image + tag as api
       command: ["arq", "worker.main.WorkerSettings"]
       env_file: [/opt/sentinelbrief/.env]
       environment: { <<: *shared-env }

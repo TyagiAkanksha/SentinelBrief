@@ -73,7 +73,10 @@ secret generated in-shell and never printed, every resource name recorded in `do
   `infra/deploy/ec2-single-host.md` — numbered, owner-run, every command copy-pasteable, every
   secret a `<placeholder>`; region `us-east-1` throughout:
 
-  0. **Prerequisites & decisions** — domain confirmed (PRD §13); instance sizes (app `t3.small`
+  0. **Prerequisites & decisions** — domain confirmed (PRD §13 — CONFIRMED by the owner 2026-09-11); AWS
+     account `181040156847` (AdvisorDesk's; the honeypot goes in a SEPARATE VPC of the same account per
+     PRD §10.4 — the default VPC `vpc-00735b325754614bd` 172.31.0.0/16 already hosts the AdvisorDesk
+     instance, so the app host joins the default VPC and the honeypot gets its own `10.99.0.0/24` VPC); instance sizes (app `t3.small`
      x86_64, honeypot `t4g.nano` arm64 — the honeypot compose has no arch-specific image, and
      Cowrie publishes multi-arch); `aws sts get-caller-identity` works; Docker + `git` locally;
      the four secrets generated locally in the shell only (`python3 -c "import secrets;
