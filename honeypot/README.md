@@ -96,8 +96,9 @@ left on the box (the same drift rule as every other image in this repo).
 
 ## 5. Start Cowrie and verify
 
-Guard the bind source before starting — a missing `cowrie.cfg` becomes a root-owned directory and
-Cowrie boots silently on `.dist` defaults (step 4's note):
+In the SSM session on the instance: guard the bind source before starting — a missing
+`cowrie.cfg` becomes a root-owned directory and Cowrie boots silently on `.dist` defaults (step
+4's note):
 
 ```sh
 test -f /opt/sentinelbrief-honeypot/etc/cowrie.cfg

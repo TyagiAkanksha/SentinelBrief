@@ -335,7 +335,8 @@ def test_honeypot_readme_names_the_hardening_steps() -> None:
     `re.search(r"INGEST_HMAC_SECRET=\\S+", text) is None` catches a well-meaning but
     rule-breaking 'example' value pasted into the runbook while still allowing the bare secret
     *name* the brief's step 6 requires ("The only secret ever placed here is the shipper's
-    `INGEST_HMAC_SECRET`", line 131).
+    `INGEST_HMAC_SECRET`", line 131). Fix-1 pins: shebang, etc/ dir, explicit cfg path, host-side
+    verify — re-review N1.
     """
     assert _README_FILE.exists(), (
         f"{_README_FILE} does not exist yet — task-01's GREEN step creates it per the brief's "
@@ -346,4 +347,8 @@ def test_honeypot_readme_names_the_hardening_steps() -> None:
     assert "AmazonSSMManagedInstanceCore" in text
     assert "443" in text
     assert "@sha256" in text
+    assert "#!/bin/bash" in text
+    assert "mkdir -p /opt/sentinelbrief-honeypot/etc" in text
+    assert "/opt/sentinelbrief-honeypot/etc/cowrie.cfg" in text
+    assert "tail -n 3 /opt/sentinelbrief-honeypot/data/log/cowrie.json" in text
     assert re.search(r"INGEST_HMAC_SECRET=\S+", text) is None
