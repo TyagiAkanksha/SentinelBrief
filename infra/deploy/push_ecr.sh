@@ -69,8 +69,17 @@ API_PUBLIC_URL="${API_PUBLIC_URL:-https://api.sentinelbrief.tyagiakanksha.com}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-GIT_SHA="$(cd "$REPO_ROOT" && git rev-parse --short HEAD)"
+GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+# Refuse a dirty working tree (m6 task-03 fix-1, M5): the whole point of the git-SHA tag is that it
+# describes exactly what the image contains: `docs/deployment.md`'s "a running service can never
+# silently change under a rebuild" promise doesn't hold if HEAD has uncommitted changes the image
+# was actually built from. Commit (or stash) first, then push.
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
+  echo "ERROR: working tree is dirty — commit first (the SHA tag must describe the image)." >&2
+  exit 1
+fi
 
 echo "== SentinelBrief: build + push images to ECR =="
 echo "  account:        $AWS_ACCOUNT_ID"

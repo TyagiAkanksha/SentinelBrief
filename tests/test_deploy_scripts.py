@@ -51,7 +51,9 @@ def test_push_ecr_shape() -> None:
     assert "--platform" in text, text
     assert "sentinelbrief/api" in text, text
     assert "sentinelbrief/web" in text, text
-    assert "git rev-parse --short HEAD" in text, text
+    # Semantics, not a literal form (m6 task-03 fix-1, M2): either the bare `git rev-parse --short
+    # HEAD` or AdvisorDesk's `git -C <path> rev-parse --short HEAD` resolves the SHA the same way.
+    assert re.search(r"git (-C [^\n]+ )?rev-parse --short HEAD", text), text
     assert "NEXT_PUBLIC_API_URL=" in text, text
     assert "API_URL=http://api:8000" in text, text
     assert "set -euo pipefail" in text, text

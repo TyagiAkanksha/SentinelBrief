@@ -38,6 +38,7 @@ unless the production compose file pins something else).
 | `WORKER_HEALTH_CHECK_INTERVAL_S` | N | default | `15` seconds (`.env.example` default). |
 | `INGEST_HMAC_SECRET` | **Y** | `.env` (SSM) | Shared secret with the honeypot host's shipper. Generate: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`. |
 | `INGEST_MAX_BODY_BYTES` | N | default | `2000000` bytes — equals Caddy's `request_body { max_size 2MB }`, which is enforced first, on wire bytes (`.env.example` default). |
+| `ADMIN_TOKEN` | **Y** | `.env` (SSM `/sentinelbrief/ADMIN_TOKEN`) | Bearer token for `POST /api/v1/alerts/{id}/retriage` (PRD §8, from M8); generate as `INGEST_HMAC_SECRET`; fetched now so the M8 release needs no new parameter. |
 | `CORS_ORIGINS` | N — **pinned**, `api` only | compose (pinned) | `https://sentinelbrief.tyagiakanksha.com` — no wildcard, ever, in a deployed environment. |
 | `ALERTS_LIST_CACHE_TTL_S` | N | default | `15` seconds (`.env.example` default). |
 | `STATS_CACHE_TTL_S` | N | default | `60` seconds (`.env.example` default). |
@@ -100,11 +101,19 @@ is config, not env; `caddy_data`/`caddy_config` are named volumes for its ACME s
 |---|---|---|---|
 | `SHIPPER_INGEST_URL` | N — **pinned** | `/etc/sentinelbrief-shipper.env` (root:root, 600) on the honeypot host | `https://api.sentinelbrief.tyagiakanksha.com/api/v1/alerts` |
 | `INGEST_HMAC_SECRET` | **Y** — shared with `api` | same file | Same value as the `api`/`worker` row above — the honeypot host's *only* shared secret with the app host. |
-| `SHIPPER_MAX_PAYLOAD_BYTES` | N | default | Stays below `INGEST_MAX_BODY_BYTES` above (m6 task-02). |
+| `SHIPPER_MAX_PAYLOAD_BYTES` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `1500000` bytes — serialized payload byte cap; stays below `INGEST_MAX_BODY_BYTES` above (m6 task-02) and Caddy's 2 MB. |
+| `SHIPPER_LOG_PATH` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `/opt/sentinelbrief-honeypot/data/log/cowrie.json` — the Cowrie JSON log to tail. |
+| `SHIPPER_STATE_DIR` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `/var/lib/sentinelbrief-shipper` — tail position, spool, and `spool/dead/`. |
+| `SHIPPER_IDLE_FLUSH_S` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `900` seconds — ship a never-closed session after this many idle seconds. |
+| `SHIPPER_MAX_EVENTS` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `2000` — per-session event cap. |
+| `SHIPPER_POST_TIMEOUT_S` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `10` seconds — per-POST HTTP timeout. |
+| `SHIPPER_BACKOFF_BASE_S` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `2` seconds — delay before the first retry after a failed POST; doubles per consecutive failure. |
+| `SHIPPER_BACKOFF_MAX_S` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `300` seconds — cap on the retry delay. |
+| `SHIPPER_SPOOL_MAX_FILES` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `10000` — disk-protection cap; the OLDEST spooled payload is dropped once exceeded. |
+| `SHIPPER_POLL_INTERVAL_S` | N | `/etc/sentinelbrief-shipper.env` (optional override) | `1` second — sleep between polls when the log has no new complete line. |
 
-The `SHIPPER_*` tunables beyond the two above (idle-flush timeout, backoff bounds, spool
-directory) are honeypot-host-only config with their own `.env.example`-equivalent defaults —
-they never reach the app host and carry no app secret.
+`honeypot/shipper/README.md` is the shipper's own reference: its `ShipperConfig` table is the
+authority on every `SHIPPER_*` default and meaning, kept in sync with `ShipperConfig` itself.
 
 ## Dev/test only
 

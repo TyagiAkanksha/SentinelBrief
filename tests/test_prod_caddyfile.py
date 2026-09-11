@@ -11,6 +11,7 @@ implementer's GREEN-step evidence, per the brief's Steps).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -32,9 +33,16 @@ def _extract_site_block(text: str, host: str) -> str:
     """Returns the text between `<host> {` and its matching top-level `}`, tracking brace depth so
     the nested `header {}` / `request_body {}` / `reverse_proxy ... {}` blocks inside a site don't
     end the extraction early.
+
+    The marker is anchored to a line start (m6 task-03 fix-1, M1): a plain substring search for
+    `"sentinelbrief.tyagiakanksha.com {"` would also match inside
+    `"api.sentinelbrief.tyagiakanksha.com {"` (the api host's own header line), making the result
+    depend on which vhost is written first in the file. Anchoring to `^` makes the match
+    independent of vhost order — Caddy itself routes by Host header, not file order.
     """
-    marker = f"{host} {{"
-    start = text.index(marker)
+    match = re.search(rf"(?m)^{re.escape(host)} \{{", text)
+    assert match, f"no line-start match for host {host!r} in {_CADDYFILE}"
+    start = match.start()
     depth = 0
     for i in range(start, len(text)):
         char = text[i]

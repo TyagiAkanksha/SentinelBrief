@@ -2,11 +2,6 @@
 #
 # Synced copy of /opt/sentinelbrief/Caddyfile on the box (`.claude/rules/infra.md`). Two TLS
 # vhosts, auto-HTTPS via Let's Encrypt — no plaintext site anywhere.
-#
-# The web vhost is listed FIRST on purpose: "sentinelbrief.tyagiakanksha.com" is a literal
-# substring of "api.sentinelbrief.tyagiakanksha.com", so a naive first-match text search for the
-# web hostname would otherwise land inside the api block's own header line instead of the web
-# block below — ordering it first keeps every substring search unambiguous.
 
 sentinelbrief.tyagiakanksha.com {
 	# Security response headers on both vhosts: HSTS, no-sniff, a conservative referrer policy,
@@ -36,6 +31,9 @@ api.sentinelbrief.tyagiakanksha.com {
 		# OVERWRITE (never append) X-Forwarded-For with the real client IP (PRD §10.10). Caddy
 		# faces the internet directly, so {remote_host} is the true end-user IP — this discards
 		# any client-forged XFF, which is what makes api's FORWARDED_ALLOW_IPS=* safe.
+		# `caddy validate` warns that the line below ("Unnecessary ...") is unnecessary — ignore
+		# it: the explicit overwrite pins the spoof-proof semantics (PRD §10.10) rather than
+		# relying on Caddy's version-dependent default.
 		header_up X-Forwarded-For {remote_host}
 		# GET /api/v1/stream (M8, SSE) must reach the browser unbuffered.
 		flush_interval -1

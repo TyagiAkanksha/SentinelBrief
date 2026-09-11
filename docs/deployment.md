@@ -66,16 +66,18 @@ whether it is a secret, where its value comes from.
 
 ## On the box
 
-Everything lives in `/opt/sentinelbrief/`: the production `docker-compose.yml` (six services from
-ECR images + `caddy` + the backup cron container), the `Caddyfile`, `fetch-secrets.sh`, and the
-rendered `.env` (loaded by `api` and `worker` only — the `web` container gets no backend secrets).
-Deploy/redeploy cycle, via an SSM session:
+Everything lives in `/opt/sentinelbrief/`: the production `docker-compose.yml` (six services:
+`caddy`, `web`, `api`, `worker`, `postgres`, `redis` — backups are a host-level systemd timer, not
+a service), the `Caddyfile`, `fetch-secrets.sh`, and the two rendered files (`.env`,
+`.env.postgres`) — `.env` is loaded by `api` and `worker` only, `.env.postgres` by `postgres` only;
+the `web` container gets no backend secrets. Deploy/redeploy cycle, via an SSM session:
 
 1. `aws ecr get-login-password | docker login …` (the instance role authorizes the pull).
 2. `./fetch-secrets.sh` (only when a parameter changed).
-3. `docker compose pull && docker compose up -d`.
-4. `docker compose run --rm api uv run alembic upgrade head` when the release carries a migration
-   (never at container start).
+3. `docker compose pull api && docker compose run --rm api uv run alembic upgrade head` when the
+   release carries a migration — **before** `up -d`, never via `exec` into the still-running old
+   container; see `infra/deploy/prod/README.md` for the exact commands and why the order matters.
+4. `docker compose pull && docker compose up -d`.
 
 The GeoLite2 `.mmdb` files are fetched once, deploy-time, as a one-off — never baked into the
 image or run automatically at container start: `MAXMIND_LICENSE_KEY` is read from SSM inline (it
