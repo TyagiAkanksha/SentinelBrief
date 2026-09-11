@@ -54,15 +54,19 @@ class LogTailer:
             matches `path`'s), this call drains the OLD file's remaining lines and closes it; the
             new `path` is only opened on the NEXT call. A saved offset beyond a (truncated)
             file's current size seeks to 0 instead of silently skipping the file's new content.
-            An `OSError` opening the file (I1, review fix-1) never propagates — it is logged
-            once per distinct errno (never again until a successful open) and treated the same
-            as a missing file, so the poll loop keeps draining the spool instead of crashing into
-            a restart loop.
+            An `OSError` opening the file (I1/N1, review fix-1/fix-2) never propagates — a
+            missing file (`FileNotFoundError`, e.g. Cowrie has not written yet) is always
+            silent; any other `OSError` (e.g. the log's PARENT DIRECTORY, not just the file
+            itself, is unsearchable by the `shipper` user) is logged once per distinct errno
+            (never again until a successful open) and otherwise treated the same as missing, so
+            the poll loop keeps draining the spool instead of crashing into a restart loop. The
+            existence check lives INSIDE this handling (never a bare `path.exists()` ahead of
+            it, which would itself raise on an unsearchable parent directory — N1).
         """
         if self._file is not None:
             try:
                 current_inode: int | None = os.stat(self._path).st_ino
-            except FileNotFoundError:
+            except OSError:
                 current_inode = None
             if current_inode != self._inode:
                 lines = self._drain_open_file()
@@ -73,10 +77,10 @@ class LogTailer:
                 return lines
 
         if self._file is None:
-            if not self._path.exists():
-                return []
             try:
                 self._open_at_saved_offset()
+            except FileNotFoundError:
+                return []
             except OSError as exc:
                 errno = exc.errno if exc.errno is not None else -1
                 if errno != self._last_open_errno:

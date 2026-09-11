@@ -80,6 +80,70 @@ def test_unreadable_log_file_returns_empty_and_rate_limits_warning(
     assert tailer.read_new_lines() == ["a", "b"]
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="root ignores directory permissions; chmod 000 would not deny reads",
+)
+def test_unsearchable_parent_directory_is_a_warning_not_a_crash(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """N1 (review re-review 1): the log's PARENT DIRECTORY being unsearchable — not just the
+    file itself — must never crash `read_new_lines` either. `Path.exists()`/`Path.open()` both
+    raise `PermissionError` (not merely returning a falsy/missing result) when the containing
+    directory denies search (`x`) permission, so the check has to live INSIDE the same
+    rate-limited-WARNING handling I1 added, never ahead of it.
+    """
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    log_path = log_dir / "cowrie.json"
+    log_path.write_text("a\nb\n")
+    log_dir.chmod(0o000)
+    tailer = LogTailer(log_path, tmp_path / "tail.json")
+
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert tailer.read_new_lines() == []
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "log file unreadable errno=" in warnings[0].getMessage()
+    finally:
+        log_dir.chmod(0o755)
+
+    assert tailer.read_new_lines() == ["a", "b"]
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="root ignores directory permissions; chmod 000 would not deny reads",
+)
+def test_main_once_exits_zero_with_unsearchable_log_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """N1: the same unsearchable-parent-directory case must not escape `main` either — `--once`
+    exits 0 (nothing to tail this iteration), never an uncaught traceback (the reviewer's own
+    reproduction showed the exception escaping `main` before this fix).
+    """
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    log_path = log_dir / "cowrie.json"
+    log_path.write_text("a\nb\n")
+    log_dir.chmod(0o000)
+    env = {
+        **_REQUIRED_ENV,
+        "SHIPPER_LOG_PATH": str(log_path),
+        "SHIPPER_STATE_DIR": str(tmp_path / "state"),
+    }
+
+    try:
+        exit_code = main(["--once"], env=env)
+    finally:
+        log_dir.chmod(0o755)
+
+    assert exit_code == 0
+    assert "Traceback" not in capsys.readouterr().err
+
+
 # --- I2: the spool's atomic write is pinned ------------------------------------------------
 
 
