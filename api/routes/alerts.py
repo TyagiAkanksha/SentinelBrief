@@ -8,7 +8,10 @@ unsigned, malformed-JSON body into a `401` — the body-decode failure would alr
 `require_signature` (`api/deps.py`) directly, ahead of that decode; `request.body()` caches the
 bytes, so FastAPI's own body parse downstream still sees them. `require_signature` is the one
 function that verifies the signature — `SignedRoute` calls it rather than duplicating the HMAC
-compare, so there is exactly one place that raises `SignatureError`.
+compare, so there is exactly one place that raises `SignatureError`. `require_content_length`
+(m6 task-02) runs first of all, before `require_signature` — it reads only the `Content-Length`
+header, never a body byte, so an over-cap or length-less request never makes the api buffer or
+even attempt to verify a signature over an unbounded body.
 
 `router` uses `route_class=SignedRoute`, so *every* route ever added to it is signature-gated; it
 therefore holds only this one ingest `POST`
@@ -26,7 +29,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-from api.deps import EnqueueFn, SessionDep, get_enqueue, get_settings, require_signature
+from api.deps import (
+    EnqueueFn,
+    SessionDep,
+    get_enqueue,
+    get_settings,
+    require_content_length,
+    require_signature,
+)
 from core.schemas.alert import SessionAlert
 from core.schemas.errors import ErrorEnvelope
 from core.schemas.ingest import IngestResponse
@@ -34,19 +44,23 @@ from core.services.alerts import insert_alert
 
 
 class SignedRoute(APIRoute):
-    """An `APIRoute` that verifies `X-Signature` over the raw body before FastAPI parses it."""
+    """An `APIRoute` that bounds the body then verifies `X-Signature`, both before FastAPI
+    parses it (m6 task-02: `require_content_length` first, then `require_signature`)."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Any]]:
-        """Wrap the normal route handler with a raw-body signature check that runs first.
+        """Wrap the normal route handler with the body-length guard and signature check.
 
         Returns:
-            A handler that runs `require_signature` (raising `SignatureError` on a bad
-            signature) before ever reaching FastAPI's own dependency solving / body parsing,
-            and otherwise delegates to the original handler unchanged.
+            A handler that runs `require_content_length` (raising `LengthRequiredError`/
+            `PayloadTooLargeError` on a bad declared length) and then `require_signature`
+            (raising `SignatureError` on a bad signature) before ever reaching FastAPI's own
+            dependency solving / body parsing, and otherwise delegates to the original handler
+            unchanged.
         """
         original_handler = super().get_route_handler()
 
         async def custom_handler(request: Request) -> Any:
+            require_content_length(request, get_settings(request))
             await require_signature(request, get_settings(request))
             return await original_handler(request)
 
@@ -69,6 +83,14 @@ router = APIRouter(route_class=SignedRoute)
             "is not.",
         },
         401: {"model": ErrorEnvelope, "description": "Missing or invalid X-Signature."},
+        411: {
+            "model": ErrorEnvelope,
+            "description": "No usable Content-Length header (e.g. a chunked request).",
+        },
+        413: {
+            "model": ErrorEnvelope,
+            "description": "Declared Content-Length exceeds INGEST_MAX_BODY_BYTES.",
+        },
         422: {"model": ErrorEnvelope, "description": "Invalid session payload."},
         500: {"model": ErrorEnvelope},
         503: {

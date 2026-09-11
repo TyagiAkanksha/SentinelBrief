@@ -123,7 +123,12 @@ LLM client's log line, which must appear only in the `worker` container.
 - The shipper (`honeypot/shipper/`) runs as a systemd unit: tails `cowrie.json`, groups events by
   `session`, posts one signed alert on `cowrie.session.closed`, spools to local disk with
   exponential backoff when the ingest URL is unreachable, and drains the spool in order when it
-  returns. Sessions that never close (Cowrie restart) are flushed after an idle timeout.
+  returns. Sessions that never close (Cowrie restart) are flushed after an idle timeout. Its only
+  secret (`SHIPPER_INGEST_URL` and `INGEST_HMAC_SECRET`) lives in `/etc/sentinelbrief-shipper.env`
+  (root:root, mode 600); its working state — the tail position, the pending spool, and the
+  dead-letter sink for a permanently rejected (`401`/`413`/`422`) payload — lives under
+  `/var/lib/sentinelbrief-shipper` (`tail.json`, `spool/`, `spool/dead/`), owned by the
+  unprivileged `shipper` user and created by systemd's `StateDirectory=` directive.
 - `honeypot/assets.yaml` describes the fleet (role, exposure, criticality) for `get_asset_info`.
 
 ## Verification

@@ -58,7 +58,7 @@ known-first-party = ["api", "worker", "core", "evals"]
 
 [tool.mypy]
 strict = true
-files = ["api", "worker", "core", "evals", "alembic"]
+files = ["api", "worker", "core", "evals", "alembic", "honeypot/shipper/sentinelbrief_shipper"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

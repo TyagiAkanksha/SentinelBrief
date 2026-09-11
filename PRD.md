@@ -1,6 +1,6 @@
 # SentinelBrief — Product Requirements Document
 
-**Version:** 1.4 · **Owner:** Akanksha Tyagi · **Status:** Approved for build · **Changelog:** §15
+**Version:** 1.5 · **Owner:** Akanksha Tyagi · **Status:** Approved for build · **Changelog:** §15
 **One-liner:** An LLM-powered triage layer that reads incoming security alerts, gathers context via tool calls, and gives analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness measuring how well it does.
 
 ---
@@ -179,7 +179,7 @@ The golden set lives in the repo as JSONL (`evals/golden/*.jsonl`), not in the d
 ## 6. Triage pipeline (worker)
 
 ### 6.1 Ingest and idempotency
-1. `POST /api/v1/alerts` validates the HMAC signature header `X-Signature: sha256=<hex>` over the raw request body (shared secret with the log shipper; constant-time compare; the signature is checked **before** the body is parsed). Unsigned or bad-signature requests → `401`.
+1. `POST /api/v1/alerts` validates the HMAC signature header `X-Signature: sha256=<hex>` over the raw request body (shared secret with the log shipper; constant-time compare; the signature is checked **before** the body is parsed). Unsigned or bad-signature requests → `401`. A request whose declared `Content-Length` exceeds `INGEST_MAX_BODY_BYTES` is refused `413` (no `Content-Length` → `411`) before the signature is read (v1.5).
 2. One request = one Cowrie session (§1.2). Compute `fingerprint = sha256(source || "|" || session_id || "|" || connect_time_utc_iso)`. Insert with `ON CONFLICT (fingerprint) DO NOTHING RETURNING id`; on conflict, select the existing row and return its id with `200`; otherwise `202` with the new id. Duplicates never re-trigger triage.
 3. Enqueue `triage(alert_id)` on ARQ. Return. Total budget: <100 ms. *(M2 runs triage inline inside the request as a stepping stone; the queue split is M5.)*
 
@@ -411,6 +411,13 @@ Terraform stack live; migration documented.
 ---
 
 ## 15. Changelog
+
+**v1.5 — 2026-09-11.** M6 build-time amendment; no scope change.
+- §6.1 step 1: an in-app `Content-Length` guard bounds the ingest request body — a declared
+  length over `INGEST_MAX_BODY_BYTES` is `413`, a signed-route request with no usable
+  `Content-Length` (e.g. chunked) is `411` — both checked before the HMAC signature ever reads a
+  body byte (m6 task-02; the prod Caddyfile's own 2 MB `max_size` is the outer, on-the-wire
+  bound, task-03).
 
 **v1.4 — 2026-09-10.** M5 build-time amendment; no scope change.
 - §6.2: the job's own retry count is named explicitly as `TRIAGE_JOB_MAX_TRIES` = 3 total attempts

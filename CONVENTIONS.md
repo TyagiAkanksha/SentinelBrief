@@ -124,7 +124,9 @@ no contract forbids the import.
   `ConfigError`, `LLMCallError`, `StructuredOutputError` (carries `raw_text`,
   `validation_error`, token counts, cost and latency — plain values, so `core.errors` never
   imports `core.llm`), `VerdictValidationError(attempts, last_error)`, `SignatureError`,
-  `NotFoundError`, `ConflictError`, `RateLimitedError`, `BudgetExceededError` (M8).
+  `LengthRequiredError` (411: no usable `Content-Length` on a signed-route request, m6 task-02),
+  `PayloadTooLargeError` (413: declared `Content-Length` over `Settings.ingest_max_body_bytes`,
+  m6 task-02), `NotFoundError`, `ConflictError`, `RateLimitedError`, `BudgetExceededError` (M8).
   Services and the worker raise these; they never construct HTTP responses.
 - `api/errors.py::register_error_handlers(app)` maps each exception type to a status code and the
   PRD §8 envelope `{"error": {"code", "message"}}` exactly once. `RequestValidationError` is

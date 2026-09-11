@@ -105,6 +105,19 @@ class SignatureError(SentinelBriefError):
     code = "unauthorized"
 
 
+class LengthRequiredError(SentinelBriefError):
+    """Raised when a signed-route request carries no usable `Content-Length` (m6 task-02)."""
+
+    code = "length_required"
+
+
+class PayloadTooLargeError(SentinelBriefError):
+    """Raised when a request's declared `Content-Length` exceeds `Settings.ingest_max_body_bytes`
+    (m6 task-02)."""
+
+    code = "payload_too_large"
+
+
 class NotFoundError(SentinelBriefError):
     """Raised when a requested resource (e.g. an alert) does not exist."""
 

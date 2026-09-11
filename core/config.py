@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     """How often the worker refreshes its Redis health key (`<queue_name>:health-check`, TTL this
     + 1 s); the compose healthcheck probes it every 30 s (m5 task-01)."""
     ingest_hmac_secret: SecretStr = SecretStr("")
+    ingest_max_body_bytes: Annotated[int, Field(ge=1)] = 2_000_000
+    """In-app cap on a signed ingest request's declared `Content-Length` (m6 task-02). The prod
+    Caddyfile's `request_body { max_size 2MB }` (task-03) is the outer, on-the-wire bound; this
+    is the api's own defence so an unauthenticated client can never make it buffer an unbounded
+    body before the signature is even checked."""
     cors_origins: str = "http://localhost:3000"
     alerts_list_cache_ttl_s: int = 15
     stats_cache_ttl_s: int = 60

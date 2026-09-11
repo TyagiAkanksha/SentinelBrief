@@ -18,8 +18,10 @@ paths: api/**
 - `create_app()` must keep working with no env vars and no database (DB-less tests, OpenAPI
   export). Read request-scoped things from `app.state` through `api/deps.py`, never from module
   globals or `os.environ`.
-- Ingest (`POST /api/v1/alerts`): verify the HMAC signature over the **raw body before parsing
-  JSON** (401 precedes 422); insert with `ON CONFLICT DO NOTHING`; duplicates return 200; a
+- Ingest (`POST /api/v1/alerts`): the in-app body cap (`require_content_length`, 411/413) runs
+  BEFORE the signature check — it reads only `Content-Length`, never a body byte (m6 task-02).
+  Then verify the HMAC signature over the **raw body before parsing JSON** (401 precedes 422);
+  insert with `ON CONFLICT DO NOTHING`; duplicates return 200; a
   duplicate of a triaged/failed alert never re-triggers triage, while a still-`pending` duplicate
   is re-enqueued (idempotent at the queue by job id — spine M5-a); from M5 the route only
   enqueues and must answer in under 100 ms.
