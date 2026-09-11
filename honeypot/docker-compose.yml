@@ -1,0 +1,49 @@
+# honeypot/docker-compose.yml — the honeypot host's only workload (PRD §3, §10.4, §10.9;
+# `.claude/rules/infra.md`). One service, one job: Cowrie in Docker, listening on the host's
+# real port 22 (mapped to the container's Cowrie-default 2222). sshd is disabled and masked on
+# this host (honeypot/README.md step 3) so Cowrie can own 22 outright.
+#
+# This is the ONE compose file in this repo that publishes on every interface, not 127.0.0.1
+# (`.claude/rules/infra.md`'s loopback-only rule is for dev/app-host compose files): attackers on
+# the public internet must be able to reach it.
+#
+# cowrie.json (the JSON event log the shipper, task-02, tails) and Cowrie's artifact directory
+# (downloads + tty logs) are BIND MOUNTS under ./data/ — gitignored and dockerignored, created by
+# the runbook's user-data, owned by uid:gid 999:999 (the image's `cowrie` user, re-verified
+# against cowrie/cowrie:latest at pin time — NOT 1000:1000, a common but incorrect assumption
+# about this image) — never a named volume, so task-02's unprivileged `shipper` systemd unit can
+# read them without running as root under /var/lib/docker. There is deliberately no top-level
+# `volumes:` key.
+#
+# No env_file, no environment secrets, no second service: the host shares nothing with the app
+# host except INGEST_HMAC_SECRET, and that secret belongs to task-02's shipper unit
+# (/etc/sentinelbrief-shipper.env, mode 600), never to this compose file.
+
+name: sentinelbrief-honeypot
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  cowrie:
+    # Pinned 2026-09-11 against `docker buildx imagetools inspect cowrie/cowrie:latest` (multi-arch
+    # manifest digest, linux/amd64 + linux/arm64). Re-check before every deploy
+    # (honeypot/README.md step 4) and re-pin here + on the box in the same sitting if it changed —
+    # the "never a moving tag on the box" rule applies to third-party images too.
+    image: cowrie/cowrie@sha256:42e01e0e5fe705a0a63dacc0f1992b2d230740ac149af7675f48197abf740d44
+    ports:
+      - "22:2222"                      # the host's real port 22, all interfaces — sshd is disabled and masked (README step 3), Cowrie owns it
+    volumes:
+      - ./data/log:/cowrie/cowrie-git/var/log/cowrie            # cowrie.json (+ daily rotations) — the host-side shipper (task-02, an unprivileged systemd unit) tails /opt/sentinelbrief-honeypot/data/log/cowrie.json; a named volume would force the shipper to run as root under /var/lib/docker
+      - ./data/lib:/cowrie/cowrie-git/var/lib/cowrie            # downloads + tty logs (attacker artifacts) — never committed: honeypot/data/ is gitignored AND dockerignored
+      - ./etc/cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro   # sensor name + JSON output; no secrets in it
+    restart: unless-stopped
+    logging: *default-logging
+# NO env_file, NO environment secrets, NO other services, NO top-level volumes (the shipper is a
+# systemd unit on the host, task-02). Both bind sources are created by the runbook's user-data,
+# owned by uid:gid 999:999 — the `cowrie` user inside the official image (re-verified against
+# cowrie/cowrie:latest at pin time; NOT 1000:1000) — and are world-readable (Cowrie's files land
+# 0644), which is all the shipper's read access needs.

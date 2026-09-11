@@ -187,7 +187,7 @@ run escalated to the strong model.
 
 Target topology, secrets handling, backups and the verification checklist:
 [`docs/deployment.md`](docs/deployment.md). Scripts and synced production config land under
-`infra/deploy/` at M6.
+`infra/deploy/` at M6. The honeypot host's owner-run runbook: [`honeypot/README.md`](honeypot/README.md).
 
 ## Working on the repo
 

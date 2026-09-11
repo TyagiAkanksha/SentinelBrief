@@ -108,6 +108,12 @@ LLM client's log line, which must appear only in the `worker` container.
 
 ## Honeypot host
 
+- The compose file is `honeypot/docker-compose.yml` (Cowrie only, host port 22 → container 2222,
+  `honeypot/etc/cowrie.cfg` bind-mounted read-only). Before every deploy, re-check the image
+  digest (`honeypot/README.md` step 4) and re-pin `honeypot/docker-compose.yml`'s `image:` line
+  on the box and in the repo in the same sitting if it changed. The full owner-run runbook —
+  instance, security group, user data, digest pin, start/verify, what must never be on the host —
+  is `honeypot/README.md`.
 - Cheapest instance (t3.nano / t4g.nano class) in a **separate VPC or account**. Assume it will be
   fully compromised — that is its job. It shares no credentials with the app host; its only
   secret is `INGEST_HMAC_SECRET`, and its instance role has SSM core permissions and nothing else.

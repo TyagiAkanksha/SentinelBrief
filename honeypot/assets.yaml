@@ -2,7 +2,9 @@
 # once at construction: one entry per honeypot sensor hostname naming its role, network
 # exposure, and criticality. Holds roles and criticality only — never credentials or
 # internal addresses beyond what the honeypot already exposes (.claude/rules/infra.md).
-# M6 re-checks this file against the real deployed fleet before the public dashboard ships.
+# `hp-use-01` is the deployed honeypot (M6 task-01, honeypot/docker-compose.yml +
+# honeypot/etc/cowrie.cfg); every other entry is synthetic — used by `fixtures/alerts/` and
+# `evals/golden/`.
 
 assets:
   hp-use-01:
