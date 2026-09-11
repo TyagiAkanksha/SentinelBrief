@@ -75,7 +75,10 @@ down for the milestone's acceptance walk. M8's retriage is told how to opt out o
   ```python
   # core/services/alerts.py
   async def get_alert_for_update(session: AsyncSession, alert_id: uuid.UUID) -> AlertRow: ...
-      # (await session.execute(select(AlertRow).where(AlertRow.id == alert_id).with_for_update())).scalar_one_or_none()
+      # (await session.execute(select(AlertRow).where(AlertRow.id == alert_id).with_for_update()
+      #                        .execution_options(populate_existing=True))).scalar_one_or_none()
+      # populate_existing (review I3, fix-1): the row is re-populated from the locked read, so a stale identity-map copy in the
+      # caller's session (expire_on_commit=False) can never decide the skip.
       # None -> NotFoundError(f"alert {alert_id} not found"). Blocks while another transaction holds the row lock; the lock lives until the
       # session's commit/rollback. The row comes back clean in the identity map: nothing is dirty before the tool loop (M4 task-05 M7).
 
