@@ -70,7 +70,7 @@ leaked `env_file: ../.env` would add zero observable keys and go undetected by a
 exercising a real secret.
 """
 
-_IMAGE_PIN_RE = re.compile(r"^cowrie/cowrie(:latest|@sha256:[0-9a-f]{64})$")
+_IMAGE_PIN_RE = re.compile(r"^cowrie/cowrie@sha256:[0-9a-f]{64}$")
 
 
 def _render_compose_config(tmp_path: Path, *, env_text: str = "") -> dict[str, Any]:
@@ -264,12 +264,13 @@ def test_cowrie_restarts_and_rotates_logs(tmp_path: Path) -> None:
 
 
 def test_cowrie_image_is_the_official_image_tag_or_digest(tmp_path: Path) -> None:
-    """Brief Interfaces → test table, 'image pin form' row (line 154; Produces block line 77,
-    brief lines 46-51): `image:` is either the moving `cowrie/cowrie:latest` tag (only valid
-    until the runbook's digest-pin step, `honeypot/README.md` step 4) or the pinned
-    `cowrie/cowrie@sha256:<64 hex chars>` form — never a bare `cowrie/cowrie` with no tag or
-    digest, and never any other image (the mutant this test kills: a copy-pasted
-    `redis:7-alpine` or similar).
+    """Brief Interfaces → test table, 'image pin form' row (fix-1, review M2: digest-only —
+    `image:` matches `^cowrie/cowrie@sha256:[0-9a-f]{64}$`): now that
+    `honeypot/docker-compose.yml` is digest-pinned, the moving `cowrie/cowrie:latest` tag must
+    fail this test too — 'never a moving tag on the box' (`.claude/rules/infra.md`) applies to
+    third-party images the same as it does to this repo's own. Never a bare `cowrie/cowrie` with
+    no tag or digest, and never any other image (the mutant this test kills: a copy-pasted
+    `redis:7-alpine`, or a regression back to the moving `:latest` tag).
     """
     config = _render_compose_config(tmp_path)
     image = config["services"]["cowrie"]["image"]
@@ -308,6 +309,21 @@ def test_assets_yaml_marks_the_deployed_sensor_and_keeps_twenty() -> None:
     assert "deployed" in header, header
     assert len(assets) == 20, sorted(assets)
     assert assets["hp-use-01"]["role"] == "ssh-honeypot", assets["hp-use-01"]
+
+
+def test_honeypot_data_is_git_and_docker_ignored() -> None:
+    """Brief Interfaces → test table, 'ignore claims' row (fix-1, review M3):
+    `honeypot/docker-compose.yml`'s comments claim `honeypot/data/` is "gitignored AND
+    dockerignored" — this test pins that claim against the two files that actually enforce it.
+    `.gitignore` keeps the smoke artifacts (attacker host keys, raw `cowrie.json`) out of commits;
+    `.dockerignore` is what keeps them out of the `api`/`worker` image build context (both build
+    with the repo root as context — `infra/docker-compose.yml`). The mutant this test kills:
+    either ignore line being deleted while the compose comment still claims it is there.
+    """
+    gitignore_text = (_REPO_ROOT / ".gitignore").read_text()
+    dockerignore_text = (_REPO_ROOT / ".dockerignore").read_text()
+    assert "honeypot/data/" in gitignore_text.splitlines(), gitignore_text
+    assert "honeypot/data/" in dockerignore_text.splitlines(), dockerignore_text
 
 
 def test_honeypot_readme_names_the_hardening_steps() -> None:
