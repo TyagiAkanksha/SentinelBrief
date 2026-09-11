@@ -78,7 +78,7 @@ pin the shape of both files.
   x-logging: &default-logging { driver: json-file, options: { max-size: "10m", max-file: "3" } }
   services:
     cowrie:
-      image: cowrie/cowrie:latest        # PIN BY DIGEST before the first deploy (honeypot/README.md step 4): cowrie/cowrie@sha256:<digest>
+      image: cowrie/cowrie@sha256:<digest>   # digest-only (fix-1, review M2/N3): re-checked before every deploy (honeypot/README.md step 4); `docker buildx imagetools inspect cowrie/cowrie:latest` prints the current one
       ports:
         - "22:2222"                      # the host's real port 22 — sshd is disabled and masked on this host (README step 3, the user-data), Cowrie owns it
       volumes:
