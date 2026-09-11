@@ -97,8 +97,9 @@ still fails validation after its one retry.
 ```sh
 docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web, redis, worker
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
-curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok"}
+curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok","redis":"ok"}
 curl -s localhost:3000/healthz                                              # {"status":"ok"}
+# A stopped Redis turns the api unhealthy: 503 with {"status":"degraded",...,"redis":"error"}
 # Seed a browsable queue: 5 fixtures + 20 golden v1 sessions through the real pipeline with the fake LLM
 # (add --live to spend real tokens with LLM_API_KEY / CHEAP_MODEL / MODEL_PRICES_JSON exported
 # (see step 1); a re-run creates nothing).

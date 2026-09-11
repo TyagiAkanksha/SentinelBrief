@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from api.factory import create_app
+from core.cache import RedisTTLCache
 from core.config import Settings, require_nonempty
 from core.db import make_engine, make_session_factory
 from core.queue import enqueue_triage, make_redis
@@ -49,5 +50,9 @@ async def enqueue(alert_id: uuid.UUID) -> None:
 
 
 app: FastAPI = create_app(
-    session_factory=session_factory, settings=settings, enqueue=enqueue, redis=redis_client
+    session_factory=session_factory,
+    settings=settings,
+    enqueue=enqueue,
+    redis=redis_client,
+    cache=RedisTTLCache(redis_client),
 )

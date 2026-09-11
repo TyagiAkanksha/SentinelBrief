@@ -6,6 +6,8 @@ defaults and (when `llm` isn't injected) to build the real `OpenAICompatibleLLMC
 `TriagePipeline.run(alert)`; and maps every typed failure to a clean one-line stderr message and a
 stable exit code — never a Python traceback (CONVENTIONS.md §4). `llm=` lets tests inject
 `FakeLLMClient` (or force the config-error path with `llm=None`) without a network call.
+`UsageError`/`Parser`/`fail` are `core.cli`'s shared CLI presentation helpers (m5 task-05), not a
+local copy.
 
 `--strong-model` (default `settings.strong_model`; empty disables routing, PRD §6.4, m5 task-03)
 wires two-tier routing; the printed JSON always carries `model_primary`/`escalated_model`, `false`
@@ -24,66 +26,21 @@ Exit codes:
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import NoReturn
 
 from pydantic import ValidationError
 
+from core.cli import Parser, UsageError, fail
 from core.config import Settings
-from core.errors import ConfigError, LLMCallError, SentinelBriefError, VerdictValidationError
+from core.errors import ConfigError, LLMCallError, VerdictValidationError
 from core.llm import LLMClient
 from core.schemas.alert import SessionAlert
 from worker.llm_client import OpenAICompatibleLLMClient
 from worker.triage import TriagePipeline
-
-
-class UsageError(SentinelBriefError):
-    """CLI-only: raised by `_Parser.error` instead of letting argparse exit the process directly.
-
-    Not a `core.errors` member — a malformed command line is a CLI presentation concern, not a
-    domain error any other layer needs to catch.
-    """
-
-    code = "usage"
-
-
-class _Parser(argparse.ArgumentParser):
-    """An `ArgumentParser` that raises `UsageError` on a usage error instead of exiting.
-
-    `--help` is unaffected: it exits via `self.exit(0, ...)` in argparse's own help action, which
-    never calls `error()`.
-    """
-
-    def error(self, message: str) -> NoReturn:
-        """Raise `UsageError` instead of argparse's default `self.exit(2, ...)`.
-
-        Args:
-            message: argparse's own description of the usage problem.
-
-        Raises:
-            UsageError: Always — this method never returns.
-        """
-        raise UsageError(f"{message} (see --help)")
-
-
-def _fail(code: str, message: str) -> int:
-    """Print one flattened `error: <code>: <message>` line to stderr; never a traceback.
-
-    Args:
-        code: The stable wire code for this failure (e.g. `"config_error"`).
-        message: A human-readable description; embedded newlines are collapsed so the line
-            stays exactly one line, matching every other error path's shape.
-
-    Returns:
-        Always `1` — every caller of this helper is a `1`-exit-code path.
-    """
-    print(f"error: {code}: {' '.join(message.split())}", file=sys.stderr)
-    return 1
 
 
 def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> int:
@@ -103,9 +60,9 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     try:
         settings = Settings()
     except ValidationError as e:
-        return _fail("config_error", str(e))
+        return fail("config_error", str(e))
 
-    parser = _Parser(prog="python -m worker.triage_one")
+    parser = Parser(prog="python -m worker.triage_one")
     parser.add_argument("alert_path")
     parser.add_argument("--model", default=settings.cheap_model)
     parser.add_argument("--prompt", default=settings.triage_prompt_version)
@@ -113,13 +70,13 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
-        return _fail(e.code, str(e))
+        return fail(e.code, str(e))
 
     # Price before spend for --strong-model (m5 task-03 fix-1, review M3), mirroring
     # `evals/run.py`: only on the real-client path, before any client (or the cheap tier's own
     # network call) is built — an unpriced strong id must never reach a real spend either.
     if llm is None and args.strong_model and args.strong_model not in settings.model_prices_json:
-        return _fail(
+        return fail(
             "config_error", f"model {args.strong_model!r} has no entry in MODEL_PRICES_JSON"
         )
 
@@ -127,7 +84,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
         raw = Path(args.alert_path).read_text()
         alert = SessionAlert.model_validate(json.loads(raw))
     except (OSError, json.JSONDecodeError, ValidationError) as e:
-        return _fail("invalid_alert", str(e))
+        return fail("invalid_alert", str(e))
 
     try:
         if llm is None:
@@ -141,12 +98,12 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
             escalate_confidence_lt=settings.escalate_confidence_lt,
         )
     except (ConfigError, ValueError) as e:
-        return _fail("config_error", str(e))
+        return fail("config_error", str(e))
 
     try:
         outcome = asyncio.run(pipeline.run(alert))
     except (ConfigError, LLMCallError) as e:
-        return _fail(e.code, str(e))
+        return fail(e.code, str(e))
     except VerdictValidationError as e:
         last_error = " ".join(e.last_error.split())
         print(

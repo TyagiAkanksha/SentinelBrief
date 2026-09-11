@@ -70,6 +70,7 @@ def build_registry(
             cache=cache or InMemoryTTLCache(max_entries=settings.abuseipdb_cache_max_entries),
             cache_ttl_s=settings.abuseipdb_cache_ttl_s,
             max_age_days=settings.abuseipdb_max_age_days,
+            quota_backoff_s=settings.abuseipdb_quota_backoff_s,
         ),
         GeoAsnTool.from_settings(settings),
         AlertHistoryTool(max_window_hours=settings.alert_history_max_window_hours),

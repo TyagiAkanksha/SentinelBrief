@@ -7,6 +7,14 @@ Protocol so the free tier's daily quota is spent once per IP per day; a failure 
 The AbuseIPDB account is the owner's own (PRD §13) — until `ABUSEIPDB_API_KEY` is set this tool
 always answers `unavailable("no_api_key")`, logged once per instance.
 
+Account-wide quota back-off (m5 task-05): AbuseIPDB's free tier is a single daily quota shared by
+every IP looked up, not a per-IP limit. A `429` therefore sets ONE negative cache key (`QUOTA_KEY`,
+no IP in it) for `quota_backoff_s` seconds; while that key exists, every lookup for any IP answers
+`unavailable("quota_exceeded")` without making an HTTP call, so a single `429` cannot burn through
+the rest of the day's calls one rejected IP at a time. `quota_backoff_s=0` disables the back-off
+entirely (each `429` is independent, as before this task). The per-ip success key is never written
+on any failure path, including this one.
+
 The tool never raises (the "tools never raise" contract, `worker/tools/base.py`): a bad address,
 a missing key, a quota/auth/other HTTP error, a transport failure, or a malformed response body
 are all typed `unavailable(reason)`. The API key travels in the `Key` header only and is never
@@ -36,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 ABUSEIPDB_CHECK_URL = "https://api.abuseipdb.com/api/v2/check"
 CACHE_KEY_PREFIX = "abuseipdb:"
+QUOTA_KEY = CACHE_KEY_PREFIX + "quota_exceeded"
+"""Account-wide negative-cache key (m5 task-05): set for `quota_backoff_s` seconds after a `429`,
+no IP in it — the free tier's quota is shared across every IP, not per-address."""
 
 
 class IpReputationTool:
@@ -62,6 +73,7 @@ class IpReputationTool:
         cache: TTLCache,
         cache_ttl_s: int,
         max_age_days: int,
+        quota_backoff_s: int = 0,
     ) -> None:
         """Build the tool over an already-configured HTTP client and cache.
 
@@ -69,22 +81,29 @@ class IpReputationTool:
             api_key: The AbuseIPDB key sent in the `Key` header; `""` means "not configured".
             http: The client to issue the `check` request through; carries the timeout (built by
                 the wiring layer from `ABUSEIPDB_TIMEOUT_S`).
-            cache: Where successful answers are cached, keyed by `CACHE_KEY_PREFIX + ip`.
+            cache: Where successful answers are cached, keyed by `CACHE_KEY_PREFIX + ip`; also
+                where the account-wide `QUOTA_KEY` back-off flag is set/read (m5 task-05).
             cache_ttl_s: Seconds a successful answer is cached for; must be >= 1.
             max_age_days: `maxAgeInDays` sent to AbuseIPDB; must be >= 1.
+            quota_backoff_s: Seconds to skip AbuseIPDB entirely after a `429` (m5 task-05); `0`
+                disables the back-off. Must be >= 0.
 
         Raises:
-            ValueError: When `cache_ttl_s` or `max_age_days` is not positive.
+            ValueError: When `cache_ttl_s` or `max_age_days` is not positive, or `quota_backoff_s`
+                is negative.
         """
         if cache_ttl_s < 1:
             raise ValueError("cache_ttl_s must be >= 1")
         if max_age_days < 1:
             raise ValueError("max_age_days must be >= 1")
+        if quota_backoff_s < 0:
+            raise ValueError("quota_backoff_s must be >= 0")
         self._api_key = api_key
         self._http = http
         self._cache = cache
         self._cache_ttl_s = cache_ttl_s
         self._max_age_days = max_age_days
+        self._quota_backoff_s = quota_backoff_s
         self._warned_no_api_key = False
 
     async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
@@ -102,6 +121,9 @@ class IpReputationTool:
                 logger.warning("lookup_ip_reputation called with no ABUSEIPDB_API_KEY configured")
                 self._warned_no_api_key = True
             return unavailable("no_api_key")
+
+        if self._quota_backoff_s > 0 and await self._cache.get(QUOTA_KEY) is not None:
+            return unavailable("quota_exceeded")
 
         cache_key = CACHE_KEY_PREFIX + ip
         cached = await self._cache.get(cache_key)
@@ -124,6 +146,8 @@ class IpReputationTool:
             return unavailable("network_error")
 
         if response.status_code == 429:
+            if self._quota_backoff_s > 0:
+                await self._cache.set(QUOTA_KEY, b"1", self._quota_backoff_s)
             return unavailable("quota_exceeded")
         if response.status_code in (401, 403):
             return unavailable("unauthorized")

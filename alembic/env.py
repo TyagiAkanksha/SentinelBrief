@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import context
 from core.db import make_engine
+from core.errors import ConfigError
 from core.models import Base
 
 # this is the Alembic Config object, which provides
@@ -47,13 +48,21 @@ def _database_url() -> str:
     The ini value wins over `DATABASE_URL`/`TEST_DATABASE_URL` so a caller that pins the URL
     explicitly (the test fixtures, via `Config.set_main_option`) can never be silently
     overridden by whatever a developer happens to have exported in their shell.
+
+    Raises:
+        ConfigError: None of the three sources yields a non-empty URL (m5 task-05) — refusing
+            here is clearer than handing SQLAlchemy an empty string and letting it raise its own
+            `ArgumentError`/`NoSuchModuleError`.
     """
-    return (
+    url = (
         config.get_main_option("sqlalchemy.url")
         or os.environ.get("DATABASE_URL")
         or os.environ.get("TEST_DATABASE_URL")
         or ""
     )
+    if not url:
+        raise ConfigError("DATABASE_URL is not set")
+    return url
 
 
 def run_migrations_offline() -> None:

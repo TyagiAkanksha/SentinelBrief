@@ -345,7 +345,7 @@
         "type": "object"
       },
       "HealthResponse": {
-        "description": "The `/healthz` liveness body: overall status plus the database's own state.",
+        "description": "The `/healthz` liveness body: overall status plus the database's and Redis's own state\n(m5 task-05).",
         "properties": {
           "db": {
             "enum": [
@@ -354,6 +354,15 @@
               "unconfigured"
             ],
             "title": "Db",
+            "type": "string"
+          },
+          "redis": {
+            "enum": [
+              "ok",
+              "error",
+              "unconfigured"
+            ],
+            "title": "Redis",
             "type": "string"
           },
           "status": {
@@ -367,7 +376,8 @@
         },
         "required": [
           "status",
-          "db"
+          "db",
+          "redis"
         ],
         "title": "HealthResponse",
         "type": "object"
@@ -1097,7 +1107,7 @@
     },
     "/healthz": {
       "get": {
-        "description": "Report DB liveness by running `SELECT 1` through the wired session factory.",
+        "description": "Report DB + Redis liveness.",
         "operationId": "healthz",
         "responses": {
           "200": {
@@ -1118,7 +1128,7 @@
                 }
               }
             },
-            "description": "Degraded: database unconfigured or unreachable."
+            "description": "Degraded: database and/or Redis unconfigured or unreachable."
           }
         },
         "summary": "Healthz"

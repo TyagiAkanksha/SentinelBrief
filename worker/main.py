@@ -17,6 +17,7 @@ from arq.connections import RedisSettings
 from arq.worker import func
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from core.cache import RedisTTLCache
 from core.config import Settings, require_nonempty
 from core.db import make_engine, make_session_factory
 from core.queue import TRIAGE_JOB_NAME, TRIAGE_QUEUE_NAME, redis_settings
@@ -48,7 +49,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     network call — it is safe to run against unreachable hosts in tests.
 
     Args:
-        ctx: The ARQ job context; must carry `"settings"` (installed by `WorkerSettings.ctx`).
+        ctx: The ARQ job context; must carry `"settings"` (installed by `WorkerSettings.ctx`) and
+            `"redis"` (ARQ's own connection pool, already installed by the time `on_startup` runs
+            — the task-01 `Context`; this builds the reputation cache from it, m5 task-05).
 
     Raises:
         ConfigError: `s.cheap_model` (or a non-empty `s.strong_model`) has no entry in
@@ -60,8 +63,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["session_factory"] = make_session_factory(engine)
     ctx["http"] = httpx.AsyncClient(timeout=s.abuseipdb_timeout_s)
 
+    cache = RedisTTLCache(ctx["redis"])
     llm = OpenAICompatibleLLMClient.from_settings(s)
-    ctx["pipeline"] = TriagePipeline.from_settings(s, llm=llm, http=ctx["http"])
+    ctx["pipeline"] = TriagePipeline.from_settings(s, llm=llm, http=ctx["http"], cache=cache)
     logger.info(
         "worker ready model=%s prompt=%s tools=%s",
         s.cheap_model,

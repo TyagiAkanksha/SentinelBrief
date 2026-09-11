@@ -127,7 +127,10 @@ class Settings(BaseSettings):
     task-04)."""
     abuseipdb_cache_max_entries: Annotated[int, Field(ge=1)] = 4096
     """Bound on the in-process `lookup_ip_reputation` cache; M5's Redis backend uses its own
-    maxmemory instead (m4 task-04)."""
+    maxmemory instead (m4 task-04) — the in-process cache is now only the DB-less/test default."""
+    abuseipdb_quota_backoff_s: Annotated[int, Field(ge=0)] = 900
+    """After an AbuseIPDB `429`, skip the vendor for this many seconds — one account-wide flag
+    (PRD §6.3), never per-IP; `0` disables the back-off (m5 task-05)."""
     alert_history_max_window_hours: Annotated[int, Field(ge=1)] = 720
     """Largest `window_hours` `get_alert_history` will honor (30 days); bounds the scan the model
     can request over `ix_alerts_src_ip` (PRD §6.3, m4 task-05)."""
