@@ -62,6 +62,7 @@ files = ["api", "worker", "core", "evals", "alembic"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["honeypot/shipper"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["live: calls a real external API; excluded from CI and the default run"]

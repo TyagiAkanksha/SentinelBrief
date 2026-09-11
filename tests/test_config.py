@@ -96,3 +96,17 @@ def test_is_dev_false_for_production_case_insensitive(monkeypatch: pytest.Monkey
     settings = Settings()
 
     assert settings.is_dev is False
+
+
+# --- m6 task-02: the api's ingest body cap (PRD §6.1 step 1 / Global Constraint) ---
+
+
+def test_ingest_max_body_bytes_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`INGEST_MAX_BODY_BYTES`'s `.env.example` default is 2,000,000 (Caddy's own 2 MB outer
+    bound, task-03); the shipper's `SHIPPER_MAX_PAYLOAD_BYTES` must stay below it. At RED,
+    `Settings` has no `ingest_max_body_bytes` field yet — this fails with `AttributeError`.
+    """
+    monkeypatch.delenv("INGEST_MAX_BODY_BYTES", raising=False)
+
+    # R17: the .env.example default, literal on purpose
+    assert Settings().ingest_max_body_bytes == 2_000_000
