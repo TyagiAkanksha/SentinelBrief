@@ -22,10 +22,10 @@ the backup timer + first run + restore rehearsal from task-04, and finally `VERI
 in the AdvisorDesk shape whose every check is the exact command with a block for the real output.
 `docs/deployment.md` is finalized in the same commit: real resource NAMES (instance ids, EIP,
 bucket, VPC ids, region, domain) appear once the owner has created them; no value that is a secret
-ever does. **The agent-authored deliverable stops at the documents and their pins; running the
-walkthrough creates billable resources on the owner's AWS account and public DNS, which is the
-owner's call — the controller stops at the "Deploy (owner checkpoint)" step below, hands over the
-exact command list, and resumes with task-06 after the owner's go.**
+ever does. **The agent-authored deliverable is the documents and their pins; the deploy itself (step 7 below)
+is then run by the controller under the owner's explicit 2026-09-11 grant (AWS access, DNS, and the
+deployments), from this machine's AWS CLI credentials, following the walkthrough exactly — every
+secret generated in-shell and never printed, every resource name recorded in `docs/deployment.md`.**
 
 ## Context (read ONLY these)
 
@@ -198,7 +198,7 @@ exact command list, and resumes with task-06 after the owner's go.**
 | no secret values | `::test_deploy_docs_carry_no_value_shaped_secret` | over every file under `infra/deploy/` and `honeypot/*.md`: regexes `sk-[A-Za-z0-9_-]{20,}`, `postgresql://[^<\s]+:[^<\s'"]+@` (a real password — `<POSTGRES_PASSWORD>` placeholders are exempt because `<` breaks the match), `AKIA[0-9A-Z]{16}`, 40+ hex runs → 0 hits |
 | walkthrough steps | `::test_walkthrough_names_every_step_and_both_hosts` | headings for steps 0–12 present in order; contains `systemctl mask sshd` (≥1), `sentinelbrief-honeypot-host`, `sentinelbrief-app-host`, `push_ecr.sh`, `fetch-secrets.sh`, `alembic upgrade head`, `restore-rehearsal.sh`, `sentinelbrief-backup.timer`, `grey`, `history -c` |
 | VERIFY template | `::test_verify_template_has_all_checks_and_placeholders` | headings `## 0.` … `## 11.` present; the no-LLM grep line present with `grep -ciE` and both `api` and `worker`; `(recorded during deployment)` count ≥ 12; contains `payload_too_large`, `411`, `pg_database_size`, `docker-proxy`, `masked` |
-| user-data scripts | `::test_user_data_scripts_parse_and_disable_sshd` | `bash -n` on `infra/deploy/user-data-app.sh` and `honeypot/user-data.sh`; both contain `systemctl disable --now sshd` and `systemctl mask sshd`; the app one contains `/opt/sentinelbrief/geoip`; the honeypot one `chown -R 999:999` and `useradd --system` |
+| user-data scripts | `::test_user_data_scripts_parse_and_disable_sshd` | `bash -n` on `infra/deploy/user-data-app.sh` and `honeypot/user-data.sh`; each file's text `startswith("#!/bin/bash")` and its second line is `set -euo pipefail` (task-01 re-review N4: `bash -n` passes a shebang-less file, and EC2 cloud-init runs nothing without `#!`); both contain `systemctl disable --now sshd` and `systemctl mask sshd`; the app one contains `/opt/sentinelbrief/geoip`; the honeypot one `chown -R 999:999` and `useradd --system` |
 | deployment.md | `::test_deployment_doc_has_resource_table_and_check_list` | contains "Resources (recorded at deploy)", `<recorded at deploy>` ≥ 8 occurrences, `VERIFY.md` checks "0–11" |
 | runbook cross-link | `::test_honeypot_readme_points_at_user_data_file` | `honeypot/README.md` step 3 contains `honeypot/user-data.sh` |
 
@@ -220,13 +220,16 @@ exact command list, and resumes with task-06 after the owner's go.**
   for both hosts, VERIFY template, IAM + user-data, deployment.md finalized (m6 task-05)`;
   path-scoped `git add infra/deploy honeypot/user-data.sh honeypot/README.md docs/deployment.md
   README.md`.
-- [ ] **Step 7 — Deploy (OWNER CHECKPOINT; controller, not an agent):** after the review, the
-  controller posts the walkthrough's step list with the exact commands the owner runs (steps
-  0–12) and STOPS. The owner runs them (or authorizes the controller to run the `aws` steps from
-  this machine's configured credentials — an explicit, per-session grant; `aws` is under `ask` in
-  `.claude/settings.json` on purpose). Resource names go into `docs/deployment.md`'s table and
-  `VERIFY.md`'s blocks; prod-copy drift is committed in the same sitting
-  (`chore(deploy): m6 first deploy — <date>`). Then task-06.
+- [ ] **Step 7 — Deploy (controller-run under the owner's grant; not a subagent):** after the
+  review, the controller executes steps 0–12 from this machine (`aws` CLI, us-east-1), pasting
+  each command's non-secret output into the ledger as it goes; secrets (`INGEST_HMAC_SECRET`,
+  `ADMIN_TOKEN`, `POSTGRES_PASSWORD`) are generated in-shell and written ONLY to SSM; the LLM key
+  is read from the local `.env` into the shell, never echoed; optional keys absent locally
+  (AbuseIPDB, MaxMind) are skipped and the runbook's "optional" path is followed. The two
+  Cloudflare A records: added via the Cloudflare dashboard (Chrome tools) if reachable, else the
+  controller asks the owner for exactly those two records and continues once `dig` resolves.
+  Resource names go into `docs/deployment.md`'s table and `VERIFY.md`'s blocks; prod-copy drift
+  is committed in the same sitting (`chore(deploy): m6 first deploy — <date>`). Then task-06.
 
 ## Verify
 
@@ -250,4 +253,5 @@ uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --
   ingest gates incl. the body cap, the first real session, CORS, the dashboard, the no-LLM log
   proof, backups, log rotation, honeypot hardening, Redis degrade/recover), each with a block
   for real output.
-- The deploy itself is an owner checkpoint: nothing in this task creates a cloud resource.
+- The documents create no cloud resource; the deploy (step 7) is run by the controller under the
+  owner's explicit grant, with every resource name recorded and no secret ever printed.
