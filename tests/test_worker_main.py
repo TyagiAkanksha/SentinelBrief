@@ -19,6 +19,11 @@ m5 task-05 adds `test_startup_installs_a_redis_backed_reputation_cache` and thre
 ARQ has already put its own connection pool at `ctx["redis"]` by the time `on_startup` runs (the
 task-01 `Context`), so a unit test driving `startup` without a running ARQ worker must supply it
 itself — `startup` now builds the worker's `RedisTTLCache` from exactly that key.
+
+m5 fix wave (review N-I1 shape (a)) adds `TRIAGE_ATTEMPT_TIMEOUT_S` to
+`test_worker_settings_are_read_from_settings`'s own env/assertion table, and a new
+`test_attempt_timeout_at_or_above_job_timeout_raises_config_error` pins the boot-time fail-fast
+that keeps the inner attempt deadline strictly below ARQ's own `job_timeout`.
 """
 
 from __future__ import annotations
@@ -137,6 +142,7 @@ def test_worker_settings_are_read_from_settings(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delenv("CHEAP_MODEL", raising=False)
     monkeypatch.delenv("MODEL_PRICES_JSON", raising=False)
     monkeypatch.delenv("TRIAGE_JOB_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TRIAGE_ATTEMPT_TIMEOUT_S", raising=False)
     monkeypatch.delenv("WORKER_MAX_JOBS", raising=False)
     monkeypatch.delenv("WORKER_HEALTH_CHECK_INTERVAL_S", raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")
@@ -147,6 +153,9 @@ def test_worker_settings_are_read_from_settings(monkeypatch: pytest.MonkeyPatch)
         "MODEL_PRICES_JSON", '{"fake-model":{"input_per_mtok":"0","output_per_mtok":"0"}}'
     )
     monkeypatch.setenv("TRIAGE_JOB_TIMEOUT_S", "77")
+    # m5 fix wave (review N-I1 "Pins (test-author)" (1)): below TRIAGE_JOB_TIMEOUT_S, or the boot
+    # check below would fire at the default 100 >= 77 before this test ever gets to import.
+    monkeypatch.setenv("TRIAGE_ATTEMPT_TIMEOUT_S", "66")
     monkeypatch.setenv("WORKER_MAX_JOBS", "3")
     monkeypatch.setenv("WORKER_HEALTH_CHECK_INTERVAL_S", "11")
     _reset_worker_main()
@@ -168,6 +177,42 @@ def test_worker_settings_are_read_from_settings(monkeypatch: pytest.MonkeyPatch)
         assert ws.on_shutdown is module.shutdown
         assert ws.retry_jobs is True
         assert ws.ctx["settings"].triage_job_timeout_s == 77
+        assert ws.ctx["settings"].triage_attempt_timeout_s == 66.0
+    finally:
+        _reset_worker_main()
+
+
+def test_attempt_timeout_at_or_above_job_timeout_raises_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m5 fix wave (review N-I1 shape (a)): `worker/main.py`'s boot check (after the four
+    `require_nonempty` lines) fails fast when `TRIAGE_ATTEMPT_TIMEOUT_S` is not strictly below
+    `TRIAGE_JOB_TIMEOUT_S` — otherwise ARQ's own `job_timeout` could cancel the whole job from
+    OUTSIDE before the inner `asyncio.wait_for` ever fires, recording the job failed with NO
+    retry and NO terminal write (the alert would rest `pending` forever)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CHEAP_MODEL", raising=False)
+    monkeypatch.delenv("MODEL_PRICES_JSON", raising=False)
+    monkeypatch.delenv("TRIAGE_JOB_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TRIAGE_ATTEMPT_TIMEOUT_S", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/x")
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6399/0")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("CHEAP_MODEL", "fake-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON", '{"fake-model":{"input_per_mtok":"0","output_per_mtok":"0"}}'
+    )
+    monkeypatch.setenv("TRIAGE_JOB_TIMEOUT_S", "60")
+    monkeypatch.setenv("TRIAGE_ATTEMPT_TIMEOUT_S", "60")  # AT the job timeout, not just above it
+    _reset_worker_main()
+
+    try:
+        with pytest.raises(ConfigError) as exc_info:
+            importlib.import_module("worker.main")
+        assert "TRIAGE_ATTEMPT_TIMEOUT_S" in str(exc_info.value)
+        assert "TRIAGE_JOB_TIMEOUT_S" in str(exc_info.value)
     finally:
         _reset_worker_main()
 

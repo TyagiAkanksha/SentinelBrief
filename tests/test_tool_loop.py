@@ -25,11 +25,16 @@ m5 task-03 fix-1 (review I2/I3) adds two more pins on the escalation outcome: th
 `retried` flag surviving the `dataclasses.replace` an escalation stamps onto it, and
 `output_tokens`/`latency_ms` summing across both tiers exactly like `input_tokens`/`cost_usd`
 already did.
+
+m5 fix wave (review N-I2, mutant M10 survived): `test_low_confidence_escalates_without_tools`
+gains a negative pin on the `"routing escalated"` INFO line — the cheap verdict's own reasoning
+text and the alert's session id must never reach it, only ids/reasons/model names.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -765,6 +770,15 @@ async def test_low_confidence_escalates_without_tools(caplog: pytest.LogCaptureF
     assert outcome.model_primary == "fake-model"
     info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
     assert any("reason=confidence" in message for message in info_messages)
+
+    # m5 fix wave (review N-I2, mutant M10): the routing INFO line carries ids/reasons/model
+    # names only — never model text or session data (PRD §10.6, `.claude/rules/worker.md:36`).
+    routing = [m for m in info_messages if "routing escalated" in m]
+    assert len(routing) == 1
+    # Model text and session data never reach a log line (PRD §10.6, rules/worker.md): the
+    # cheap verdict's reasoning and the alert's session id are absent from every INFO record.
+    assert json.loads(VALID3_LOW)["reasoning"] not in routing[0]
+    assert minimal_alert().session_id not in routing[0]
 
 
 async def test_no_escalation_below_both_thresholds() -> None:

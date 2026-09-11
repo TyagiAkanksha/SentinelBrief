@@ -46,11 +46,16 @@ m5 task-04 fix-1 (review I1, M1) adds: a lock-release assertion appended to
 a malformed `raw` payload's `pydantic.ValidationError` still releases the lock (today it escapes
 `triage_attempt` BEFORE the `try:` that owns the rollback, so this is RED until Part B moves the
 `SessionAlert.model_validate` call inside it).
+
+m5 fix wave (review N-I2, mutant M11) adds a negative pin to
+`test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call`: the skip branch's INFO
+log line must never carry the locked row's own `raw` payload.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -355,7 +360,9 @@ async def test_non_escalated_attempt_persists_the_same_model_twice(
 
 
 async def test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call(
-    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+    db_session: AsyncSession,
+    db_session_factory: async_sessionmaker[AsyncSession],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """`AttemptResult` skip mapping (m5 task-04, PRD §6.1 idempotency, §12 M5 "kill the worker
     mid-job -> job re-runs, no duplicate verdicts"): once the locked row's status is no longer
@@ -364,12 +371,16 @@ async def test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call
     overlapping run, can never write a second verdict row or spend a second set of tokens.
     `triage_alert` (the unchanged M2 contract) reports a `skipped` `AttemptResult` as `"triaged"`:
     the alert IS triaged, whichever run actually did the work.
+
+    m5 fix wave (review N-I2, mutant M11 survived): the skip INFO line carries `alert_id`/
+    `status` only, never the row's own `raw` payload -- `session_id="LOG-MARKER-skip-7b2f"` on
+    the seeded (already-triaged) alert stands in for that attacker-controlled data.
     """
     triaged_id = await seed_alert(
         db_session,
         "alert4",
         verdict=Verdict.model_validate_json(VALID4),
-        session_id="skip-triaged-001",
+        session_id="LOG-MARKER-skip-7b2f",
     )
     failed_id = await seed_alert(
         db_session, "alert4", status="failed", session_id="skip-failed-002"
@@ -379,8 +390,14 @@ async def test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call
     fake = FakeLLMClient([])
     pipeline = TriagePipeline(llm=fake, model="fake-model", prompt_version="triage-v1")
 
-    triaged_attempt = await pipeline.triage_attempt(db_session, triaged_id)
+    with caplog.at_level(logging.INFO):
+        triaged_attempt = await pipeline.triage_attempt(db_session, triaged_id)
     assert triaged_attempt == AttemptResult(status="skipped", verdict_id=None, outcome=None)
+
+    skip = [r.getMessage() for r in caplog.records if "triage attempt skipped" in r.getMessage()]
+    assert len(skip) == 1
+    assert "LOG-MARKER-skip-7b2f" not in skip[0]  # the raw payload never reaches the log line
+    assert str(triaged_id) in skip[0]
 
     failed_attempt = await pipeline.triage_attempt(db_session, failed_id)
     assert failed_attempt == AttemptResult(status="skipped", verdict_id=None, outcome=None)

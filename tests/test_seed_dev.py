@@ -414,14 +414,10 @@ def test_live_with_strong_equal_to_cheap_exit_1(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """m5 task-03 fix-1 (review I1): `--live` with `STRONG_MODEL == CHEAP_MODEL` (both priced, so
-    `OpenAICompatibleLLMClient.from_settings` itself is happy) must still fail as a clean
-    `config_error` — `TriagePipeline.__init__`'s own equal-id `ValueError` (raised from inside
-    `seed()`, after the first alert's `insert_alert`/commit) must never escape
-    `asyncio.run(seed(...))` as a traceback. A REAL, reachable `tmp_schema` is required here
-    (unlike the bogus `--database-url` other `--live` failure-path tests use): this failure fires
-    from inside `seed()`'s per-alert loop, after the first `insert_alert` already succeeded — an
-    unreachable database would surface as `error: database_error:` first and never exercise the
-    `ValueError` path this test pins."""
+    `OpenAICompatibleLLMClient.from_settings` itself is happy) must fail as a clean `config_error`
+    before any alert is inserted — `TriagePipeline.__init__`'s bare equal-id `ValueError` must
+    never escape `asyncio.run(seed(...))` as a traceback (`scripts/seed_dev.py`'s up-front check).
+    """
     monkeypatch.setenv("LLM_API_KEY", "x")
     monkeypatch.setenv("CHEAP_MODEL", "fake-model")
     monkeypatch.setenv("STRONG_MODEL", "fake-model")
@@ -440,6 +436,7 @@ def test_live_with_strong_equal_to_cheap_exit_1(
     assert len(lines) == 1
     assert lines[0].startswith("error: config_error:")
     assert "Traceback" not in captured.err
+    assert _count_table(url, schema, "alerts") == 0  # checked before any insert (review N2)
 
 
 # --- never referenced from compose (DB-less; no `seed_dev` fixture -> green on arrival) ---------

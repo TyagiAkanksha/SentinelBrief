@@ -140,6 +140,9 @@ def test_api_main_keeps_the_bounded_in_process_response_cache(
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/x")
     monkeypatch.setenv("INGEST_HMAC_SECRET", "test-secret")
     monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6399/0")
+    # m5 fix wave (review t05-rr1-N2): a distinguishable value so the bound assertion below can
+    # actually fail against a hardcoded literal (rule 7) — the default (1024) can't.
+    monkeypatch.setenv("ALERTS_CACHE_MAX_ENTRIES", "777")
     _reset_api_main()
 
     try:
