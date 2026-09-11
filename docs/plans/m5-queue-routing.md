@@ -136,5 +136,7 @@ task-03 extends and swaps the caches both entrypoints wire.
 
 ## Status
 
-in progress — briefs written 2026-09-09 (`m5-queue-routing/task-01` … `task-05`); git history
-and the ledger (`.superpowers/sdd/m5-queue-routing/progress.md`) are authoritative.
+done — briefs written 2026-09-09 (`m5-queue-routing/task-01` … `task-05`); five tasks approved,
+whole-branch review TAG-READY after one fix wave, acceptance walk pasted in the ledger; PR #6
+merged into `main` at `50b108b`, tag `m5` (2026-09-11). Git history and the ledger
+(`.superpowers/sdd/m5-queue-routing/progress.md`) are authoritative.

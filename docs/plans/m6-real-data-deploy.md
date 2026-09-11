@@ -53,16 +53,53 @@ M0–M5 Global Constraints apply verbatim (branch `feat/m6-real-data-deploy`). A
 - Synthetic fixture shapes are re-checked against the first real sessions; any schema surprise
   is a PRD/SUGGESTIONS note, not a silent fixture edit.
 
-## Tasks (briefs written at the M5 gate)
+Briefing rulings (2026-09-11, recorded here so no task has to re-derive them; each names its cost
+if wrong):
+
+- **Cowrie's `var/` is bind-mounted, not a named volume (task-01).** `./data/log` and `./data/lib`
+  under `/opt/sentinelbrief-honeypot/` so the shipper runs as an unprivileged host user and reads
+  the log at a plain path; `honeypot/data/` is already gitignored and dockerignored. Cost if
+  wrong: two compose lines and one `chown` in user-data.
+- **The ingest body cap is a declared-length check on `SignedRoute` (task-02):** `Content-Length`
+  above `INGEST_MAX_BODY_BYTES` (Setting, default 2 000 000) → `413 payload_too_large`; no usable
+  `Content-Length` → `411 length_required`; both BEFORE the signature reads the body; Caddy's
+  `request_body { max_size 2MB }` (task-03) enforces the real byte count on the wire. The shipper
+  caps its own payload at `SHIPPER_MAX_PAYLOAD_BYTES` (1 500 000) by dropping middle events and
+  records `shipper.truncated_events` in the envelope. Cost if wrong: two error classes and one
+  Setting.
+- **The shipper is its own tiny package (`honeypot/shipper/`, `httpx` only), imported by the
+  test suite through pytest `pythonpath`, type-checked under mypy strict, and isolated from the
+  repo by an AST test** (no `core`/`api`/`worker`/`evals` import; the signing algorithm is a
+  vendored copy pinned equal to `core/signing.py`). Cost if wrong: a packaging change.
+- **Backups run from a host systemd timer, not a cron container (task-04).** Root + the instance
+  role, `pg_dump | gzip` through `docker compose exec`, S3 lifecycle 30 days, restore rehearsed
+  into a scratch database; PRD §11 and `docs/deployment.md` amended (v1.5). Cost if wrong: one
+  compose service replaces the timer.
+- **Restart policies (M5 walk finding N-W1, task-03):** production `unless-stopped` on all six
+  services; dev `on-failure` on all five (covers the ARQ worker exiting when Redis vanishes,
+  without auto-starting the dev stack at boot). Cost if wrong: one word per service.
+- **`REDIS_URL` (D12/N-M10, task-03):** pinned in the production compose as a non-secret
+  (`redis://redis:6379/0`, no password on the compose network); `Settings` keeps it `SecretStr`
+  because a URL MAY carry a password; `docs/deployment.md` says both. `LLM_TIMEOUT_S` replaces
+  the `worker/llm_client.py:94` literal in the same task.
+- **Domain (PRD §13 working assumption):** `sentinelbrief.tyagiakanksha.com` /
+  `api.sentinelbrief.tyagiakanksha.com` throughout `infra/deploy/`; the owner confirms at task-05
+  step 0; a change is one `sed` over the hits task-03's report lists.
+- **The deploy is an owner checkpoint (task-05 step 7).** Nothing in tasks 01–06 creates a cloud
+  resource or a DNS record; the controller stops after task-05's review with the walkthrough's
+  command list and resumes with task-06 after the owner's go (or an explicit per-session grant
+  to run the `aws` steps from this machine — `aws` is under `ask` in `.claude/settings.json`).
+
+## Tasks (briefs written at the M5 gate, 2026-09-11)
 
 | # | Task | File | Depends on |
 |---|------|------|-----------|
 | 1 | `honeypot/`: Cowrie compose, `assets.yaml`, host hardening notes (SSM-only, no sshd, egress) | `m6-real-data-deploy/task-01-cowrie-host.md` | M5 tag |
 | 2 | Shipper: session assembler, signed POST, spool + backoff, idle flush, systemd unit, tests with a replayed Cowrie log | `m6-real-data-deploy/task-02-shipper.md` | task-01 |
-| 3 | `infra/deploy/`: `push_ecr.sh`, `prod/docker-compose.yml` (six services + backup), `prod/Caddyfile`, `prod/fetch-secrets.sh`, `env-checklist.md`, static pin tests | `m6-real-data-deploy/task-03-deploy-scripts-prod-copies.md` | M5 tag |
-| 4 | Backups (`pg_dump` → S3, lifecycle) + restore doc + log rotation + retention decision recorded | `m6-real-data-deploy/task-04-backups-logs-retention.md` | task-03 |
-| 5 | Owner-run deploy walkthrough (`ec2-single-host.md` shape); `docs/deployment.md` finalized with real names | `m6-real-data-deploy/task-05-deploy-walkthrough.md` | tasks 2–4 |
-| 6 | `VERIFY.md` executed live; 48 h soak; "no LLM in api logs" grep; fixture-vs-real schema check | `m6-real-data-deploy/task-06-verify-soak.md` | task-5 |
+| 3 | `infra/deploy/`: `push_ecr.sh`, `prod/docker-compose.yml` (six services; backups are a host timer, task-04), `prod/Caddyfile`, `prod/fetch-secrets.sh`, `env-checklist.md`, static pin tests; carried M5 items (restart policies, `REDIS_URL` classification, `LLM_TIMEOUT_S`) | `m6-real-data-deploy/task-03-deploy-scripts-prod-copies.md` | M5 tag |
+| 4 | Backups (`pg_dump` → S3 from a systemd timer, lifecycle) + restore doc + rehearsal script + log-rotation observation commands + retention decision recorded | `m6-real-data-deploy/task-04-backups-logs-retention.md` | task-03 |
+| 5 | Owner-run deploy walkthrough for both hosts (`ec2-single-host.md` shape), IAM + user-data artifacts, `VERIFY.md` template; `docs/deployment.md` finalized; **then the deploy — owner checkpoint** | `m6-real-data-deploy/task-05-deploy-walkthrough.md` | tasks 2–4 |
+| 6 | `scripts/check_real_sessions.py` (fixture-vs-real schema report); `VERIFY.md` executed live; 48 h soak; "no LLM in api logs" grep; acceptance walk; housekeeping rows | `m6-real-data-deploy/task-06-verify-soak.md` | task-5 |
 
 Order: (1 → 2) and (3 → 4) in parallel → 5 → 6. Rationale: the honeypot side and the app-host
 side are independent until the walkthrough joins them; verification is last and is the
@@ -80,4 +117,7 @@ acceptance evidence.
 
 ## Status
 
-planned — briefs pending (written at the M5 gate).
+in progress — briefs written 2026-09-11 (`m6-real-data-deploy/task-01` … `task-06`; they fold the
+16 "Plan defects for the M6 briefing" rules from the M5 final review and the ledgered M5 → M6
+items); git history and the ledger (`.superpowers/sdd/m6-real-data-deploy/progress.md`) are
+authoritative.
