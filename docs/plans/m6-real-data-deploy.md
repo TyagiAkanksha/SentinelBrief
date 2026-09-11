@@ -52,6 +52,11 @@ M0–M5 Global Constraints apply verbatim (branch `feat/m6-real-data-deploy`). A
   (spool test).
 - Synthetic fixture shapes are re-checked against the first real sessions; any schema surprise
   is a PRD/SUGGESTIONS note, not a silent fixture edit.
+- **Every fenced command in an owner-run runbook has been executed by the implementer in the exact
+  form written, or is annotated in the runbook with why it cannot be run here** (task-01 review:
+  three Important findings were commands never run as written — a shell-less image, a user-data
+  block without `#!`, a bind source never created). The implementer's report lists each runbook
+  command with "ran" or "cannot run here: <why>".
 
 Briefing rulings (2026-09-11, recorded here so no task has to re-derive them; each names its cost
 if wrong):

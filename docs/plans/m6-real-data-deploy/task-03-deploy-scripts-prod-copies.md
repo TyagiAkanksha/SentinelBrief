@@ -61,6 +61,7 @@ keeps it `SecretStr` (D12/N-M10), and the `worker/llm_client.py:94` `timeout=60.
 - Create (test-author): `tests/test_prod_compose.py`, `tests/test_prod_caddyfile.py`,
   `tests/test_deploy_scripts.py`, `tests/test_env_checklist.py`; extend
   `tests/test_compose_config.py` (`test_compose_every_service_has_restart_on_failure`),
+  — and, in the same file, change the `assert proc.returncode == 0, f"docker compose config failed:\n{proc.stdout}\n{proc.stderr}"` message (line 80) to report `proc.stderr` ONLY: on a failure the message would paste rendered `docker compose config` output, i.e. interpolated `.env` values, into a CI log (`.claude/rules/infra.md`; task-01 review note). `tests/test_prod_compose.py`'s helper is written that way from the start,
   `tests/test_dockerfile_pins.py` (`test_scripts_copied_for_deploy_time_geoip_fetch`),
   `tests/test_llm_client.py` (`test_from_settings_uses_llm_timeout_s`), `tests/test_config.py`
   (`test_llm_timeout_s_default`)

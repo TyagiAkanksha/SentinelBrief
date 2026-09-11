@@ -6,13 +6,13 @@ status: planned
 spec: PRD.md §3 (the honeypot VM is network-isolated from the app host; it shares no credentials, no SSH keys, no database access; it can only POST to one ingest URL with an HMAC secret), §10.4 (separate provider account or isolated VPC; no shared secrets; outbound only to the ingest URL — assume it will be fully compromised), §10.9 (SSM-only management, no real `sshd` on any port — Cowrie owns port 22), §11 Phase 1 ("Honeypot host" paragraph), §1.2 (one alert = one Cowrie session), §12 M6; `docs/deployment.md` → "Honeypot host"; `.claude/rules/infra.md`; `CONVENTIONS.md` §11; `.claude/skills/cowrie-fixture/references/cowrie-events.md` (the JSON log shape the shipper reads)
 ---
 
-# task-01 — `honeypot/`: Cowrie compose file (official image, JSON log on a named volume, port 22 owned outright), the host runbook (Amazon Linux 2023, SSM-only, `sshd` disabled, egress 443), `assets.yaml` reconciled with the real sensor, static pin tests
+# task-01 — `honeypot/`: Cowrie compose file (official image, JSON log bind-mounted under `./data/`, port 22 owned outright), the host runbook (Amazon Linux 2023, SSM-only, `sshd` disabled, egress 443), `assets.yaml` reconciled with the real sensor, static pin tests
 
 ## Goal
 
 The honeypot host runs exactly one thing: Cowrie in Docker, listening on the host's real port 22
 (mapped to the container's 2222 — Cowrie's default), writing one JSON object per event to
-`cowrie.json` on a named volume the shipper (task-02) tails. Everything else about the host is
+`cowrie.json` in a host directory (`./data/log`, bind-mounted) the shipper (task-02) tails. Everything else about the host is
 hardening: Amazon Linux 2023 with `sshd` disabled and masked so Cowrie can own 22, management
 only through SSM Session Manager, a security group that admits TCP 22 from anywhere and allows
 outbound TCP 443 only (the ingest hostname and the SSM endpoints), Docker log rotation, and
@@ -51,7 +51,8 @@ pin the shape of both files.
   `sha256:42e01e0e5fe705a0a63dacc0f1992b2d230740ac149af7675f48197abf740d44` (linux/amd64 +
   linux/arm64 — so the `t4g.nano` arm64 host is fine); the implementer re-runs that command,
   and if the digest still matches commits the `@sha256:` form directly (the pin test accepts
-  either form; the runbook still makes re-checking the digest a required step before deploy).
+  ONLY the `@sha256:` form as of fix-1 — review M2; the runbook still makes re-checking the digest
+  a required step before deploy).
 
 ## Files
 
@@ -79,7 +80,7 @@ pin the shape of both files.
     cowrie:
       image: cowrie/cowrie:latest        # PIN BY DIGEST before the first deploy (honeypot/README.md step 4): cowrie/cowrie@sha256:<digest>
       ports:
-        - "22:2222"                      # the host's real port 22 — sshd is disabled and masked on this host (README step 2), Cowrie owns it
+        - "22:2222"                      # the host's real port 22 — sshd is disabled and masked on this host (README step 3, the user-data), Cowrie owns it
       volumes:
         - ./data/log:/cowrie/cowrie-git/var/log/cowrie            # cowrie.json (+ daily rotations) — the host-side shipper (task-02, an unprivileged systemd unit) tails /opt/sentinelbrief-honeypot/data/log/cowrie.json; a named volume would force the shipper to run as root under /var/lib/docker
         - ./data/lib:/cowrie/cowrie-git/var/lib/cowrie            # downloads + tty logs (attacker artifacts) — never committed: honeypot/data/ is gitignored AND dockerignored
@@ -108,7 +109,9 @@ pin the shape of both files.
   2. Security group: inbound TCP 22 from `0.0.0.0/0` (and `::/0`); outbound TCP 443 to
      `0.0.0.0/0` only (the ingest hostname and the SSM/EC2-messages endpoints — narrow to VPC
      endpoints later if the owner adds them); nothing else in either direction.
-  3. User data (pasted verbatim in the runbook): `dnf install -y docker python3.12`,
+  3. User data (pasted verbatim in the runbook; the block's FIRST two lines are `#!/bin/bash` and
+     `set -euo pipefail` — EC2 cloud-init runs only user data that starts with `#!` or
+     `#cloud-config`; review I2): `dnf install -y docker python3.12`,
      `systemctl enable --now docker`, install the compose plugin (`mkdir -p
      /usr/local/lib/docker/cli-plugins && curl -fsSL
      https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-$(uname
@@ -117,20 +120,24 @@ pin the shape of both files.
      `gh api repos/docker/compose/releases/latest`); the implementer re-verifies it exists),
      `systemctl disable --now sshd && systemctl mask sshd` (port 22 must be free before Cowrie
      starts; SSM Agent is preinstalled on AL2023 and needs no port), `mkdir -p
-     /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 999:999
+     /opt/sentinelbrief-honeypot/etc /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 999:999
      /opt/sentinelbrief-honeypot/data` (uid 999 = the image's `cowrie` user — verified on the pinned
      digest, `cowrie:x:999:999`; the briefing said 1000, which would have left Cowrie unable to write
      its log on the box), `useradd --system
      --no-create-home --shell /sbin/nologin shipper` (task-02's unit runs as this user),
      `usermod -aG docker ssm-user`.
-  4. Copy `honeypot/docker-compose.yml` + `honeypot/etc/cowrie.cfg` to `/opt/sentinelbrief-honeypot/`
-     via SSM (`aws ssm start-session` + a heredoc, or S3 as a courier — never `scp`, there is no
+  4. Copy `honeypot/docker-compose.yml` → `/opt/sentinelbrief-honeypot/docker-compose.yml` and
+     `honeypot/etc/cowrie.cfg` → `/opt/sentinelbrief-honeypot/etc/cowrie.cfg` (the relative `./etc/…`
+     bind resolves against the compose file's directory; a missing source makes Docker create a
+     root-owned DIRECTORY there and Cowrie silently boots on `.dist` defaults with the wrong sensor —
+     review I1; guard with `test -f /opt/sentinelbrief-honeypot/etc/cowrie.cfg` before `up -d`) via SSM (`aws ssm start-session` + a heredoc, or S3 as a courier — never `scp`, there is no
      sshd); `docker pull cowrie/cowrie:latest`, record the digest, edit the `image:` line to the
      digest form on the box AND in the repo copy in the same sitting (drift rule).
   5. `docker compose up -d`; verify from a laptop: `ssh -p 22 root@<elastic-ip>` reaches Cowrie's
      fake banner (`SSH-2.0-OpenSSH_6.0p1 Debian-4+deb7u2` by default), a wrong password is
-     accepted or rejected per Cowrie's userdb; `docker compose exec cowrie tail -n 3
-     /cowrie/cowrie-git/var/log/cowrie/cowrie.json` shows `cowrie.session.connect` … `closed`
+     accepted or rejected per Cowrie's userdb; `tail -n 3 /opt/sentinelbrief-honeypot/data/log/cowrie.json` (from the SSM session on the HOST — the
+     official image ships no shell and no coreutils, so `docker compose exec cowrie tail …` cannot run;
+     the host path is the bind mount the shipper reads too) shows `cowrie.session.connect` … `closed`
      events with `"sensor": "hp-use-01"`.
   6. What is NOT on this host: no repo checkout, no `.env`, no database URL, no LLM key, no
      AWS credentials beyond the instance role. The only secret ever placed here is the shipper's
@@ -157,10 +164,11 @@ syntax, not configparser's).
 | config mount | `::test_cowrie_cfg_is_bind_mounted_read_only` | a bind mount targeting `/cowrie/cowrie-git/etc/cowrie.cfg` with `read_only is True` |
 | no secrets | `::test_cowrie_has_no_env_file_or_environment` | `"env_file" not in cowrie`; `cowrie.get("environment") in (None, {}, [])`; rendered against a canary `.env` so a leaked `env_file` would show (the `_ENV_FILE_LEAK_CANARY` pattern) |
 | restart + logging | `::test_cowrie_restarts_and_rotates_logs` | `restart == "unless-stopped"`; logging json-file `max-size 10m`, `max-file 3` |
-| image pin form | `::test_cowrie_image_is_the_official_image_tag_or_digest` | `image` matches `^cowrie/cowrie(:latest|@sha256:[0-9a-f]{64})$`; the docstring names the digest pin step |
+| image pin form | `::test_cowrie_image_is_the_official_image_tag_or_digest` | `image` matches `^cowrie/cowrie@sha256:[0-9a-f]{64}$` (digest-only — task-01 fix-1, review M2: the digest is committed, so a moving tag must fail the pin); the docstring names the digest re-check step |
 | cfg | `::test_cowrie_cfg_enables_jsonlog_and_names_the_sensor` | `[output_jsonlog] enabled == "true"`, `logfile` endswith `cowrie.json`; `[honeypot] sensor_name == "hp-use-01"` |
 | assets | `::test_assets_yaml_marks_the_deployed_sensor_and_keeps_twenty` | the header comment contains `hp-use-01` and "deployed"; `len(assets) == 20`; `assets["hp-use-01"]["role"] == "ssh-honeypot"` |
-| runbook | `::test_honeypot_readme_names_the_hardening_steps` | the README text contains `systemctl mask sshd`, `AmazonSSMManagedInstanceCore`, `443`, `@sha256`, and never the strings `INGEST_HMAC_SECRET=` followed by a value (regex `INGEST_HMAC_SECRET=\S+` absent) |
+| ignore claims | `::test_honeypot_data_is_git_and_docker_ignored` | `.gitignore` and `.dockerignore` each contain a line `honeypot/data/` (fix-1, review M3 — the compose comments claim it; `.dockerignore` keeps attacker artifacts out of the api image build context) |
+| runbook | `::test_honeypot_readme_names_the_hardening_steps` | the README text contains `systemctl mask sshd`, `AmazonSSMManagedInstanceCore`, `443`, `@sha256`, `#!/bin/bash`, `mkdir -p /opt/sentinelbrief-honeypot/etc`, `/opt/sentinelbrief-honeypot/etc/cowrie.cfg`, `tail -n 3 /opt/sentinelbrief-honeypot/data/log/cowrie.json`, and never the strings `INGEST_HMAC_SECRET=` followed by a value (regex `INGEST_HMAC_SECRET=\S+` absent) |
 
 ## Steps (TDD)
 
