@@ -23,9 +23,12 @@ below), so `Settings()` never reads a real `.env` file regardless of `cwd` — t
 left is real process environment variables, which `monkeypatch.delenv`/`setenv` fully control for
 the secrets under test.
 
-m5 task-05 adds `test_api_main_installs_a_redis_cache`: `app.state.cache` is a `RedisTTLCache`
-over the same `redis_client` `app.state.redis` uses, backing the list/stats response cache
-(m3 task-02's `TTLCache` seam) instead of the default `InMemoryTTLCache`.
+m5 task-05 fix-1 (review I2, ruling R14) adds
+`test_api_main_keeps_the_bounded_in_process_response_cache`: `app.state.cache` stays the bounded
+`InMemoryTTLCache` `create_app()` installs by default — `api/main.py` never passes a `cache=`
+kwarg — because a public route must never be able to grow a Redis instance that also holds the
+ARQ queue (PRD §10.1). An earlier version of this task wired a `RedisTTLCache` here instead; that
+design is reverted (the worker's reputation cache is the only `RedisTTLCache` consumer now).
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ import pytest
 from arq.connections import ArqRedis
 from fastapi import FastAPI
 
-from core.cache import RedisTTLCache
+from core.cache import InMemoryTTLCache
 from core.config import Settings
 from core.errors import ConfigError
 
@@ -123,7 +126,14 @@ def test_required_values_present_builds_app_with_enqueue_and_redis(
         _reset_api_main()
 
 
-def test_api_main_installs_a_redis_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_main_keeps_the_bounded_in_process_response_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m5 task-05 fix-1 (review I2, ruling R14): a public GET route must never grow a Redis
+    instance that also holds the ARQ queue — `api/main.py` installs no `cache=` at all, so
+    `create_app()`'s own bounded default (`InMemoryTTLCache(max_entries=alerts_cache_max_
+    entries)`) stays the production list/stats cache; `RedisTTLCache` remains the worker's
+    reputation-cache backend only."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("INGEST_HMAC_SECRET", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
@@ -134,7 +144,13 @@ def test_api_main_installs_a_redis_cache(monkeypatch: pytest.MonkeyPatch) -> Non
 
     try:
         module = importlib.import_module("api.main")
-        assert isinstance(module.app.state.cache, RedisTTLCache)
+        assert isinstance(module.app.state.cache, InMemoryTTLCache)
+        # Private-attribute access is the accepted pattern for a wiring pin (task-06 fix-1
+        # brief, I1): there is no public accessor for the cache's own configured bound.
+        assert (
+            module.app.state.cache._max_entries  # type: ignore[attr-defined]
+            == module.settings.alerts_cache_max_entries
+        )
     finally:
         _reset_api_main()
 

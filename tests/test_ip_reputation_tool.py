@@ -15,6 +15,12 @@ call the tool made (controller ruling R4).
 `test_recorded_fixtures_replay_for_the_five_fixture_ips` exercises the five synthetic reputation
 fixtures (task-04's own deliverable, written by the implementer via `write_fixture`) through
 `ReplayToolRecorder`, the same seam the triage loop and the seed script use — never a live call.
+
+m5 task-05 fix-1 (review I1/PC2/M21, ruling R14) changes `run`'s check order: the account-wide
+quota flag is now consulted AFTER the per-ip cache read, not before — a warm 24 h entry costs no
+AbuseIPDB quota and must keep answering correctly even while the back-off is armed; only a MISS is
+suppressed. The key-before-quota ordering (M21) is unchanged and gets its own pin
+(`test_no_api_key_beats_the_quota_flag`).
 """
 
 from __future__ import annotations
@@ -46,16 +52,20 @@ _TEST_KEY = "test-key"
 
 
 class RecordingCache:
-    """A `TTLCache` (`core.cache`) that logs every `set` call and delegates storage to a real
-    `InMemoryTTLCache` — it implements our Protocol, it is not a mock of our own code
-    (CONVENTIONS.md §10). Used to observe the exact `(key, value, ttl_s)` a tool passed to `set`.
+    """A `TTLCache` (`core.cache`) that logs every `get`/`set` call and delegates storage to a
+    real `InMemoryTTLCache` — it implements our Protocol, it is not a mock of our own code
+    (CONVENTIONS.md §10). Used to observe the exact `(key, value, ttl_s)` a tool passed to `set`,
+    and (m5 task-05 fix-1) which keys a tool read at all — e.g. proving a short-circuit path never
+    consulted the cache in the first place.
     """
 
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._inner = InMemoryTTLCache() if clock is None else InMemoryTTLCache(clock=clock)
         self.set_calls: list[tuple[str, bytes, int]] = []
+        self.get_calls: list[str] = []
 
     async def get(self, key: str) -> bytes | None:
+        self.get_calls.append(key)
         return await self._inner.get(key)
 
     async def set(self, key: str, value: bytes, ttl_s: int) -> None:
@@ -360,6 +370,79 @@ async def test_quota_flag_expires_with_the_clock() -> None:
 def test_rejects_negative_quota_backoff() -> None:
     with pytest.raises(ValueError):
         _tool(handler=_never_called_handler, quota_backoff_s=-1)
+
+
+async def test_warm_per_ip_entry_is_served_during_quota_backoff() -> None:
+    """m5 task-05 fix-1 (review I1/PC2, ruling R14): the quota flag is checked AFTER the per-ip
+    cache read, not before — a warm 24 h entry costs no AbuseIPDB quota and must keep answering
+    correctly even while the account-wide back-off is armed; only a MISS is suppressed (the
+    sibling test below). RED against the order shipped at `041c544` (flag before the per-ip
+    read), which would have answered `quota_exceeded` here instead.
+    """
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json=_success_body(11, 2, "2026-09-05T22:14:03+00:00"))
+        return httpx.Response(429)
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
+
+    first = await tool.run({"ip": "203.0.113.10"}, _ctx())  # ip A: warms the per-ip cache
+    second = await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))  # ip B: arms the flag
+    third = await tool.run({"ip": "203.0.113.10"}, _ctx())  # ip A again: served warm
+
+    assert first["cached"] is False
+    assert second == {"unavailable": True, "reason": "quota_exceeded"}
+    assert third == {**first, "cached": True}  # NOT quota_exceeded, despite the armed flag
+    assert call_count == 2  # the third call never reached the network
+
+
+async def test_cache_miss_during_quota_backoff_makes_no_request() -> None:
+    """The flag's actual suppressive effect: a never-cached IP looked up while the account-wide
+    back-off is armed answers `quota_exceeded` without a request — only a warm per-ip hit escapes
+    it (the sibling test above). GREEN both before and after the m5 task-05 fix-1 ordering change
+    (review I1/PC2): the miss path was never the defect."""
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json=_success_body(11, 2, "2026-09-05T22:14:03+00:00"))
+        return httpx.Response(429)
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
+
+    await tool.run({"ip": "203.0.113.10"}, _ctx())  # ip A: warms the per-ip cache
+    await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))  # ip B: arms the flag
+    third = await tool.run({"ip": "192.0.2.55"}, _ctx("192.0.2.55"))  # ip C: never cached
+
+    assert third == {"unavailable": True, "reason": "quota_exceeded"}
+    assert call_count == 2  # the third (never-cached) lookup never reached the network
+
+
+async def test_no_api_key_beats_the_quota_flag() -> None:
+    """m5 task-05 fix-1 (review M21/I1, ruling R14): the missing-key check runs BEFORE the quota
+    flag (and the per-ip cache) is ever consulted — an unkeyed tool must never claim
+    `quota_exceeded`, a diagnosis that only makes sense once real requests have actually been
+    rejected by the vendor. GREEN today (the shipped order already checks the key first);
+    mutation-proofed by moving the flag check above the key check in a scratch copy (test-author
+    report)."""
+    cache = RecordingCache()
+    await cache.set(QUOTA_KEY, b"1", 600)
+    cache.set_calls.clear()  # the pre-seed above is test setup, not part of what this test pins
+    cache.get_calls.clear()
+    tool = _tool(api_key="", handler=_never_called_handler, cache=cache, quota_backoff_s=600)
+
+    result = await tool.run({"ip": "203.0.113.10"}, _ctx())
+
+    assert result == {"unavailable": True, "reason": "no_api_key"}
+    assert cache.get_calls == []  # neither the quota flag nor the per-ip key was ever read
 
 
 async def test_no_api_key_is_unavailable_and_logs_once_without_network(
