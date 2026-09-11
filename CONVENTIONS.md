@@ -20,7 +20,7 @@ invariants: **no LLM call outside `worker/`** and **one transaction per verdict 
   PRD section that mandates the behavior (e.g. "PRD §6.1: duplicates never re-trigger triage").
 - Prefer `collections.abc` types (`Callable`, `Sequence`, `Mapping`, `AsyncIterator`) in
   annotations.
-- No bare `except Exception`/`raise Exception(...)` — use the typed family (two carve-outs, §4).
+- No bare `except Exception`/`raise Exception(...)` — use the typed family (three carve-outs, §4).
 - Keep files small; each function serves **one purpose**. A module accumulating unrelated
   responsibilities is a split-smell — raise it rather than growing it.
 
@@ -30,30 +30,38 @@ PRD §4 fixes the top-level layout. Inside the Python packages:
 
 ```
 core/
+  cache.py         # TTLCache Protocol; InMemoryTTLCache (api response cache, bounded); RedisTTLCache (worker reputation cache)
+  cli.py           # UsageError / Parser / fail — the one copy of the CLI presentation helpers
   config.py        # pydantic-settings Settings — the single config surface
   db.py            # async engine / session-factory constructors (wiring, not a request-path layer)
   errors.py        # typed exception family (§4)
   llm.py           # LLMClient Protocol + result/usage types + parse/cost helpers — NO SDK import
+  queue.py         # ARQ job/queue names, enqueue_triage, Redis client factories
   signing.py       # HMAC sign/verify for ingest (shared with the shipper and scripts/)
   models/          # SQLAlchemy ORM rows (pure leaf) — classes carry the `Row` suffix
   schemas/         # Pydantic DTOs: Verdict (PRD §6.5), SessionAlert, ingest/response shapes
   services/        # business logic that touches the ORM (alerts, verdicts, stats) — session-first
 api/
   factory.py       # create_app() — DB-less constructible
-  main.py          # wiring ONLY: settings, engine, session factory, triage seam; nothing imports main
-  deps.py          # get_settings / get_session / get_triage / require_signature
+  main.py          # wiring ONLY: settings, engine, session factory, Redis + enqueue seam; nothing imports main
+  deps.py          # get_settings / get_session / get_enqueue / require_signature
   errors.py        # register_error_handlers(app) — the one place the §8 envelope is produced
   routes/          # FastAPI routers (health, alerts, stats, stream)
 worker/
+  jobs.py          # triage_alert_job: the ARQ job function; retry-vs-fail delegated to retry.py (M5)
+  llm_client.py    # OpenAICompatibleLLMClient — the ONLY module that imports the openai SDK
+  main.py          # ARQ WorkerSettings (M5); nothing imports main
+  outcome.py       # TriageOutcome / ToolCallRecord result types (M4)
   prompts/         # package: __init__.py = load_prompt / build_messages (placeholder +
                    #   attacker-data markers); triage-vN.md files beside it, immutable once shipped
-  summarize.py     # SessionAlert -> SessionSummary (what the first-pass prompt sees)
-  llm_client.py    # OpenAICompatibleLLMClient — the ONLY module that imports the openai SDK
-  triage.py        # TriagePipeline: prompt -> LLM -> validate -> (tools, M4) -> (routing, M5)
+  publish.py       # verdict.created pub/sub publish, best-effort after the commit (M5)
+  retry.py         # pure backoff_seconds / decide_retry policy — no I/O (M5)
+  routing.py       # should_escalate: the pure two-tier routing decision (M5)
   store.py         # persist_verdict: verdict + tool_calls + status in ONE transaction
+  summarize.py     # SessionAlert -> SessionSummary (what the first-pass prompt sees)
   tools/           # enrichment tools (M4)
+  triage.py        # TriagePipeline: prompt -> LLM -> validate -> (tools, M4) -> (routing, M5)
   triage_one.py    # CLI entrypoint (PRD §12 M0)
-  main.py          # ARQ WorkerSettings (M5); nothing imports main
 evals/
   golden/          # package: __init__.py = GoldenCase / load_golden; v1.jsonl (synthetic, never
                    #   published), v2.jsonl (human-labeled, published)
@@ -78,11 +86,11 @@ Hard rules, declared as import-linter contracts in `pyproject.toml` and enforced
 
 1. `core.models` is a pure leaf — imports no other project package.
 2. `core` never imports `api`, `worker`, or `evals`.
-3. `api` never imports `worker` or `core.llm` (PRD §10.1). `allow_indirect_imports = true` — the
-   contract is about what `api` reaches for, not about transitive chains through `core`.
-   **Exception (M2 only):** `api.main` imports `worker.triage` and `worker.llm_client` to wire
-   inline triage, declared via `ignore_imports` with the comment "M2 inline triage; remove at M5".
-   The route layer never sees more than a `TriageFn` callable.
+3. `api` never imports `worker` or `core.llm` (PRD §10.1). Indirect imports are checked too: a
+   transitive chain from `api` to `worker`/`core.llm` through any package fails the gate.
+   **No exceptions.** The M2 `ignore_imports` entries were deleted at m5 task-01; re-adding them
+   fails `lint-imports` with "No matches for ignored import". The route layer never sees more than
+   an `EnqueueFn` callable (`api/deps.py`).
 4. `worker` and `evals` never import `api`.
 5. Nothing imports `api.main` or `worker.main` — they are entrypoints, not modules.
 
@@ -123,8 +131,9 @@ no contract forbids the import.
   enveloped as `422` with location + message only — never the echoed input. Unhandled exceptions
   become a `500` envelope with a generic message; the traceback goes to the log.
 - **Routes contain no `try/except`.** Rollback happens in the session dependency; mapping happens
-  in the registered handlers. One documented carve-out: `GET /healthz` catches database/connection
-  errors to answer `503 {"status": "degraded", ...}` instead of a `500` envelope, because a
+  in the registered handlers. One documented carve-out: `GET /healthz` catches database **and
+  Redis** connection errors — both probes always run and are always reported (`{"status", "db",
+  "redis"}`) — to answer `503 {"status": "degraded", ...}` instead of a `500` envelope, because a
   liveness probe must never look like an application crash. The second carve-out is
   `worker/tools/registry.py::ToolRegistry.execute` (M4, controller ruling Q6): the worker's
   boundary with tool code fed attacker-influenced input catches `Exception` — never
@@ -132,13 +141,18 @@ no contract forbids the import.
   truncating its result), logs the tool name and argument keys only, and returns
   `{"unavailable": true, "reason": "<ExceptionClass>: tool raised"}` or
   `{"unavailable": true, "reason": "<ExceptionClass>: result not serializable"}` respectively, so
-  an inline triage can never 500 the ingest request.
+  a tool failure can never fail the triage job. The third carve-out is `worker/jobs.py
+  ::triage_alert_job` (M5): it catches `Exception` — never `BaseException` — around the whole
+  attempt so a poison alert can never wedge the queue (PRD §6.2); the decision is delegated to the
+  pure `worker/retry.py`, the terminal write is `failed`, and the log carries
+  `reason=<code | ExceptionClass>` only and the exception-class chain — never a traceback or a
+  message, either of which may render attacker-derived text (PRD §10.6).
 
 ## 5. App construction
 
-- `api/factory.py::create_app(*, session_factory=None, settings=None, triage=None) -> FastAPI` —
+- `api/factory.py::create_app(*, session_factory=None, settings=None, enqueue=None, redis=None, cache=None) -> FastAPI` —
   no module-level globals; everything request-scoped lives on `app.state` and is read back through
-  `api/deps.py` (`get_session`, `get_settings`, `get_triage`, `require_signature`). Routes never write
+  `api/deps.py` (`get_session`, `get_settings`, `get_enqueue`, `require_signature`). Routes never write
   `Depends(get_session)` directly: they take `session: SessionDep`, the
   `Annotated[AsyncSession, Depends(get_session, scope="function")]` alias, so the dependency's
   commit/rollback runs before the response is sent and a failing commit surfaces as a 500.
@@ -146,8 +160,10 @@ no contract forbids the import.
   OpenAPI baseline export (§8) and DB-less tests possible. Dependencies that need something
   unwired raise `RuntimeError` at request time rather than silently working.
 - `api/main.py` is the only wiring point: configure logging, load settings, fail fast on empty
-  required secrets (`DATABASE_URL`, `INGEST_HMAC_SECRET`, `LLM_API_KEY`, `CHEAP_MODEL`), build the
-  engine + session factory, build the triage seam, call `create_app(...)`, expose `app`.
+  required secrets (`DATABASE_URL`, `INGEST_HMAC_SECRET`, `REDIS_URL`), build the engine +
+  session factory, build the Redis client and the `enqueue` seam (`core/queue.py`), call
+  `create_app(...)`, expose `app`. `LLM_API_KEY`/`CHEAP_MODEL` are `worker/main.py`'s
+  concern (spine M5-b) — `api/` never builds an LLM client.
 - Every route declares an explicit, stable, unique `operation_id`. The frontend's
   `openapi-typescript` codegen keys on them; renaming one is a breaking wire change (§8 gate).
 - All routes live under `/api/v1` (PRD §8), applied once in the factory. Exception: `GET /healthz`
@@ -177,8 +193,9 @@ no contract forbids the import.
 
 - `core/config.py::Settings(BaseSettings)` (pydantic-settings) is the single config surface. Every
   setting has a PRD or `.env.example` default; secrets (`LLM_API_KEY`, `DATABASE_URL`,
-  `INGEST_HMAC_SECRET`, `ADMIN_TOKEN`, `ABUSEIPDB_API_KEY`, `MAXMIND_LICENSE_KEY`) are `SecretStr`
-  so a `repr()` in a log line can never leak them; call sites read `.get_secret_value()`.
+  `REDIS_URL`, `INGEST_HMAC_SECRET`, `ADMIN_TOKEN`, `ABUSEIPDB_API_KEY`, `MAXMIND_LICENSE_KEY`) are
+  `SecretStr` so a `repr()` in a log line can never leak them; call sites read
+  `.get_secret_value()`.
 - `Settings()` must construct with **zero** env vars set (that is what keeps `create_app()`
   DB-less). `api/main.py` is the only place that enforces non-empty required values.
 - `MODEL_PRICES_JSON` is a JSON object `{"<model id>": {"input_per_mtok": <usd>, "output_per_mtok":
@@ -264,6 +281,9 @@ All five must be clean before every commit that touches Python. Additionally, ru
   counted as a pass. **pytest output produced without the env var exported is not valid gate
   evidence.** Point `TEST_DATABASE_URL` at a dedicated database (e.g. `.../sentinelbrief_test`),
   never the dev database.
+- Redis fixtures (`redis_url`, `arq_redis`) skip by name when `TEST_REDIS_URL` is unset; point it
+  at a DEDICATED instance (127.0.0.1:6380) — the fixture `flushdb`s before and after every test, so
+  never the dev compose Redis on 6379.
 - `@pytest.mark.live` marks tests that call a real external API; they are excluded from CI and
   from the default invocation. Tool-calling tests (M4+) replay recorded fixtures from
   `tests/fixtures/tools/`.
@@ -271,8 +291,8 @@ All five must be clean before every commit that touches Python. Additionally, ru
   aligned with the canonical config) and `tests/test_import_contracts.py` (subprocess
   `lint-imports`) make CI = `pytest`.
 - Every bug fixed gets a regression test in the same commit.
-- External seams are injectable, never monkeypatched at a distance: `session_factory` and
-  `triage` into `create_app`, `llm` into `TriagePipeline` and the CLIs, the clock into the rate
+- External seams are injectable, never monkeypatched at a distance: `session_factory`, `enqueue`
+  and `redis` into `create_app`, `llm` into `TriagePipeline` and the CLIs, the clock into the rate
   limiter.
 
 ## 11. Docker & local dev
@@ -297,7 +317,8 @@ All five must be clean before every commit that touches Python. Additionally, ru
   retry (m0 task-04)`.
 - Every commit carries both trailers:
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` and
-  `Claude-Session: https://claude.ai/code/session_016MeBkZ55JJW3CbfRgWwmty`.
+  `Claude-Session: <the session URL the Claude Code harness supplies for the current session>`
+  (it changes when the session is resumed; the dispatch carries the current value).
 - **Path-scoped `git add` only** — never `git add .` / `-A`. Never stage `.env` or secrets.
 
 ## 13. Prompts

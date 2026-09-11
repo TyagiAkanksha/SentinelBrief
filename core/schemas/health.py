@@ -12,7 +12,9 @@ from pydantic import BaseModel
 
 
 class HealthResponse(BaseModel):
-    """The `/healthz` liveness body: overall status plus the database's own state."""
+    """The `/healthz` liveness body: overall status plus the database's and Redis's own state
+    (m5 task-05)."""
 
     status: Literal["ok", "degraded"]
     db: Literal["ok", "error", "unconfigured"]
+    redis: Literal["ok", "error", "unconfigured"]

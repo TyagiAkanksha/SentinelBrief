@@ -5,18 +5,29 @@ creates a `pending` row; every later insert of the *same* session must report `c
 the row's *current* status — never a fresh "pending" — so a caller can tell a genuine retry from
 one that already finished triage. `get_alert`/`set_alert_status` back the read and status-write
 paths the route and any future retriage need.
+
+m5 task-04 (PRD §6.1 idempotency, §12 M5) adds `get_alert_for_update`: the blocking `SELECT ...
+FOR UPDATE` `worker.triage.TriagePipeline.triage_attempt` holds for the whole attempt, so a
+concurrent duplicate run waits for the truth (this transaction's commit or rollback) instead of
+racing it, per the M5 spine's "row lock, not SKIP LOCKED" ruling.
+
+m5 task-04 fix-1 (review I3) adds `test_get_alert_for_update_refreshes_a_stale_identity_map_row`:
+without `populate_existing=True`, `get_alert_for_update` can hand back a row's STALE
+identity-map copy instead of the one it just locked, when the caller's session already holds an
+older copy of that row — RED until Part B lands the fix.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.errors import NotFoundError
 from core.models import AlertRow
-from core.services.alerts import get_alert, insert_alert, set_alert_status
+from core.services.alerts import get_alert, get_alert_for_update, insert_alert, set_alert_status
 from tests.helpers import count_rows, load_alert
 
 
@@ -80,3 +91,75 @@ async def test_set_alert_status(db_session: AsyncSession) -> None:
     await db_session.commit()
     row = await get_alert(db_session, result.alert_id)
     assert row.status == "failed"
+
+
+async def test_get_alert_for_update_returns_the_row_or_raises(db_session: AsyncSession) -> None:
+    alert = load_alert(session_id="lock-returns-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    row = await get_alert_for_update(db_session, result.alert_id)
+    assert row.id == result.alert_id
+
+    with pytest.raises(NotFoundError):
+        await get_alert_for_update(db_session, uuid.uuid4())
+
+
+async def test_get_alert_for_update_blocks_until_the_holder_commits(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Assumes `db_engine`'s pool has >= 2 connections (SQLAlchemy's default is 5, M4 plan-defect
+    rule 9): session A's held lock and session B's blocked `SELECT ... FOR UPDATE` must run over
+    two DISTINCT pooled connections at once, or B's own connection checkout would hang first and
+    this test would prove pool exhaustion, not the row lock (m5 task-04, PRD §6.1 idempotency)."""
+    alert = load_alert(session_id="lock-blocks-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    await get_alert_for_update(db_session, result.alert_id)  # session A now holds the row lock
+
+    async def _lock_from_b() -> AlertRow:
+        async with db_session_factory() as session_b:
+            row = await get_alert_for_update(session_b, result.alert_id)
+            await session_b.commit()
+            return row
+
+    task = asyncio.create_task(_lock_from_b())
+    try:
+        await asyncio.sleep(0.3)
+        assert not task.done()  # still blocked behind A's uncommitted lock
+
+        await db_session.commit()  # releases A's lock
+
+        row = await asyncio.wait_for(task, timeout=2.0)
+        assert row.id == result.alert_id
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def test_get_alert_for_update_refreshes_a_stale_identity_map_row(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """m5 task-04 fix-1 (review I3): without `populate_existing=True`, a `SELECT ... FOR UPDATE`
+    over a row already cached in the session's identity map returns that STALE copy instead of
+    the freshly locked one -- SQLAlchemy's default identity-map behavior, not a locking bug. RED
+    until Part B adds `.execution_options(populate_existing=True)`.
+    """
+    alert = load_alert(session_id="stale-identity-map-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    row = await get_alert(db_session, result.alert_id)  # caches the row as "pending" in session A
+    assert row.status == "pending"
+    await db_session.commit()
+
+    async with db_session_factory() as session_b:
+        await set_alert_status(session_b, result.alert_id, "triaged")
+        await session_b.commit()
+
+    try:
+        refreshed = await get_alert_for_update(db_session, result.alert_id)
+        assert refreshed.status == "triaged"  # not the stale "pending" cached above
+    finally:
+        await db_session.rollback()

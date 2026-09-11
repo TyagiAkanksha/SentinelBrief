@@ -5,7 +5,7 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M4 complete (tool calling); M5 (queue split + routing) next. The build plan
+**Status:** M5 complete (queue split + routing); M6 (real data) next. The build plan
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
@@ -72,8 +72,8 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
-`Settings` (`core/config.py`) never loads `.env` itself — only the compose `api` service does, via
-`env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
+`Settings` (`core/config.py`) never loads `.env` itself — the compose `api` and `worker` services
+do, via `env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
 triage_one`) reads plain environment variables, so load `.env` into your shell first:
 
 ```sh
@@ -95,10 +95,11 @@ still fails validation after its one retry.
 ### 3. Run the stack
 
 ```sh
-docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web
+docker compose -f infra/docker-compose.yml up -d --build                    # postgres, api, web, redis, worker
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
-curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok"}
+curl -s localhost:8000/healthz                                              # {"status":"ok","db":"ok","redis":"ok"}
 curl -s localhost:3000/healthz                                              # {"status":"ok"}
+# A stopped Redis turns the api unhealthy: 503 with {"status":"degraded",...,"redis":"error"}
 # Seed a browsable queue: 5 fixtures + 20 golden v1 sessions through the real pipeline with the fake LLM
 # (add --live to spend real tokens with LLM_API_KEY / CHEAP_MODEL / MODEL_PRICES_JSON exported
 # (see step 1); a re-run creates nothing).
@@ -107,13 +108,19 @@ uv run python scripts/seed_dev.py --database-url postgresql://sentinel:sentinel@
 curl -s 'localhost:8000/api/v1/alerts?page_size=5' | python3 -m json.tool | head -30
 # keeps the secret out of shell history and out of this file
 export INGEST_HMAC_SECRET=$(grep '^INGEST_HMAC_SECRET=' .env | cut -d= -f2-)
-uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 200 {"created": false} — already seeded; dedup by fingerprint (a session with a new session_id gets 202 and is triaged inline)
+uv run python scripts/post_alert.py fixtures/alerts/alert4.json   # 200 {"created": false} — already seeded; dedup by fingerprint (a session with a new session_id gets 202 {"status": "pending"} and is enqueued to the worker)
+docker compose -f infra/docker-compose.yml logs worker | tail                                          # the ARQ job line, once the worker picks it up
+curl -s localhost:8000/api/v1/alerts/<id>                                                              # "status":"triaged" within a few seconds
 docker compose -f infra/docker-compose.yml exec postgres psql -U sentinel -d sentinelbrief \
   -c "select count(*) from alerts; select count(*) from verdicts;"   # 25 and 25
 ```
 
 Migrations are **never** run at container startup — the `alembic upgrade head` line above is the
 only DDL path.
+
+Triage jobs are idempotent: restarting or `docker kill`-ing the worker mid-job just re-runs the
+interrupted job without duplicating verdicts (the attempt holds a row lock and skips alerts that
+are no longer `pending`).
 
 #### Enrichment tools (optional)
 
@@ -122,9 +129,9 @@ uv run python scripts/fetch_geoip.py   # needs MAXMIND_LICENSE_KEY exported (ste
 ```
 
 Then set `GEOIP_DB_PATH=infra/geoip/GeoLite2-Country.mmdb` and
-`GEOIP_ASN_DB_PATH=infra/geoip/GeoLite2-ASN.mmdb` in `.env` (the compose `api` service mounts
-`infra/geoip` read-only at the same path). `ABUSEIPDB_API_KEY` is optional too. Without keys both
-tools answer `{"unavailable": true}`.
+`GEOIP_ASN_DB_PATH=infra/geoip/GeoLite2-ASN.mmdb` in `.env` (the compose `api` and `worker`
+services mount `infra/geoip` read-only at the same path — the worker is where the tool runs).
+`ABUSEIPDB_API_KEY` is optional too. Without keys both tools answer `{"unavailable": true}`.
 
 ### 4. Tear down
 
@@ -137,10 +144,12 @@ docker compose -f infra/docker-compose.yml down     # add -v to drop the databas
 Python (repo root):
 
 ```sh
-# One-time: a dedicated Postgres for the test DB (the DB suite skips without this URL and CI
-# fails on any skip).
+# One-time: a dedicated Postgres for the test DB and a dedicated Redis for the test suite (both
+# suites skip without their URL and CI fails on any skip). Never point TEST_REDIS_URL at the dev
+# compose Redis (6379) — the Redis fixtures flushdb it before AND after every test.
 docker run -d --name sentinelbrief-test-db -e POSTGRES_USER=sentinel -e POSTGRES_PASSWORD=sentinel -e POSTGRES_DB=sentinelbrief_test -p 127.0.0.1:5434:5432 postgres:16
-export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
+docker run -d --name sentinelbrief-test-redis -p 127.0.0.1:6380:6379 redis:7-alpine
+export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental
@@ -170,6 +179,9 @@ Each `--prompt` value runs the full pipeline over the golden set and produces on
 in the printed table; the full per-case results land as JSON under `evals/results/` (gitignored).
 Golden set v1 is synthetic and its numbers are never published; v2 is real, hand-labeled honeypot
 traffic and is the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*.
+`--strong-model` wires the same two-tier routing (PRD §6.4) into the run, defaulting to
+`STRONG_MODEL`; the printed table's `escalation_rate` column reports the fraction of cases each
+run escalated to the strong model.
 
 ## Deployment
 

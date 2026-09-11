@@ -121,3 +121,9 @@ class RateLimitedError(SentinelBriefError):
     """Raised when a caller exceeds a configured rate limit."""
 
     code = "rate_limited"
+
+
+class QueueUnavailableError(SentinelBriefError):
+    """Raised when the ARQ triage queue (Redis) cannot be reached (m5 task-01)."""
+
+    code = "queue_unavailable"

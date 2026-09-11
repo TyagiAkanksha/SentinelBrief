@@ -19,7 +19,9 @@ export interface paths {
         put?: never;
         /**
          * Ingest Alert
-         * @description Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.
+         * @description Insert `payload`, deduplicating on its fingerprint; enqueue triage for the still-`pending`
+         *     row and answer immediately — the LLM call happens entirely in the worker process (PRD §3,
+         *     §10.1).
          */
         post: operations["ingest_alert"];
         delete?: never;
@@ -77,7 +79,7 @@ export interface paths {
         };
         /**
          * Healthz
-         * @description Report DB liveness by running `SELECT 1` through the wired session factory.
+         * @description Report DB + Redis liveness.
          */
         get: operations["healthz"];
         put?: never;
@@ -242,7 +244,8 @@ export interface components {
         };
         /**
          * HealthResponse
-         * @description The `/healthz` liveness body: overall status plus the database's own state.
+         * @description The `/healthz` liveness body: overall status plus the database's and Redis's own state
+         *     (m5 task-05).
          */
         HealthResponse: {
             /**
@@ -250,6 +253,11 @@ export interface components {
              * @enum {string}
              */
             db: "ok" | "error" | "unconfigured";
+            /**
+             * Redis
+             * @enum {string}
+             */
+            redis: "ok" | "error" | "unconfigured";
             /**
              * Status
              * @enum {string}
@@ -499,7 +507,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Duplicate session: existing alert returned, triage not re-run. */
+            /** @description Duplicate session: existing alert returned. A still-`pending` duplicate is re-enqueued (idempotent at the queue by job id); a triaged/failed one is not. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -537,6 +545,15 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Triage queue unavailable; the alert row is committed and stays `pending`. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -642,7 +659,7 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
-            /** @description Degraded: database unconfigured or unreachable. */
+            /** @description Degraded: database and/or Redis unconfigured or unreachable. */
             503: {
                 headers: {
                     [name: string]: unknown;

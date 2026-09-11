@@ -1,9 +1,10 @@
 """Request-scoped seams read off `app.state` (CONVENTIONS.md §5).
 
 Routes never read `app.state` or `os.environ` directly — they depend on `get_settings`,
-`get_session` and `get_triage`, which are the only places that know how those seams are wired.
-Nothing here imports `worker` or `core.llm` (PRD §10.1): `TriageFn` is a plain callable type alias
-over `AsyncSession`/`uuid.UUID`/`AlertStatus`, never a `worker` type.
+`get_session` and `get_enqueue`, which are the only places that know how those seams are wired.
+Nothing here imports `worker` or `core.llm` (PRD §10.1): `EnqueueFn` is a plain callable type
+alias over `uuid.UUID`, never a `worker` type — the route layer only ever sees the queue seam
+(m5 task-01; the LLM call now happens entirely in the worker process).
 """
 
 from __future__ import annotations
@@ -18,12 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.cache import TTLCache
 from core.config import Settings
 from core.errors import SignatureError
-from core.models.alerts import AlertStatus
 from core.signing import SIGNATURE_HEADER, verify_signature
 
-# A `TriageFn` persists the status it returns (verdict + status in one transaction, PRD §6.2);
-# the route that calls it never writes `alerts.status` itself.
-TriageFn = Callable[[AsyncSession, uuid.UUID], Awaitable[AlertStatus]]
+# `enqueue(alert_id)` is fire-and-forget from the route's point of view — it either queues the
+# job or raises `QueueUnavailableError`; it never returns/persists a status itself (m5 task-01).
+EnqueueFn = Callable[[uuid.UUID], Awaitable[None]]
 
 
 def get_settings(request: Request) -> Settings:
@@ -89,22 +89,22 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 
 
-def get_triage(request: Request) -> TriageFn:
-    """Return the wired triage callable.
+def get_enqueue(request: Request) -> EnqueueFn:
+    """Return the wired enqueue callable (m5 task-01: the route layer's only queue seam).
 
     Args:
-        request: The current request, used to reach `app.state.triage`.
+        request: The current request, used to reach `app.state.enqueue`.
 
     Returns:
-        The `TriageFn` `create_app()` was built with.
+        The `EnqueueFn` `create_app()` was built with.
 
     Raises:
-        RuntimeError: When no `triage` was wired into `create_app()`.
+        RuntimeError: When no `enqueue` was wired into `create_app()`.
     """
-    triage: TriageFn | None = request.app.state.triage
-    if triage is None:
-        raise RuntimeError("no triage wired")
-    return triage
+    enqueue: EnqueueFn | None = request.app.state.enqueue
+    if enqueue is None:
+        raise RuntimeError("no enqueue wired")
+    return enqueue
 
 
 async def require_signature(request: Request, settings: Settings = Depends(get_settings)) -> None:

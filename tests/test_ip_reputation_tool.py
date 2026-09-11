@@ -1,6 +1,8 @@
 """Pins `worker.tools.ip_reputation.IpReputationTool`: AbuseIPDB `check` reputation lookup behind
 a 24 h `TTLCache`, with the key sent only in the `Key` header and every failure mapped to one of
-eight typed `unavailable` reasons — never a raise, never a cached failure (PRD §6.3, m4 task-04).
+eight typed `unavailable` reasons — never a raise, never a cached failure (PRD §6.3, m4 task-04);
+extended at m5 task-05 with the account-wide `429` quota back-off (`QUOTA_KEY`,
+`quota_backoff_s`).
 
 Every unit test below builds the tool over `httpx.AsyncClient(transport=httpx.MockTransport(...))`
 (CONVENTIONS.md §10: AbuseIPDB is the external seam, the only thing ever mocked) and an
@@ -13,6 +15,12 @@ call the tool made (controller ruling R4).
 `test_recorded_fixtures_replay_for_the_five_fixture_ips` exercises the five synthetic reputation
 fixtures (task-04's own deliverable, written by the implementer via `write_fixture`) through
 `ReplayToolRecorder`, the same seam the triage loop and the seed script use — never a live call.
+
+m5 task-05 fix-1 (review I1/PC2/M21, ruling R14) changes `run`'s check order: the account-wide
+quota flag is now consulted AFTER the per-ip cache read, not before — a warm 24 h entry costs no
+AbuseIPDB quota and must keep answering correctly even while the back-off is armed; only a MISS is
+suppressed. The key-before-quota ordering (M21) is unchanged and gets its own pin
+(`test_no_api_key_beats_the_quota_flag`).
 """
 
 from __future__ import annotations
@@ -32,23 +40,32 @@ from core.cache import InMemoryTTLCache, TTLCache
 from core.config import Settings
 from core.schemas.alert import CowrieEvent, SessionAlert
 from worker.tools import ReplayToolRecorder, ToolContext, fixture_path
-from worker.tools.ip_reputation import ABUSEIPDB_CHECK_URL, CACHE_KEY_PREFIX, IpReputationTool
+from worker.tools.ip_reputation import (
+    ABUSEIPDB_CHECK_URL,
+    CACHE_KEY_PREFIX,
+    QUOTA_KEY,
+    IpReputationTool,
+)
 
 _FIXTURES_ROOT = Path("tests/fixtures/tools")
 _TEST_KEY = "test-key"
 
 
 class RecordingCache:
-    """A `TTLCache` (`core.cache`) that logs every `set` call and delegates storage to a real
-    `InMemoryTTLCache` — it implements our Protocol, it is not a mock of our own code
-    (CONVENTIONS.md §10). Used to observe the exact `(key, value, ttl_s)` a tool passed to `set`.
+    """A `TTLCache` (`core.cache`) that logs every `get`/`set` call and delegates storage to a
+    real `InMemoryTTLCache` — it implements our Protocol, it is not a mock of our own code
+    (CONVENTIONS.md §10). Used to observe the exact `(key, value, ttl_s)` a tool passed to `set`,
+    and (m5 task-05 fix-1) which keys a tool read at all — e.g. proving a short-circuit path never
+    consulted the cache in the first place.
     """
 
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._inner = InMemoryTTLCache() if clock is None else InMemoryTTLCache(clock=clock)
         self.set_calls: list[tuple[str, bytes, int]] = []
+        self.get_calls: list[str] = []
 
     async def get(self, key: str) -> bytes | None:
+        self.get_calls.append(key)
         return await self._inner.get(key)
 
     async def set(self, key: str, value: bytes, ttl_s: int) -> None:
@@ -119,6 +136,7 @@ def _tool(
     cache: TTLCache | None = None,
     cache_ttl_s: int = 86400,
     max_age_days: int = 90,
+    quota_backoff_s: int = 0,
 ) -> IpReputationTool:
     return IpReputationTool(
         api_key=api_key,
@@ -126,6 +144,7 @@ def _tool(
         cache=cache if cache is not None else InMemoryTTLCache(),
         cache_ttl_s=cache_ttl_s,
         max_age_days=max_age_days,
+        quota_backoff_s=quota_backoff_s,
     )
 
 
@@ -237,6 +256,13 @@ async def test_cache_key_is_prefixed_with_the_ip() -> None:
 
 
 async def test_failures_are_never_cached() -> None:
+    """m5 task-05: gains `quota_backoff_s=600` (Interfaces → test table, "success cache
+    untouched") — with the account-wide quota flag now live, the second call must wait out the
+    back-off window (a fake clock, rather than a second real IP, since the flag is account-wide
+    and would otherwise block a second IP's lookup too) before it can reach the network again.
+    The pin this test exists for survives unchanged: a 429 is never cached under its own
+    (per-ip) success key — only the deliberate `QUOTA_KEY` flag is written on that branch.
+    """
     responses = [
         httpx.Response(429),
         httpx.Response(200, json=_success_body(100, 412, "2026-09-05T22:14:03+00:00")),
@@ -247,19 +273,176 @@ async def test_failures_are_never_cached() -> None:
         calls.append(request)
         return responses.pop(0)
 
-    cache = RecordingCache()
-    tool = _tool(handler=handler, cache=cache)
+    box = [0.0]
+    cache = RecordingCache(clock=lambda: box[0])
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
 
     first = await tool.run({"ip": "203.0.113.10"}, _ctx())
-    assert len(cache.set_calls) == 0  # the 429 must never be cached
+    ip_key_sets = [c for c in cache.set_calls if c[0] != QUOTA_KEY]
+    assert len(ip_key_sets) == 0  # the 429 must never be cached under its own success key
 
+    box[0] = 600.0  # past the 600 s quota back-off window (core/cache.py's expiry uses `>=`)
     second = await tool.run({"ip": "203.0.113.10"}, _ctx())
 
     assert len(calls) == 2
     assert first == {"unavailable": True, "reason": "quota_exceeded"}
     assert second["cached"] is False
     assert second["abuse_score"] == 100
-    assert len(cache.set_calls) == 1  # only the success was ever cached
+    ip_key_sets_after = [c for c in cache.set_calls if c[0] != QUOTA_KEY]
+    assert len(ip_key_sets_after) == 1  # only the success was ever cached
+
+
+async def test_429_sets_the_quota_flag_and_later_lookups_skip_the_network() -> None:
+    """A `429` sets ONE account-wide negative key (no IP in it); while it is live, ANY
+    subsequent lookup — even for a different IP — answers `quota_exceeded` without ever reaching
+    the network (PRD §6.3's free tier is account-wide, not per-IP)."""
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429)
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
+
+    first = await tool.run({"ip": "203.0.113.10"}, _ctx())
+    second = await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))  # a different IP
+
+    assert first == {"unavailable": True, "reason": "quota_exceeded"}
+    assert second == {"unavailable": True, "reason": "quota_exceeded"}
+    assert call_count == 1  # the second lookup never reached the network
+    assert cache.set_calls == [(QUOTA_KEY, b"1", 600)]  # no set under any abuseipdb:<ip> key
+
+
+async def test_quota_backoff_zero_re_issues_the_request() -> None:
+    """`quota_backoff_s=0` disables the back-off entirely: every lookup re-issues its own
+    request, and the quota flag is never written."""
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429)
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=0)
+
+    first = await tool.run({"ip": "203.0.113.10"}, _ctx())
+    second = await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))  # a different IP
+
+    assert first == {"unavailable": True, "reason": "quota_exceeded"}
+    assert second == {"unavailable": True, "reason": "quota_exceeded"}
+    assert call_count == 2  # the back-off never blocked the second lookup
+    assert cache.set_calls == []
+
+
+async def test_quota_flag_expires_with_the_clock() -> None:
+    """The quota flag is a normal `TTLCache` entry: once `quota_backoff_s` seconds have passed
+    on the injected clock, a fresh lookup for a third, distinct IP reaches the network again."""
+    call_count = 0
+    responses = [
+        httpx.Response(429),
+        httpx.Response(200, json=_success_body(50, 3, None, ip="192.0.2.55")),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return responses.pop(0)
+
+    box = [0.0]
+    cache = InMemoryTTLCache(clock=lambda: box[0])
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
+
+    first = await tool.run({"ip": "203.0.113.10"}, _ctx())
+    assert first == {"unavailable": True, "reason": "quota_exceeded"}
+    assert call_count == 1
+
+    box[0] = 600.0  # past the 600 s back-off window
+    third = await tool.run({"ip": "192.0.2.55"}, _ctx("192.0.2.55"))  # a third, distinct IP
+
+    assert call_count == 2  # the flag expired: this lookup actually reached the network
+    assert third["cached"] is False
+    assert third["ip"] == "192.0.2.55"
+
+
+def test_rejects_negative_quota_backoff() -> None:
+    with pytest.raises(ValueError):
+        _tool(handler=_never_called_handler, quota_backoff_s=-1)
+
+
+async def test_warm_per_ip_entry_is_served_during_quota_backoff() -> None:
+    """m5 task-05 fix-1 (review I1/PC2, ruling R14): the quota flag is checked AFTER the per-ip
+    cache read, not before — a warm 24 h entry costs no AbuseIPDB quota and must keep answering
+    correctly even while the account-wide back-off is armed; only a MISS is suppressed (the
+    sibling test below). RED against the order shipped at `041c544` (flag before the per-ip
+    read), which would have answered `quota_exceeded` here instead.
+    """
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json=_success_body(11, 2, "2026-09-05T22:14:03+00:00"))
+        return httpx.Response(429)
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
+
+    first = await tool.run({"ip": "203.0.113.10"}, _ctx())  # ip A: warms the per-ip cache
+    second = await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))  # ip B: arms the flag
+    third = await tool.run({"ip": "203.0.113.10"}, _ctx())  # ip A again: served warm
+
+    assert first["cached"] is False
+    assert second == {"unavailable": True, "reason": "quota_exceeded"}
+    assert third == {**first, "cached": True}  # NOT quota_exceeded, despite the armed flag
+    assert call_count == 2  # the third call never reached the network
+
+
+async def test_cache_miss_during_quota_backoff_makes_no_request() -> None:
+    """The flag's actual suppressive effect: a never-cached IP looked up while the account-wide
+    back-off is armed answers `quota_exceeded` without a request — only a warm per-ip hit escapes
+    it (the sibling test above). GREEN both before and after the m5 task-05 fix-1 ordering change
+    (review I1/PC2): the miss path was never the defect."""
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json=_success_body(11, 2, "2026-09-05T22:14:03+00:00"))
+        return httpx.Response(429)
+
+    cache = RecordingCache()
+    tool = _tool(handler=handler, cache=cache, quota_backoff_s=600)
+
+    await tool.run({"ip": "203.0.113.10"}, _ctx())  # ip A: warms the per-ip cache
+    await tool.run({"ip": "198.51.100.23"}, _ctx("198.51.100.23"))  # ip B: arms the flag
+    third = await tool.run({"ip": "192.0.2.55"}, _ctx("192.0.2.55"))  # ip C: never cached
+
+    assert third == {"unavailable": True, "reason": "quota_exceeded"}
+    assert call_count == 2  # the third (never-cached) lookup never reached the network
+
+
+async def test_no_api_key_beats_the_quota_flag() -> None:
+    """m5 task-05 fix-1 (review M21/I1, ruling R14): the missing-key check runs BEFORE the quota
+    flag (and the per-ip cache) is ever consulted — an unkeyed tool must never claim
+    `quota_exceeded`, a diagnosis that only makes sense once real requests have actually been
+    rejected by the vendor. GREEN today (the shipped order already checks the key first);
+    mutation-proofed by moving the flag check above the key check in a scratch copy (test-author
+    report)."""
+    cache = RecordingCache()
+    await cache.set(QUOTA_KEY, b"1", 600)
+    cache.set_calls.clear()  # the pre-seed above is test setup, not part of what this test pins
+    cache.get_calls.clear()
+    tool = _tool(api_key="", handler=_never_called_handler, cache=cache, quota_backoff_s=600)
+
+    result = await tool.run({"ip": "203.0.113.10"}, _ctx())
+
+    assert result == {"unavailable": True, "reason": "no_api_key"}
+    assert cache.get_calls == []  # neither the quota flag nor the per-ip key was ever read
 
 
 async def test_no_api_key_is_unavailable_and_logs_once_without_network(
@@ -555,6 +738,9 @@ def test_abuseipdb_settings_defaults_bounds_and_secret_repr() -> None:
     assert settings.abuseipdb_max_age_days == 90
     assert settings.abuseipdb_cache_max_entries == 4096
     assert settings.abuseipdb_api_key.get_secret_value() == ""
+    # m5 task-05: ABUSEIPDB_QUOTA_BACKOFF_S=900 (R17: literal + comment) — after a 429, skip
+    # AbuseIPDB for this long; 0 disables the back-off.
+    assert settings.abuseipdb_quota_backoff_s == 900
 
     with pytest.raises(ValidationError):
         Settings(abuseipdb_max_age_days=366)  # type: ignore[call-arg]
@@ -566,6 +752,8 @@ def test_abuseipdb_settings_defaults_bounds_and_secret_repr() -> None:
         Settings(abuseipdb_cache_ttl_s=0)  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         Settings(abuseipdb_cache_max_entries=0)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        Settings(abuseipdb_quota_backoff_s=-5)  # type: ignore[call-arg]
 
     secret_settings = Settings(abuseipdb_api_key=SecretStr("abuse-key-1"))
     assert "abuse-key-1" not in repr(secret_settings)

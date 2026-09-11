@@ -7,7 +7,9 @@ shell out to subprocesses.
 
 Since m2 task-02, `api.main` fails fast on empty required settings (CONVENTIONS.md §5) —
 importing it has side effects, so `tests/test_api_main.py` owns that module exclusively (m2
-task-04) and it is deliberately excluded from the module list below.
+task-04) and it is deliberately excluded from the module list below. `worker.main` gained the
+same fail-fast wiring at m5 task-01 (spine M5-b); `tests/test_worker_main.py` owns it exclusively
+the same way, so it is excluded here too.
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ def test_all_scaffold_packages_import_cleanly() -> None:
         "core.schemas",
         "core.services",
         "worker",
-        "worker.main",
         "evals",
     ]
     for name in modules:

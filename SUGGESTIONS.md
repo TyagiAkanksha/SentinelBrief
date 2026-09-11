@@ -6,9 +6,6 @@ owner moves it into a milestone plan (`docs/plans/`).
 
 Format: one bullet per idea, with the task that surfaced it in a trailing parenthetical.
 
-- Extract a shared CLI helper (`_fail`/`_Parser`/`UsageError`) now copied verbatim in
-  `worker/triage_one.py`, `evals/run.py`, and `scripts/seed_dev.py` into one module, at M5 per
-  the m5 spine (t6-M6).
 - `scripts/seed_dev.py` reports no created/skipped/failed counts when the seed loop fails
   mid-run on a DB error; report the partial counts before re-raising (t6-M5).
 - Add the `server-only` package as a guard import in `web/src/lib/api/server.ts` so a future
@@ -23,5 +20,6 @@ Format: one bullet per idea, with the task that surfaced it in a trailing parent
 - Bound the number of tool calls the model can request inside one loop turn (a
   `TOOL_CALLS_PER_TURN_MAX` setting; excess calls recorded as `unavailable("turn_budget_exceeded")`)
   — today only the turn count is capped (m4 N-M3, with M8's token budget).
-- Negatively cache an AbuseIPDB 429 for the rest of the day so exhausting the daily quota doesn't
-  re-issue one HTTP call per alert (m4 N-M4, with M5's Redis-backed `TTLCache`).
+- `core.cache.RedisTTLCache` logs one WARNING per failed `get`/`set`; gate it behind a
+  once-per-transition flag (first failure after a success, and recovery) so a Redis outage does
+  not flood the worker log (m5 task-05 M2).

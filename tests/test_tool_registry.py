@@ -10,9 +10,11 @@ keys). CONVENTIONS.md §4 (the registry's one `except Exception` is a ruled exce
 worker's boundary with third-party/tool code — controller ruling Q6) and §7 (bounds are
 `Settings`, never a literal).
 
-Test tools (`EchoTool`, `BigTool`, `BoomTool`, plus two throwaway `_ToolA`/`_ToolB`) are tiny
-in-file `Tool` implementations — the external seam, not a mock of our own code
-(CONVENTIONS.md §10).
+Test tools (`BigTool`, plus two throwaway `_ToolA`/`_ToolB`) are tiny in-file `Tool`
+implementations — the external seam, not a mock of our own code (CONVENTIONS.md §10). `EchoTool`
+and `BoomTool` moved to `tests/helpers.py` at m5 task-03 (a pure move, M4 task-01 N5 carry-over):
+they were byte-for-byte duplicated here, in `tests/test_tool_loop.py` and in
+`tests/test_tool_loop_db.py`.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from pydantic import ValidationError
 
 from core.config import Settings
 from core.schemas.alert import CowrieEvent, SessionAlert
+from tests.helpers import BoomTool, EchoTool
 from worker.tools import (
     Tool,
     ToolContext,
@@ -62,18 +65,6 @@ def _make_ctx() -> ToolContext:
     return ToolContext(alert=_make_alert(), session=None, now=datetime(2026, 1, 1, tzinfo=UTC))
 
 
-class EchoTool:
-    """Echoes its arguments back — the plain-path `Tool`."""
-
-    name = "echo"
-    description = "Echoes its arguments back."
-    parameters: dict[str, Any] = {"type": "object", "properties": {}}
-    external = False
-
-    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
-        return dict(arguments)
-
-
 class BigTool:
     """Returns an oversized result — drives `ToolRegistry.execute`'s truncation."""
 
@@ -84,18 +75,6 @@ class BigTool:
 
     async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
         return {"data": "x" * 10_000}
-
-
-class BoomTool:
-    """Always raises — drives `ToolRegistry.execute`'s backstop (controller ruling Q6)."""
-
-    name = "boom"
-    description = "Always raises."
-    parameters: dict[str, Any] = {"type": "object", "properties": {}}
-    external = False
-
-    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
-        raise RuntimeError("boom")
 
 
 class _ToolA:

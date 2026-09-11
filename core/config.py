@@ -14,6 +14,24 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from core.errors import ConfigError
+
+
+def require_nonempty(name: str, value: str) -> None:
+    """Fail fast when a required secret/setting is empty at boot.
+
+    Shared by `api/main.py` and `worker/main.py` (both entrypoints require this exact message).
+
+    Args:
+        name: The setting's name, for the error message.
+        value: The plaintext value to check.
+
+    Raises:
+        ConfigError: When `value` is empty.
+    """
+    if not value:
+        raise ConfigError(f"{name} must not be empty")
+
 
 class ModelPrice(BaseModel):
     """USD price per million tokens for one model id (PRD §6.4)."""
@@ -32,6 +50,13 @@ class Settings(BaseSettings):
     llm_json_mode: Literal["json_object", "json_schema"] = "json_object"
     cheap_model: str = ""
     strong_model: str = ""
+    escalate_severity_gte: Annotated[int, Field(ge=1, le=5)] = 4
+    """Escalate to `strong_model` when the cheap verdict's severity is at least this (PRD §6.4);
+    `STRONG_MODEL` empty means routing never fires regardless of this threshold (m5 task-03)."""
+    escalate_confidence_lt: Annotated[float, Field(ge=0.0, le=1.0)] = 0.6
+    """Escalate to `strong_model` when the cheap verdict's confidence is strictly below this
+    (PRD §6.4), independent of `escalate_severity_gte` — either threshold alone triggers
+    escalation (m5 task-03)."""
     # NoDecode: pydantic-settings' own complex-field env decoding raises SettingsError on
     # malformed JSON before any field validator runs. Skipping it lets the `mode="before"`
     # validator below do the json.loads itself, so malformed input surfaces as a pydantic
@@ -40,12 +65,34 @@ class Settings(BaseSettings):
     triage_prompt_version: str = "triage-v4"
     environment: str = "development"
     database_url: SecretStr = SecretStr("")
+    redis_url: SecretStr = SecretStr("")
+    """Redis DSN for the ARQ queue (PRD §4, from M5). SECRET: a deployed URL may embed a
+    password."""
+    redis_socket_timeout_s: Annotated[float, Field(gt=0)] = 2.0
+    """Connect + socket timeout of every api-side Redis call (enqueue, `/healthz` ping), in
+    seconds — so a dead Redis fails fast instead of hanging the request (m5 task-01)."""
+    triage_job_timeout_s: Annotated[int, Field(ge=1)] = 120
+    """ARQ `job_timeout` for one attempt of a triage job (each try gets its own) — the backstop
+    behind `triage_attempt_timeout_s`; ARQ's in-progress lease is this + 10 s; worst case per
+    alert is `triage_job_max_tries` × this (m5 task-01/02)."""
+    triage_attempt_timeout_s: Annotated[float, Field(gt=0)] = 100.0
+    """Inner deadline for ONE triage attempt inside the job (m5 final review N-I1). A hung
+    attempt becomes a `TimeoutError` the job's `except Exception` boundary sees, so
+    `decide_retry` retries it (reason=TimeoutError) or marks the alert `failed` on the last
+    try. MUST be below `triage_job_timeout_s`: ARQ's own `job_timeout` cancels from outside
+    and records the job failed with NO retry and NO terminal write."""
+    worker_max_jobs: Annotated[int, Field(ge=1)] = 4
+    """Concurrent triage jobs per worker process — bounds concurrent LLM calls (m5 task-01)."""
+    worker_health_check_interval_s: Annotated[int, Field(ge=1)] = 15
+    """How often the worker refreshes its Redis health key (`<queue_name>:health-check`, TTL this
+    + 1 s); the compose healthcheck probes it every 30 s (m5 task-01)."""
     ingest_hmac_secret: SecretStr = SecretStr("")
     cors_origins: str = "http://localhost:3000"
     alerts_list_cache_ttl_s: int = 15
     stats_cache_ttl_s: int = 60
     alerts_cache_max_entries: int = 1024
-    """Bound on the in-process list/stats cache; M5's Redis backend uses its own maxmemory."""
+    """Bound on the in-process list/stats response cache — the production cache too: a public
+    route must never grow the shared Redis (M5 task-05 review I2)."""
     tool_result_max_chars: Annotated[int, Field(ge=1)] = 4000
     """Character budget every tool result is truncated to before it is fed back to the model or
     persisted (PRD §6.3, m4 task-01). One backstop for every tool, not a per-tool setting — see
@@ -87,14 +134,27 @@ class Settings(BaseSettings):
     """`maxAgeInDays` sent to AbuseIPDB's `check` endpoint (AbuseIPDB's own default window, m4
     task-04)."""
     abuseipdb_cache_max_entries: Annotated[int, Field(ge=1)] = 4096
-    """Bound on the in-process `lookup_ip_reputation` cache; M5's Redis backend uses its own
-    maxmemory instead (m4 task-04)."""
+    """Bound on the in-process `lookup_ip_reputation` cache used when no Redis is wired
+    (DB-less/test default); the worker's `RedisTTLCache` is bounded by distinct IPs × the 24 h
+    TTL — no Redis `maxmemory` is configured on purpose (the instance also holds the ARQ queue)."""
+    abuseipdb_quota_backoff_s: Annotated[int, Field(ge=0)] = 900
+    """After an AbuseIPDB `429`, skip the vendor for this many seconds — one account-wide flag
+    (PRD §6.3), never per-IP; `0` disables the back-off (m5 task-05)."""
     alert_history_max_window_hours: Annotated[int, Field(ge=1)] = 720
     """Largest `window_hours` `get_alert_history` will honor (30 days); bounds the scan the model
     can request over `ix_alerts_src_ip` (PRD §6.3, m4 task-05)."""
     tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6
     """Hard cap on tool-call turns per alert before a tool-less verdict is forced (PRD §6.3, m4
     task-06). Never a literal in `worker/triage.py`."""
+    triage_job_max_tries: Annotated[int, Field(ge=1)] = 3
+    """Total attempts per triage job — the first run plus retries — before the alert is marked
+    `failed` (PRD §6.2, m5 task-02). `worker/retry.py::decide_retry` reads this, never a literal."""
+    triage_job_backoff_base_s: Annotated[float, Field(ge=0)] = 2.0
+    """Delay before the first retry, in seconds; doubles each retry (exponential backoff, PRD
+    §6.2, m5 task-02). `worker/retry.py::backoff_seconds` reads this, never a literal."""
+    triage_job_backoff_max_s: Annotated[float, Field(ge=0)] = 60.0
+    """Cap on the retry delay, in seconds (PRD §6.2, m5 task-02). `worker/retry.py
+    ::backoff_seconds` reads this, never a literal."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

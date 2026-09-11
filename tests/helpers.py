@@ -5,26 +5,34 @@ Imported as `tests.helpers` (`tests/` has no `__init__.py`; `tests.fakes` alread
 way). Seeded rows always go through `insert_alert` / `persist_verdict` / `set_alert_status`,
 never a hand-rolled `session.add(...)`, so what a test asserts against is byte-for-byte what
 ingest and triage actually produce.
+
+m5 task-03 (the M4 task-01 "N5" carry-over) lifts `EchoTool`, `BoomTool`, `make_registry` and
+`minimal_alert` here from their three separate per-file copies in `tests/test_tool_loop.py`,
+`tests/test_tool_loop_db.py` and `tests/test_tool_registry.py` — a pure move, no behavior change
+(PRD §6.3, §6.4). The same task adds `verdict_json` and the `VALID1..VALID5`/`*_STRONG` two-tier
+routing literals (PRD §6.4) the routing test table names, built through `Verdict(...)
+.model_dump_json()` (never hand-written JSON) so every one is schema-valid by construction.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
 from core.models import AlertRow, AlertStatus, Base, VerdictRow
 from core.schemas.alert import SessionAlert
-from core.schemas.verdict import Verdict
+from core.schemas.verdict import Verdict, VerdictCategory
 from core.services.alerts import insert_alert, set_alert_status
 from core.signing import SIGNATURE_HEADER, sign_body
 from worker.store import ToolCallRecord, persist_verdict
+from worker.tools import LiveToolRecorder, ToolContext, ToolRegistry
 from worker.triage import TriageOutcome
 
 if TYPE_CHECKING:
@@ -32,6 +40,57 @@ if TYPE_CHECKING:
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "alerts"
 TEST_SECRET = "test-secret"  # matches conftest's `settings` fixture's `ingest_hmac_secret`
+
+
+def verdict_json(
+    *,
+    severity: int,
+    category: VerdictCategory,
+    confidence: float,
+    escalate: bool,
+    strong: bool = False,
+) -> str:
+    """One canonical `Verdict`, serialized through `model_dump_json()` (m5 task-03 rule 3: never
+    hand-written verdict JSON, so every literal below is schema-valid by construction).
+
+    `strong=True` prefixes `reasoning` with `"strong tier: "` (rule 7) so a strong-model reply's
+    text is always distinguishable from its cheap counterpart's in an assertion — e.g. proving
+    the cheap verdict was never appended to the strong call's conversation.
+    """
+    reasoning = "synthetic test reasoning citing session evidence."
+    if strong:
+        reasoning = f"strong tier: {reasoning}"
+    return Verdict(
+        severity=severity,
+        category=category,
+        confidence=confidence,
+        reasoning=reasoning,
+        recommended_action="synthetic recommended action, distinct from the reasoning text.",
+        escalate=escalate,
+    ).model_dump_json()
+
+
+# The two-tier routing literals named in the m5 task-03 brief's Interfaces → test table preamble:
+# built once here (never hand-written JSON) so every test file that needs one imports it instead
+# of re-deriving its exact severity/category/confidence tuple.
+VALID1 = verdict_json(severity=1, category="scanning", confidence=0.9, escalate=False)
+VALID2 = verdict_json(severity=2, category="brute_force", confidence=0.99, escalate=False)
+VALID3_LOW = verdict_json(severity=3, category="reconnaissance", confidence=0.2, escalate=False)
+VALID4 = verdict_json(severity=4, category="successful_intrusion", confidence=0.9, escalate=True)
+VALID5 = verdict_json(severity=5, category="malware_delivery", confidence=0.95, escalate=True)
+
+VALID1_STRONG = verdict_json(
+    severity=1, category="scanning", confidence=0.9, escalate=False, strong=True
+)
+VALID2_STRONG = verdict_json(
+    severity=2, category="brute_force", confidence=0.99, escalate=False, strong=True
+)
+VALID3_STRONG = verdict_json(
+    severity=3, category="reconnaissance", confidence=0.2, escalate=False, strong=True
+)
+VALID4_STRONG = verdict_json(
+    severity=4, category="successful_intrusion", confidence=0.9, escalate=True, strong=True
+)
 
 
 def fixture_body(name: str = "alert4") -> bytes:
@@ -169,3 +228,93 @@ async def seed_alert(
 
     await session.flush()
     return result.alert_id
+
+
+# --- tool-loop test stubs, lifted from `tests/test_tool_loop.py` at m5 task-03 (M4 task-01 N5) ---
+
+_TOOL_STUB_BASE_TS = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+class EchoTool:
+    """Echoes its arguments back as the result — deterministic, no external seam.
+
+    Byte-for-byte the copy previously duplicated in `tests/test_tool_loop.py`,
+    `tests/test_tool_loop_db.py` (as `BoomTool`'s sibling, not itself) and
+    `tests/test_tool_registry.py`; this module is the sole surviving definition site after the
+    m5 task-03 lift.
+    """
+
+    name = "echo"
+    description = "Echo the arguments back as the result."
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    external = False
+
+    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        return dict(arguments)
+
+
+class BoomTool:
+    """Violates the "tools never raise" contract on purpose — the registry's backstop must catch
+    it (`ToolRegistry.execute`, controller ruling Q6), not the pipeline.
+
+    Lifted at m5 task-03 (previously duplicated in `tests/test_tool_loop.py`,
+    `tests/test_tool_loop_db.py`, `tests/test_tool_registry.py`).
+    """
+
+    name = "boom"
+    description = "Always raises RuntimeError."
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+    external = False
+
+    async def run(self, arguments: Mapping[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+
+def make_registry(*tools: Any, max_result_chars: int = 4000) -> ToolRegistry:
+    """A live-executed `ToolRegistry` over `tools`, at a given per-tool result budget.
+
+    Lifted from `tests/test_tool_loop.py::_registry` at m5 task-03.
+    """
+    return ToolRegistry(list(tools), recorder=LiveToolRecorder(), max_result_chars=max_result_chars)
+
+
+def minimal_alert() -> SessionAlert:
+    """A minimal, valid two-event `SessionAlert` (connect + closed) — no fixture/DB needed.
+
+    Lifted from `tests/test_tool_loop.py::_minimal_alert` at m5 task-03; distinct from
+    `load_alert` above, which reads a real `fixtures/alerts/*.json` file.
+    """
+    events: list[dict[str, Any]] = [
+        {
+            "eventid": "cowrie.session.connect",
+            "timestamp": _TOOL_STUB_BASE_TS.isoformat(),
+            "session": "pipeline-test",
+            "src_ip": "203.0.113.9",
+            "sensor": "hp-test-01",
+        },
+        {
+            "eventid": "cowrie.session.closed",
+            "timestamp": (_TOOL_STUB_BASE_TS + timedelta(seconds=5)).isoformat(),
+            "session": "pipeline-test",
+            "src_ip": "203.0.113.9",
+            "sensor": "hp-test-01",
+            "duration_ms": 5000,
+        },
+    ]
+    return SessionAlert.model_validate(
+        {
+            "source": "cowrie",
+            "session_id": "pipeline-test",
+            "src_ip": "203.0.113.9",
+            "sensor": "hp-test-01",
+            "events": events,
+        }
+    )

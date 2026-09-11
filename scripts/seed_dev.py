@@ -13,12 +13,11 @@ m4 task-06: every alert also runs through the five-tool registry (`worker.tools.
 .build_registry`) so seeded rows carry real tool-call traces for task-07's timeline. Each of the
 five `fixtures/alerts/*.json` sessions scripts one tool turn from `FIXTURE_TOOL_TURNS`, replayed
 against `tests/fixtures/tools/` (`select_recorder`); every golden-set row scripts none (the model
-just answers directly). `load_candidates` itself is unchanged — still `(alert, canned)` pairs, so
-the pinned m3 `tests/test_seed_dev.py::test_load_candidates_returns_fixtures_then_golden`'s 2-tuple
-unpacking keeps working — `main()` zips a separately-computed per-candidate tool-name list
-(fixture stem order, matching `load_candidates`'s own fixture-loading order) alongside it before
-calling `seed()`, which is the one function whose own (untested-by-signature) contract grew a
-third, `tool_names`, element per candidate.
+just answers directly). m5 task-05: `load_candidates` itself now returns `(alert, canned, tool
+names)` triples — computing each candidate's tool names from its own single glob of `fixtures` —
+so `main()` no longer needs a second, separately-globbed pass to line a per-candidate tool-name
+list up with `load_candidates`'s own fixture order; it passes `load_candidates`'s triples straight
+to `seed()`.
 
 Runs from a repo checkout on the host — it imports `tests.fakes` (lazily, only on the fake path)
 — never inside the api image and never from a compose `command:` (PRD §10.1; M2 final review,
@@ -32,21 +31,20 @@ loading path — a stdlib `AttributeError` at import time. Python 3.12 evaluates
 `dict[str, X]` natively, so nothing here actually depends on postponed evaluation.
 """
 
-import argparse
 import asyncio
 import os
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.cli import Parser, UsageError, fail
 from core.config import Settings
 from core.db import make_engine, make_session_factory
-from core.errors import ConfigError, SentinelBriefError
+from core.errors import ConfigError
 from core.llm import LLMClient
 from core.schemas.alert import SessionAlert
 from core.schemas.verdict import Verdict, VerdictCategory
@@ -190,17 +188,23 @@ def select_recorder(*, live: bool) -> ToolRecorder:
     return ReplayToolRecorder(DEFAULT_TOOL_FIXTURES_DIR)
 
 
-def load_candidates(*, golden: Path, fixtures: Path) -> list[tuple[SessionAlert, str]]:
-    """Load every fixture and golden-set case as `(SessionAlert, canned verdict json)` pairs.
+def load_candidates(
+    *, golden: Path, fixtures: Path
+) -> list[tuple[SessionAlert, str, tuple[str, ...]]]:
+    """Load every fixture and golden-set case as `(alert, canned verdict json, tool names)`.
 
-    Fixtures come first, sorted by filename, followed by the golden-set cases in file order.
+    Fixtures come first, sorted by filename, followed by the golden-set cases in file order. Each
+    fixture row carries its own `FIXTURE_TOOL_TURNS` entry (m4 task-06); every golden-set row
+    carries `()` — the model just answers directly (m5 task-05: computed here, once, so `main()`
+    no longer re-globs `fixtures` a second time to line a tool-name list up with this order).
 
     Args:
         golden: Path to the golden-set JSONL file.
         fixtures: Path to the directory of fixture `*.json` files.
 
     Returns:
-        25 `(SessionAlert, canned verdict json)` pairs: 5 fixtures then 20 golden cases.
+        25 `(SessionAlert, canned verdict json, tool names)` triples: 5 fixtures then 20 golden
+        cases.
 
     Raises:
         ValueError: A golden row is invalid, or a fixture fails `SessionAlert` validation.
@@ -209,13 +213,17 @@ def load_candidates(*, golden: Path, fixtures: Path) -> list[tuple[SessionAlert,
     if not fixtures.is_dir():
         raise OSError(f"{fixtures} is not a directory")
 
-    candidates: list[tuple[SessionAlert, str]] = []
+    candidates: list[tuple[SessionAlert, str, tuple[str, ...]]] = []
 
     for path in sorted(fixtures.glob("*.json")):
         alert = SessionAlert.model_validate_json(path.read_text())
         severity, category, escalate = FIXTURE_LABELS.get(path.stem, DEFAULT_FIXTURE_LABEL)
         candidates.append(
-            (alert, canned_verdict(alert, severity=severity, category=category, escalate=escalate))
+            (
+                alert,
+                canned_verdict(alert, severity=severity, category=category, escalate=escalate),
+                FIXTURE_TOOL_TURNS.get(path.stem, ()),
+            )
         )
 
     for case in load_golden(golden):
@@ -228,6 +236,7 @@ def load_candidates(*, golden: Path, fixtures: Path) -> list[tuple[SessionAlert,
                     category=case.label.category,
                     escalate=case.label.escalate,
                 ),
+                (),
             )
         )
 
@@ -253,6 +262,7 @@ async def seed(
     prompt_version: str,
     recorder: ToolRecorder,
     settings: Settings,
+    strong_model: str | None = None,
 ) -> SeedCounts:
     """Insert and triage every candidate through the production write path.
 
@@ -276,6 +286,10 @@ async def seed(
         prompt_version: The prompt version every alert is triaged with.
         recorder: How the five enrichment tools are executed (`select_recorder`).
         settings: The config surface `build_registry` wires every tool's bounds from.
+        strong_model: Two-tier routing's strong id (PRD §6.4, m5 task-03); `None` (default) keeps
+            routing off. `main()` only ever passes a value on `--live` — a canned
+            `FakeLLMClient` has no strong-tier reply scripted, so the fake path always leaves this
+            `None`.
 
     Returns:
         Counts of created, skipped, and failed-triage alerts.
@@ -316,6 +330,9 @@ async def seed(
                     prompt_version=prompt_version,
                     tools=registry,
                     tool_loop_max_iter=settings.tool_loop_max_iter,
+                    strong_model=strong_model,
+                    escalate_severity_gte=settings.escalate_severity_gte,
+                    escalate_confidence_lt=settings.escalate_confidence_lt,
                 )
                 status = await pipeline.triage_alert(session, result.alert_id)
                 created += 1
@@ -324,42 +341,6 @@ async def seed(
         await engine.dispose()
 
     return SeedCounts(created=created, skipped=skipped, failed=failed)
-
-
-def _fail(code: str, message: str) -> int:
-    """Print one flattened `error: <code>: <message>` line to stderr; never a traceback.
-
-    Args:
-        code: The stable wire code for this failure (e.g. `"config_error"`).
-        message: A human-readable description; embedded newlines are collapsed so the line
-            stays exactly one line, matching every other CLI's error shape.
-
-    Returns:
-        Always `1` — every caller of this helper is a `1`-exit-code path.
-    """
-    print(f"error: {code}: {' '.join(message.split())}", file=sys.stderr)
-    return 1
-
-
-class UsageError(SentinelBriefError):
-    """CLI-only: raised by `_Parser.error` instead of letting argparse exit the process directly."""
-
-    code = "usage"
-
-
-class _Parser(argparse.ArgumentParser):
-    """An `ArgumentParser` that raises `UsageError` on a usage error instead of exiting."""
-
-    def error(self, message: str) -> NoReturn:
-        """Raise `UsageError` instead of argparse's default `self.exit(2, ...)`.
-
-        Args:
-            message: argparse's own description of the usage problem.
-
-        Raises:
-            UsageError: Always — this method never returns.
-        """
-        raise UsageError(f"{message} (see --help)")
 
 
 def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> int:
@@ -373,11 +354,11 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     Returns:
         `0` on success (`created=<n> skipped=<n> failed=<n>` printed to stdout — failed triages
         are reported, never fatal); `1` on a usage error, a `Settings()` validation failure, a
-        missing database URL, `--live` without `LLM_API_KEY`, a `--live` client construction
-        `ConfigError`, an invalid/missing golden file, an invalid/missing fixtures directory, or
-        a database error.
+        missing database URL, `--live` without `LLM_API_KEY`, `--live` with `STRONG_MODEL` equal
+        to `CHEAP_MODEL`, a `--live` client construction `ConfigError`, an invalid/missing golden
+        file, an invalid/missing fixtures directory, or a database error.
     """
-    parser = _Parser(prog="seed_dev.py")
+    parser = Parser(prog="seed_dev.py")
     parser.add_argument("--database-url", default=None)
     parser.add_argument("--schema", default=None)
     parser.add_argument("--live", action="store_true")
@@ -386,31 +367,38 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
-        return _fail(e.code, str(e))
+        return fail(e.code, str(e))
 
     try:
         settings = Settings()
     except ValidationError as e:
-        return _fail("config_error", str(e))
+        return fail("config_error", str(e))
 
     database_url = args.database_url
     if database_url is None:
         database_url = os.environ.get("DATABASE_URL") or os.environ.get("TEST_DATABASE_URL") or ""
     if not database_url:
-        return _fail("config_error", "no database URL (pass --database-url or set DATABASE_URL)")
+        return fail("config_error", "no database URL (pass --database-url or set DATABASE_URL)")
 
     if args.live and not settings.llm_api_key.get_secret_value():
-        return _fail("config_error", "--live requires LLM_API_KEY")
+        return fail("config_error", "--live requires LLM_API_KEY")
 
     # llm= (tests) beats --live for which client seed() uses; --live alone still selects the
     # cheap_model routing tier (only --live prices verdicts against a real model id).
     client: LLMClient | None = llm
     model = settings.cheap_model if args.live else FAKE_MODEL
+    # Two-tier routing (m5 task-03): only `--live` opts in, since a canned `FakeLLMClient` never
+    # has a strong-tier reply scripted (PRD §6.4).
+    strong_model = (settings.strong_model or None) if args.live else None
+    # Checked up front (m5 task-03 fix-1, review I1), before any insert: `TriagePipeline` itself
+    # raises a bare `ValueError` for this, which would otherwise escape `seed()` as a traceback.
+    if args.live and strong_model == model:
+        return fail("config_error", "STRONG_MODEL must differ from CHEAP_MODEL")
     if client is None and args.live:
         try:
             client = OpenAICompatibleLLMClient.from_settings(settings)
         except ConfigError as e:
-            return _fail(e.code, str(e))
+            return fail(e.code, str(e))
 
     # Golden checked before fixtures (check-order items 6, 7): each is validated on its own,
     # before `load_candidates` re-walks both to build the actual (fixtures-first) candidate list,
@@ -418,29 +406,19 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
     try:
         load_golden(args.golden)
     except (ValueError, OSError) as e:
-        return _fail("invalid_golden", str(e))
+        return fail("invalid_golden", str(e))
 
     if not args.fixtures.is_dir():
-        return _fail("invalid_fixtures", f"{args.fixtures} is not a directory")
+        return fail("invalid_fixtures", f"{args.fixtures} is not a directory")
     try:
         for path in sorted(args.fixtures.glob("*.json")):
             SessionAlert.model_validate_json(path.read_text())
     except (ValueError, OSError) as e:
-        return _fail("invalid_fixtures", str(e))
+        return fail("invalid_fixtures", str(e))
 
-    candidates = load_candidates(golden=args.golden, fixtures=args.fixtures)
-
-    # `load_candidates` stays fixtures-first-then-golden pairs (unchanged; the pinned m3
-    # `tests/test_seed_dev.py` unpacks it as `(alert, canned)`). The per-candidate tool names come
-    # from a separately-computed, same-order list: `FIXTURE_TOOL_TURNS` for each of the (sorted)
-    # fixture files, then `()` for every golden-set row.
-    fixture_stems = [path.stem for path in sorted(args.fixtures.glob("*.json"))]
-    tool_names_by_candidate = [FIXTURE_TOOL_TURNS.get(stem, ()) for stem in fixture_stems]
-    tool_names_by_candidate += [()] * (len(candidates) - len(tool_names_by_candidate))
-    triples = [
-        (alert, canned, names)
-        for (alert, canned), names in zip(candidates, tool_names_by_candidate, strict=True)
-    ]
+    # m5 task-05: `load_candidates` itself computes each candidate's tool names now, from its own
+    # single glob of `args.fixtures` — no second, separately-globbed pass to line them up.
+    triples = load_candidates(golden=args.golden, fixtures=args.fixtures)
 
     recorder = select_recorder(live=args.live)
     try:
@@ -454,10 +432,11 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
                 prompt_version=settings.triage_prompt_version,
                 recorder=recorder,
                 settings=settings,
+                strong_model=strong_model,
             )
         )
     except (OSError, SQLAlchemyError) as e:
-        return _fail("database_error", str(e))
+        return fail("database_error", str(e))
 
     print(f"created={counts.created} skipped={counts.skipped} failed={counts.failed}")
     return 0

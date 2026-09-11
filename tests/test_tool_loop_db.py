@@ -5,14 +5,16 @@ session (m4 task-06).
 Every test here drives the pipeline through `persist_verdict`'s real write path (never a
 hand-rolled `session.add(ToolCallRow(...))`), against a throwaway-schema Postgres database
 (`tmp_schema`, CONVENTIONS.md §10). Documentation-range IPs only.
+
+`BoomTool` moved to `tests/helpers.py` at m5 task-03 (a pure move, M4 task-01 N5 carry-over): it
+was byte-for-byte duplicated here, in `tests/test_tool_loop.py` and in
+`tests/test_tool_registry.py`.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -20,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Settings
 from core.models import AlertRow, ToolCallRow, VerdictRow
 from tests.fakes import FakeLLMClient, ScriptedToolCall
-from tests.helpers import load_alert, seed_alert
+from tests.helpers import BoomTool, load_alert, seed_alert
 from worker.tools import AlertHistoryTool, LiveToolRecorder, ReplayToolRecorder, ToolRegistry
 from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
@@ -45,23 +47,6 @@ _VALID1_VERDICT = {
     "escalate": False,
 }
 VALID1 = json.dumps(_VALID1_VERDICT)
-
-
-class BoomTool:
-    """Violates the "tools never raise" contract on purpose (duplicated from
-    `tests/test_tool_loop.py` on purpose — test files never import from each other)."""
-
-    name = "boom"
-    description = "Always raises RuntimeError."
-    parameters: dict[str, Any] = {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": True,
-    }
-    external = False
-
-    async def run(self, arguments: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
-        raise RuntimeError("boom")
 
 
 async def _tool_call_rows(

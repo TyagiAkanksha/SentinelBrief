@@ -345,7 +345,7 @@
         "type": "object"
       },
       "HealthResponse": {
-        "description": "The `/healthz` liveness body: overall status plus the database's own state.",
+        "description": "The `/healthz` liveness body: overall status plus the database's and Redis's own state\n(m5 task-05).",
         "properties": {
           "db": {
             "enum": [
@@ -354,6 +354,15 @@
               "unconfigured"
             ],
             "title": "Db",
+            "type": "string"
+          },
+          "redis": {
+            "enum": [
+              "ok",
+              "error",
+              "unconfigured"
+            ],
+            "title": "Redis",
             "type": "string"
           },
           "status": {
@@ -367,7 +376,8 @@
         },
         "required": [
           "status",
-          "db"
+          "db",
+          "redis"
         ],
         "title": "HealthResponse",
         "type": "object"
@@ -928,7 +938,7 @@
         "summary": "List Alerts"
       },
       "post": {
-        "description": "Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.",
+        "description": "Insert `payload`, deduplicating on its fingerprint; enqueue triage for the still-`pending`\nrow and answer immediately \u2014 the LLM call happens entirely in the worker process (PRD \u00a73,\n\u00a710.1).",
         "operationId": "ingest_alert",
         "requestBody": {
           "content": {
@@ -949,7 +959,7 @@
                 }
               }
             },
-            "description": "Duplicate session: existing alert returned, triage not re-run."
+            "description": "Duplicate session: existing alert returned. A still-`pending` duplicate is re-enqueued (idempotent at the queue by job id); a triaged/failed one is not."
           },
           "202": {
             "content": {
@@ -990,6 +1000,16 @@
               }
             },
             "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Triage queue unavailable; the alert row is committed and stays `pending`."
           }
         },
         "summary": "Ingest Alert"
@@ -1087,7 +1107,7 @@
     },
     "/healthz": {
       "get": {
-        "description": "Report DB liveness by running `SELECT 1` through the wired session factory.",
+        "description": "Report DB + Redis liveness.",
         "operationId": "healthz",
         "responses": {
           "200": {
@@ -1108,7 +1128,7 @@
                 }
               }
             },
-            "description": "Degraded: database unconfigured or unreachable."
+            "description": "Degraded: database and/or Redis unconfigured or unreachable."
           }
         },
         "summary": "Healthz"

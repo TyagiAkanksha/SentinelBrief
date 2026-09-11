@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-from api.deps import SessionDep, TriageFn, get_settings, get_triage, require_signature
+from api.deps import EnqueueFn, SessionDep, get_enqueue, get_settings, require_signature
 from core.schemas.alert import SessionAlert
 from core.schemas.errors import ErrorEnvelope
 from core.schemas.ingest import IngestResponse
@@ -64,43 +64,52 @@ router = APIRouter(route_class=SignedRoute)
     responses={
         200: {
             "model": IngestResponse,
-            "description": "Duplicate session: existing alert returned, triage not re-run.",
+            "description": "Duplicate session: existing alert returned. A still-`pending` "
+            "duplicate is re-enqueued (idempotent at the queue by job id); a triaged/failed one "
+            "is not.",
         },
         401: {"model": ErrorEnvelope, "description": "Missing or invalid X-Signature."},
         422: {"model": ErrorEnvelope, "description": "Invalid session payload."},
         500: {"model": ErrorEnvelope},
+        503: {
+            "model": ErrorEnvelope,
+            "description": "Triage queue unavailable; the alert row is committed and stays "
+            "`pending`.",
+        },
     },
 )
 async def ingest_alert(
     payload: SessionAlert,
     session: SessionDep,
-    triage: TriageFn = Depends(get_triage),
+    enqueue: EnqueueFn = Depends(get_enqueue),
 ) -> JSONResponse:
-    """Insert `payload`, deduplicating on its fingerprint; triage only newly created alerts.
+    """Insert `payload`, deduplicating on its fingerprint; enqueue triage for the still-`pending`
+    row and answer immediately — the LLM call happens entirely in the worker process (PRD §3,
+    §10.1).
     \f
     Args:
         payload: The parsed session alert body.
         session: The request-scoped session (`SessionDep`); its commit/rollback runs before the
             response is sent.
-        triage: The wired triage callable, invoked only for newly created alerts. It persists
-            the status it returns (verdict + status in one transaction, PRD §6.2) — this route
-            never writes `alerts.status` itself.
+        enqueue: The wired queue callable (`api.deps.get_enqueue`), invoked once for a newly
+            created alert or a still-`pending` duplicate; a `QueueUnavailableError` it raises
+            maps to a `503` — the already-committed row stays `pending` and the shipper's own
+            retry re-enqueues it.
 
     Returns:
-        `202` with the new alert's id/status when this request created it; `200` with the
-        existing alert's id/current status on a fingerprint duplicate.
+        `202` with the new alert's id/status (`"pending"`) when this request created it; `200`
+        with the existing alert's id/current status on a fingerprint duplicate. A duplicate of a
+        triaged/failed alert never enqueues again (PRD §6.1).
     """
     result = await insert_alert(session, payload)
-    if result.created:
-        # M2 inline triage; removed at M5 (the worker/ARQ job owns this call there). Committing
-        # here — ahead of `SessionDep`'s own post-response commit — makes the new row visible
-        # to `triage`, which runs in the same request and needs the id to already be durable.
+    if result.created or result.status == "pending":
+        # Spine M5-a: the row must be durable BEFORE the job can be picked up by a worker, so
+        # this route commits explicitly here rather than relying on `SessionDep`'s own
+        # post-response commit — `enqueue` must never see an alert id no worker could find yet.
         await session.commit()
-        status = await triage(session, result.alert_id)
-    else:
-        status = result.status
+        await enqueue(result.alert_id)
 
-    body = IngestResponse(id=result.alert_id, status=status, created=result.created)
+    body = IngestResponse(id=result.alert_id, status=result.status, created=result.created)
     return JSONResponse(
         status_code=202 if result.created else 200, content=body.model_dump(mode="json")
     )

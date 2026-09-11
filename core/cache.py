@@ -1,17 +1,30 @@
 """`TTLCache` — the in-process cache seam `api/routes/alerts_read.py` reads list/stats responses
 through (PRD §8's 15 s / 60 s cache TTLs; M2 final review, plan defect 12) — m3 task-02.
 
-No project imports: a pure seam M5 swaps for a `RedisTTLCache` beside `InMemoryTTLCache` in one
-wiring line (`api/factory.py::create_app`'s `cache=` kwarg). The methods are `async` even though
-the in-memory version never awaits — a Redis client is async, and a sync `Protocol` would force
-M5 to change the Protocol, both routes, and every route test.
+`RedisTTLCache` (m5 task-05; fix-1 review I2) is the shared-across-processes implementation: it
+backs ONLY the worker's 24 h AbuseIPDB reputation cache (`worker/main.py::startup`), under the
+wire-key prefix `REDIS_CACHE_KEY_PREFIX`. The api's list/stats cache stays the bounded
+`InMemoryTTLCache` — a public GET route must never be able to grow a Redis instance that also
+holds the ARQ queue (PRD §10.1). A Redis failure on `get` is a miss and on `set` is a no-op —
+`lookup_ip_reputation` can never raise because Redis blinked.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from typing import Protocol
+
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+logger = logging.getLogger(__name__)
+
+REDIS_CACHE_KEY_PREFIX = "sentinelbrief:cache:"
+"""Wire-key prefix every `RedisTTLCache` key is stored under, distinct from
+`worker/tools/ip_reputation.py`'s own `CACHE_KEY_PREFIX` (`"abuseipdb:"`), which nests inside this
+one when the reputation cache is Redis-backed (m5 task-05)."""
 
 
 class TTLCache(Protocol):
@@ -96,3 +109,54 @@ class InMemoryTTLCache:
                 soonest_key = min(self._entries, key=lambda k: self._entries[k][0])
                 del self._entries[soonest_key]
         self._entries[key] = (self._clock() + ttl_s, value)
+
+
+class RedisTTLCache:
+    """A `TTLCache` backed by `redis.asyncio.Redis`, shared across processes (m5 task-05).
+
+    `get`/`set` never raise: a dead Redis makes `get` answer a miss and `set` a no-op, each logged
+    exactly once at WARNING with the failing key and the exception class — never the connection
+    URL/password (the client already carries that). This is what lets the worker's AbuseIPDB
+    reputation cache survive Redis blinking without a raise (the api never wires this class —
+    module docstring, review I2/R14).
+    """
+
+    def __init__(self, redis: Redis, *, key_prefix: str = REDIS_CACHE_KEY_PREFIX) -> None:
+        """Build the cache over an already-configured `Redis`/`ArqRedis` client.
+
+        Args:
+            redis: The client to issue `GET`/`SET` through; the caller owns its lifecycle.
+            key_prefix: Prepended to every key on the wire (defaults to
+                `REDIS_CACHE_KEY_PREFIX`; a distinct prefix separates keyspaces in tests).
+        """
+        self._redis = redis
+        self._key_prefix = key_prefix
+
+    async def get(self, key: str) -> bytes | None:
+        """Return the cached value for `key`, or `None` on a miss, expiry, or a Redis failure."""
+        try:
+            value: bytes | None = await self._redis.get(self._key_prefix + key)
+            return value
+        except (RedisError, OSError) as exc:
+            logger.warning("redis cache get failed key=%s exc=%s", key, type(exc).__name__)
+            return None
+
+    async def set(self, key: str, value: bytes, ttl_s: int) -> None:
+        """Store `value` under `key` for `ttl_s` seconds; a Redis failure is a logged no-op.
+
+        Args:
+            key: The cache key (prefixed with `key_prefix` on the wire).
+            value: The bytes to store.
+            ttl_s: Seconds until expiry; must be > 0 (parity with `InMemoryTTLCache` — a
+                programming error, not a Redis one, so this check runs before any Redis call).
+
+        Raises:
+            ValueError: When `ttl_s` is not positive.
+        """
+        if ttl_s <= 0:
+            raise ValueError("ttl_s must be > 0")
+        try:
+            await self._redis.set(self._key_prefix + key, value, px=ttl_s * 1000)
+        except (RedisError, OSError) as exc:
+            logger.warning("redis cache set failed key=%s exc=%s", key, type(exc).__name__)
+            return

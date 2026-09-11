@@ -19,6 +19,11 @@ a `web` assertion to two of the m2-pinned tests below (`test_compose_config_vali
 
 m4 task-03 adds `test_compose_api_mounts_geoip_read_only`: the `api` service's read-only bind
 mount of `infra/geoip` (the deploy-time `.mmdb` directory `scripts/fetch_geoip.py` populates).
+
+m5 task-01 adds `redis` and `worker`: `test_compose_redis_service_shape`,
+`test_compose_worker_service_shape`, `test_compose_api_depends_on_healthy_redis`, and extends
+`test_compose_config_validates`/`test_compose_publishes_loopback_only` (the only two m2-pinned
+tests below that change) with the two new services.
 """
 
 from __future__ import annotations
@@ -87,19 +92,23 @@ def rendered_compose_config(tmp_path: Path) -> dict[str, Any]:
 
 def test_compose_config_validates(rendered_compose_config: dict[str, Any]) -> None:
     """PRD §11 / brief Interfaces: `docker compose -f infra/docker-compose.yml config` exits 0
-    and declares the `postgres`, `api`, and `web` services (m3 task-07 adds `web`) — a reference
-    error (e.g. a typo'd service name in `depends_on`) fails `config` before `docker compose up`
-    is ever attempted.
+    and declares the `postgres`, `api`, `web`, `redis` and `worker` services (m3 task-07 adds
+    `web`; m5 task-01 adds `redis`/`worker`) — a reference error (e.g. a typo'd service name in
+    `depends_on`) fails `config` before `docker compose up` is ever attempted.
     """
     assert "postgres" in rendered_compose_config["services"]
     assert "api" in rendered_compose_config["services"]
     assert "web" in rendered_compose_config["services"]
+    assert "redis" in rendered_compose_config["services"]
+    assert "worker" in rendered_compose_config["services"]
 
 
 def test_compose_publishes_loopback_only(rendered_compose_config: dict[str, Any]) -> None:
     """`.claude/rules/infra.md`: dev compose publishes ports on 127.0.0.1 only — a bare
     `"8000:8000"` mapping would expose the API (and Postgres) on every interface of the dev host.
-    m3 task-07 adds the `web` service's port to this same check.
+    m3 task-07 adds the `web` service's port to this same check; m5 task-01 adds `redis`'s port
+    and asserts `worker` publishes none at all (it is never addressed directly — only ARQ jobs
+    reach it, through Redis).
     """
     services = rendered_compose_config["services"]
     published_targets: dict[str, set[str]] = {}
@@ -113,6 +122,8 @@ def test_compose_publishes_loopback_only(rendered_compose_config: dict[str, Any]
     assert published_targets.get("api") == {"8000"}, published_targets.get("api")
     assert published_targets.get("postgres") == {"5432"}, published_targets.get("postgres")
     assert published_targets.get("web") == {"3000"}, published_targets.get("web")
+    assert published_targets.get("redis") == {"6379"}, published_targets.get("redis")
+    assert "worker" not in published_targets, published_targets
 
 
 def test_compose_api_depends_on_healthy_postgres(rendered_compose_config: dict[str, Any]) -> None:
@@ -246,3 +257,87 @@ def test_compose_named_volume(rendered_compose_config: dict[str, Any]) -> None:
     postgres = rendered_compose_config["services"]["postgres"]
     mounts = {(v["source"], v["target"]) for v in postgres.get("volumes", [])}
     assert ("sentinelbrief_pg", "/var/lib/postgresql/data") in mounts, mounts
+
+
+def test_compose_redis_service_shape(rendered_compose_config: dict[str, Any]) -> None:
+    """m5 task-01 brief Interfaces: `redis:7-alpine`, loopback-only, an RDB snapshot policy (the
+    `command:` override — fix-1 M2: the docstring alone overclaimed this pin, no assertion below
+    it actually checked the snapshot policy) so queued jobs survive a restart, a named
+    (non-anonymous) volume, a `redis-cli ping` healthcheck, and the same json-file log rotation
+    as every other service.
+    """
+    redis = rendered_compose_config["services"]["redis"]
+
+    assert redis["image"] == "redis:7-alpine"
+    assert redis["command"] == ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports = redis.get("ports", [])
+    assert len(ports) == 1
+    assert ports[0]["host_ip"] == "127.0.0.1"
+    assert str(ports[0]["target"]) == "6379"
+
+    healthcheck_test = " ".join(redis["healthcheck"]["test"])
+    assert "redis-cli ping" in healthcheck_test
+
+    mounts = {(v["source"], v["target"]) for v in redis.get("volumes", [])}
+    assert ("sentinelbrief_redis", "/data") in mounts
+
+    assert "sentinelbrief_redis" in rendered_compose_config["volumes"]
+
+    logging = redis["logging"]
+    assert logging["driver"] == "json-file"
+    assert logging["options"]["max-size"] == "10m"
+
+
+def test_compose_worker_service_shape(tmp_path: Path) -> None:
+    """m5 task-01 brief Interfaces: `worker` shares the api image (same build context/Dockerfile,
+    same `image:` tag) with a different `command:`, publishes no ports, mounts `infra/geoip`
+    read-only (M4 task-03 M6: the worker is where `get_ip_geo_asn` runs now), waits for a
+    *healthy* `postgres` AND `redis`, and its own healthcheck runs `arq --check`. Rendered against
+    `_ENV_FILE_LEAK_CANARY` (like `test_compose_web_service_shape`) — but unlike `web`, `worker`
+    legitimately needs every secret in `.env` (the LLM key, the DB URL, the Redis URL), so this
+    proves `env_file: ../.env` really is applied to it, not merely absent. Rendered from its own
+    `tmp_path` copy (not the shared `rendered_compose_config` fixture), mirroring
+    `test_compose_api_build_context_is_repo_root`, so the build context can be checked against
+    the exact directory it resolves relative to.
+    """
+    config = _render_compose_config(tmp_path, env_text=_ENV_FILE_LEAK_CANARY)
+    worker = config["services"]["worker"]
+
+    assert worker["command"] == ["arq", "worker.main.WorkerSettings"]
+    assert not worker.get("ports")
+    assert worker["image"] == "sentinelbrief-api"
+    assert worker["environment"]["SENTINELBRIEF_TEST_CANARY"] == "canary"
+
+    build = worker["build"]
+    assert Path(build["context"]).resolve() == tmp_path.resolve(), (
+        f"worker build context does not resolve to the repo-root stand-in {tmp_path}: "
+        f"{build['context']}"
+    )
+    dockerfile = build["dockerfile"].replace("\\", "/")
+    assert dockerfile.endswith("infra/Dockerfile.api"), dockerfile
+
+    geoip_mounts = [
+        mount for mount in worker.get("volumes", []) if mount.get("target") == "/app/infra/geoip"
+    ]
+    assert geoip_mounts, f"worker has no bind mount at /app/infra/geoip: {worker.get('volumes')}"
+    assert geoip_mounts[0]["read_only"] is True
+
+    assert worker["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert worker["depends_on"]["redis"]["condition"] == "service_healthy"
+
+    healthcheck_test = " ".join(worker["healthcheck"]["test"])
+    assert "arq --check worker.main.WorkerSettings" in healthcheck_test
+
+    logging = worker["logging"]
+    assert logging["driver"] == "json-file"
+    assert logging["options"]["max-size"] == "10m"
+
+
+def test_compose_api_depends_on_healthy_redis(rendered_compose_config: dict[str, Any]) -> None:
+    """m5 task-01: `api` must wait for a *healthy* `redis` too, not just a healthy `postgres` —
+    the ingest route enqueues on every create now, so a `redis` that has merely started (but
+    isn't accepting connections yet) would race the first request the same way an unready
+    Postgres would (`test_compose_api_depends_on_healthy_postgres`, unchanged above).
+    """
+    api = rendered_compose_config["services"]["api"]
+    assert api["depends_on"]["redis"]["condition"] == "service_healthy"

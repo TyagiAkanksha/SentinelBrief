@@ -19,10 +19,11 @@ paths: worker/**
 - Structured output: ask for `json_object` (schema in the prompt) unless `LLM_JSON_MODE` says
   otherwise; validate with `Verdict.model_validate_json`; **retry exactly once** with the
   validation error appended; then raise `VerdictValidationError(attempts=2, …)`. `LLMCallError`
-  is not retried here — job-level retries (3, with backoff) arrive with ARQ at M5.
+  is not retried here — the job retries the whole attempt `TRIAGE_JOB_MAX_TRIES` = 3 times in
+  total, with exponential backoff (M5, `worker/retry.py`).
 - **One transaction per verdict write.** `worker/store.py::persist_verdict` adds the verdict, its
-  `tool_calls`, and the `alerts.status` update; the job commits once. Failure → rollback, status
-  `failed` in its own transaction.
+  `tool_calls`, and the `alerts.status` update; the job commits once. Failure → rollback and
+  raise; the *job* decides retry vs the terminal `failed` write.
 - Tool loop (M4): iteration cap from `TOOL_LOOP_MAX_ITER`, never a literal; every tool result is
   truncated to its budget before being fed back; every call is recorded (`seq`, name, args,
   result, latency) whether or not the model used it.
