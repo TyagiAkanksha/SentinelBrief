@@ -50,8 +50,10 @@ keeps it `SecretStr` (D12/N-M10), and the `worker/llm_client.py:94` `timeout=60.
   `--out-dir DIR`; reads `MAXMIND_LICENSE_KEY` from the environment).
 - Domain (PRD §13 working assumption, owner to confirm at task-05): `sentinelbrief.tyagiakanksha.com`
   and `api.sentinelbrief.tyagiakanksha.com`. If the owner picks another domain, the change is one
-  `sed` over the hits of `grep -rn "sentinelbrief.tyagiakanksha.com" infra/deploy docs/deployment.md
-  README.md` — every one of them is listed by the implementer's report (rule 11).
+  `sed` over the hits of a REPO-WIDE `git grep -n "sentinelbrief.tyagiakanksha.com"` (review PC1: the
+  earlier narrow scope structurally missed `tests/test_prod_caddyfile.py:19-20`, a pinned file — so a
+  domain change also needs a pinned-file approval, not only a `sed`) — every hit is listed by the
+  implementer's report (rule 11).
 
 ## Files
 
@@ -186,6 +188,10 @@ keeps it `SecretStr` (D12/N-M10), and the `worker/llm_client.py:94` `timeout=60.
   	reverse_proxy web:3000
   }
   ```
+
+  Vhost ORDER in the file is irrelevant to Caddy (it routes by Host); the pinned block-extractor test
+  is anchored to a line start as of fix-1 (review M1), so either order passes — the delivered file
+  keeps whichever order it has.
 
   ```bash
   # infra/deploy/prod/fetch-secrets.sh — runs ON THE BOX as root via the instance role; prints counts only
