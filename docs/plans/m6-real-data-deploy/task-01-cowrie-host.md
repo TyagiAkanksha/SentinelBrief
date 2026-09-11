@@ -46,9 +46,12 @@ pin the shape of both files.
   `.dist` defaults. **Pin the image by digest** in the compose file before the first deploy
   (`docker pull cowrie/cowrie:latest && docker inspect --format '{{index .RepoDigests 0}}'`),
   recorded as `image: cowrie/cowrie@sha256:<digest>` — the "never a moving tag on the box" rule
-  applies to third-party images too; until the owner pulls it, the committed file carries the
-  `latest` tag with a comment naming the pin step (the pin test accepts either form and the
-  runbook makes the digest pin a required step).
+  applies to third-party images too. At briefing (2026-09-11) `docker buildx imagetools inspect
+  cowrie/cowrie:latest` reported the multi-arch manifest digest
+  `sha256:42e01e0e5fe705a0a63dacc0f1992b2d230740ac149af7675f48197abf740d44` (linux/amd64 +
+  linux/arm64 — so the `t4g.nano` arm64 host is fine); the implementer re-runs that command,
+  and if the digest still matches commits the `@sha256:` form directly (the pin test accepts
+  either form; the runbook still makes re-checking the digest a required step before deploy).
 
 ## Files
 
@@ -108,9 +111,10 @@ pin the shape of both files.
   3. User data (pasted verbatim in the runbook): `dnf install -y docker python3.12`,
      `systemctl enable --now docker`, install the compose plugin (`mkdir -p
      /usr/local/lib/docker/cli-plugins && curl -fsSL
-     https://github.com/docker/compose/releases/download/v2.39.2/docker-compose-linux-$(uname
+     https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-$(uname
      -m) -o /usr/local/lib/docker/cli-plugins/docker-compose && chmod +x …` — AL2023's `docker`
-     package ships no compose plugin; pin the release the implementer verifies exists),
+     package ships no compose plugin; `v5.5.1` is the latest release at briefing (2026-09-11,
+     `gh api repos/docker/compose/releases/latest`); the implementer re-verifies it exists),
      `systemctl disable --now sshd && systemctl mask sshd` (port 22 must be free before Cowrie
      starts; SSM Agent is preinstalled on AL2023 and needs no port), `mkdir -p
      /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 1000:1000
