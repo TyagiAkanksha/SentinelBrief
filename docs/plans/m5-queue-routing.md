@@ -59,7 +59,11 @@ M0–M4 Global Constraints apply verbatim (branch `feat/m5-queue-routing`). Addi
   `Exception` (never `BaseException`) around the whole attempt; every family except
   `NotFoundError` follows one policy — retry with backoff below the last try, `failed` on it, with
   the exception class logged (task-02; the third CONVENTIONS §4 carve-out). `pending` rests only
-  when the terminal write itself cannot reach the database (documented residual).
+  when the terminal write itself cannot reach the database (documented residual). **An attempt is
+  bounded INSIDE the job by `TRIAGE_ATTEMPT_TIMEOUT_S` (below `TRIAGE_JOB_TIMEOUT_S`, boot-checked)
+  so a hung attempt becomes a retryable `TimeoutError` under the same policy; ARQ's `job_timeout`
+  is only the backstop and, if it fired first, would record the job failed with no retry and no
+  terminal write (m5 final review N-I1, ruling R15 shape (a)).**
 - **Attempt count (ruling).** `TRIAGE_JOB_MAX_TRIES = 3` counts TOTAL attempts (the first run plus
   two retries) — the number PRD §6.2's cost bound multiplies by; the PRD's "retried up to 3 times"
   wording is amended to say so (v1.4, task-02). Cost if wrong: one Setting bump.
