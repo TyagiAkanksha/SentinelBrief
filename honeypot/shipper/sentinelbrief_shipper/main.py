@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
 
@@ -115,21 +116,39 @@ def _session_id_for_log(payload: bytes) -> str:
     return session_id if isinstance(session_id, str) else "unknown"
 
 
+@dataclass(frozen=True)
+class RunOnceResult:
+    """One `run_once` iteration's outcome (review PC1/I3).
+
+    `main`'s loop needs both numbers: it sleeps only when `lines_read == 0` (nothing new to
+    tail), which `delivered` alone cannot convey — a busy iteration that tailed new lines but
+    delivered nothing (e.g. every payload is still spooled behind a retryable failure) must NOT
+    sleep, since the tailer may already have more to read.
+    """
+
+    lines_read: int
+    delivered: int
+
+
 def run_once(
     tailer: LogTailer,
     assembler: SessionAssembler,
     spool: Spool,
     poster: Poster,
     backoff: Backoff,
-) -> int:
+) -> RunOnceResult:
     """One full iteration: tail new lines, feed the assembler, spool any payloads, then drain.
 
+    `main`'s loop calls this — never inlines the same sequence (review I3: a duplicated loop body
+    is dead code no mutation of `run_once` could ever fail a test on).
+
     Returns:
-        The count `drain` delivered in this call.
+        `RunOnceResult(lines_read, delivered)`.
     """
     lines = tailer.read_new_lines()
     _spool_new_payloads(assembler, spool, lines)
-    return drain(spool, poster, backoff)
+    delivered = drain(spool, poster, backoff)
+    return RunOnceResult(lines_read=len(lines), delivered=delivered)
 
 
 def _spool_new_payloads(assembler: SessionAssembler, spool: Spool, lines: list[str]) -> None:
@@ -189,21 +208,27 @@ def main(
 
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
+        tailer = LogTailer(log_path, state_dir / "tail.json")
+        assembler = SessionAssembler(
+            idle_flush_s=config.idle_flush_s,
+            max_events=config.max_events,
+            max_payload_bytes=config.max_payload_bytes,
+        )
+        spool = Spool(state_dir / "spool", max_files=config.spool_max_files)
+        poster = Poster(
+            config.ingest_url,
+            config.hmac_secret,
+            timeout_s=config.post_timeout_s,
+            transport=transport,
+        )
+        backoff = Backoff(base_s=config.backoff_base_s, max_s=config.backoff_max_s, sleep=sleep)
     except OSError as exc:
+        # M7 (review fix-1): every collaborator built here lives under `state_dir` (Spool's own
+        # `mkdir`s included) except the network-only Poster/Backoff, which never raise OSError at
+        # construction — so one guard around the whole block is the right scope, not just the
+        # first `mkdir`.
         print(f"error: state dir unreadable: {exc}", file=sys.stderr)
         return 1
-
-    tailer = LogTailer(log_path, state_dir / "tail.json")
-    assembler = SessionAssembler(
-        idle_flush_s=config.idle_flush_s,
-        max_events=config.max_events,
-        max_payload_bytes=config.max_payload_bytes,
-    )
-    spool = Spool(state_dir / "spool", max_files=config.spool_max_files)
-    poster = Poster(
-        config.ingest_url, config.hmac_secret, timeout_s=config.post_timeout_s, transport=transport
-    )
-    backoff = Backoff(base_s=config.backoff_base_s, max_s=config.backoff_max_s, sleep=sleep)
 
     stop_requested = threading.Event()
 
@@ -218,9 +243,7 @@ def main(
     try:
         iterations = 0
         while True:
-            lines = tailer.read_new_lines()
-            _spool_new_payloads(assembler, spool, lines)
-            drain(spool, poster, backoff)
+            result = run_once(tailer, assembler, spool, poster, backoff)
             iterations += 1
 
             if args.once:
@@ -231,7 +254,7 @@ def main(
                 break
             if stop_requested.is_set():
                 break
-            if not lines:
+            if result.lines_read == 0:
                 sleep(config.poll_interval_s)
         return 0
     finally:

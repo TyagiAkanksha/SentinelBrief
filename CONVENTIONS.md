@@ -248,7 +248,7 @@ uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental
 uv run lint-imports
-uv run pytest -q
+uv run pytest -q --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ruff's cache can mask lint errors on freshly created files (observed on m0 task-02); the gate

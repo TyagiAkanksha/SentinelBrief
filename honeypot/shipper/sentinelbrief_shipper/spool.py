@@ -39,6 +39,11 @@ class Spool:
 
         Returns:
             The path of the newly written spool file.
+
+        Raises:
+            OSError: `os.replace` failed (I2, review fix-1) — the half-written `.tmp` file is
+                unlinked first, so a failed `put` never leaves a stray or truncated file behind
+                for `pending()`/`drain` to find.
         """
         pending = self.pending()
         if len(pending) >= self._max_files:
@@ -52,7 +57,11 @@ class Spool:
         dest = self._directory / name
         tmp_path = self._directory / f"{name}.tmp"
         tmp_path.write_bytes(payload)
-        os.replace(tmp_path, dest)
+        try:
+            os.replace(tmp_path, dest)
+        except OSError:
+            tmp_path.unlink(missing_ok=True)
+            raise
         return dest
 
     def pending(self) -> list[Path]:

@@ -15,7 +15,8 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/opt/sentinelbrief-honeypot/data/log
+# The `-` prefix: a missing path must not fail namespace setup (status 226) into a restart loop.
+ReadOnlyPaths=-/opt/sentinelbrief-honeypot/data/log
 PrivateTmp=true
 
 [Install]

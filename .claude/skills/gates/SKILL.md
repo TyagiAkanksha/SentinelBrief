@@ -27,7 +27,7 @@ uv run ruff check --no-cache .  # expected: "All checks passed!"
 uv run ruff format --check .    # expected: "N files already formatted"
 uv run mypy --no-incremental    # expected: "Success: no issues found in N source files"
 uv run lint-imports             # expected: "Contracts: N kept, 0 broken."
-uv run pytest -q                # expected: "N passed, S skipped" — S must be 0 when the export line is set
+uv run pytest -q --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90   # expected: "N passed, S skipped" — S must be 0 when the export line is set
 ```
 
 A non-zero skip count with the export active means a fixture is misnamed or the DB is

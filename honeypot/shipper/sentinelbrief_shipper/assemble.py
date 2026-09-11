@@ -157,9 +157,13 @@ class SessionAssembler:
             `json.dumps(envelope, separators=(",", ":"), sort_keys=True,
             ensure_ascii=False).encode("utf-8")`. Cap 1 keeps `events[:max_events-1] +
             [events[-1]]` when over `max_events`. Cap 2 then halves the kept events (always
-            keeping the first and last) until the serialized size is at or under
-            `max_payload_bytes`, or only 2 events remain. `envelope["shipper"]` is present only
-            when at least one event was dropped by either cap.
+            keeping the first and last) until the serialized size — INCLUDING the `"shipper"`
+            key's own bytes, kept in the envelope throughout so cap 2 never undercounts it (M1,
+            review fix-1) — is at or under `max_payload_bytes`, or only 2 events remain (the
+            documented floor: below 2 events a payload can never validate as a `SessionAlert`,
+            so the byte cap is advisory once the floor is hit — the final bytes may still exceed
+            `max_payload_bytes` at exactly 2 events). `envelope["shipper"]` is present only when
+            at least one event was dropped by either cap.
         """
         total = len(session.events)
         events = list(session.events)
@@ -172,19 +176,21 @@ class SessionAssembler:
             "src_ip": session.src_ip,
             "sensor": session.sensor,
             "events": events,
+            "shipper": {"version": __version__, "truncated_events": total - len(events)},
         }
         payload = self._dumps(envelope)
 
         while len(payload) > self._max_payload_bytes and len(events) > 2:
             events = events[: max(2, len(events) // 2) - 1] + [events[-1]]
             envelope["events"] = events
+            envelope["shipper"]["truncated_events"] = total - len(events)
             payload = self._dumps(envelope)
 
-        truncated = total - len(events)
-        if truncated > 0:
-            envelope["shipper"] = {"version": __version__, "truncated_events": truncated}
-            payload = self._dumps(envelope)
+        if envelope["shipper"]["truncated_events"] > 0:
             self._truncated_sessions += 1
+        else:
+            del envelope["shipper"]
+            payload = self._dumps(envelope)
 
         return payload
 

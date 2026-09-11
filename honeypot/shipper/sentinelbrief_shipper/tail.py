@@ -9,10 +9,13 @@ so a partial write is never delivered as a whole one. The position survives a pr
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,17 +41,23 @@ class LogTailer:
         self._file: BinaryIO | None = None
         self._inode: int | None = None
         self._buffer: bytes = b""
+        self._last_open_errno: int | None = None
 
     def read_new_lines(self) -> list[str]:
         """Return every complete line written to `path` since the last call.
 
         Returns:
-            Complete lines (newline stripped), in file order — `[]` when the file is missing or
-            has grown by less than one full line. A trailing partial line stays buffered until
-            its newline arrives. On rotation (the open file's inode no longer matches `path`'s),
-            this call drains the OLD file's remaining lines and closes it; the new `path` is only
-            opened on the NEXT call. A saved offset beyond a (truncated) file's current size
-            seeks to 0 instead of silently skipping the file's new content.
+            Complete lines (newline stripped), in file order — `[]` when the file is missing,
+            unreadable (e.g. a permission/ownership mismatch between Cowrie and the `shipper`
+            user), or has grown by less than one full line. A trailing partial line stays
+            buffered until its newline arrives. On rotation (the open file's inode no longer
+            matches `path`'s), this call drains the OLD file's remaining lines and closes it; the
+            new `path` is only opened on the NEXT call. A saved offset beyond a (truncated)
+            file's current size seeks to 0 instead of silently skipping the file's new content.
+            An `OSError` opening the file (I1, review fix-1) never propagates — it is logged
+            once per distinct errno (never again until a successful open) and treated the same
+            as a missing file, so the poll loop keeps draining the spool instead of crashing into
+            a restart loop.
         """
         if self._file is not None:
             try:
@@ -66,7 +75,15 @@ class LogTailer:
         if self._file is None:
             if not self._path.exists():
                 return []
-            self._open_at_saved_offset()
+            try:
+                self._open_at_saved_offset()
+            except OSError as exc:
+                errno = exc.errno if exc.errno is not None else -1
+                if errno != self._last_open_errno:
+                    logger.warning("shipper: log file unreadable errno=%d (will retry)", errno)
+                    self._last_open_errno = errno
+                return []
+            self._last_open_errno = None
 
         return self._drain_open_file()
 

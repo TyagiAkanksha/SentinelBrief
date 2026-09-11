@@ -47,6 +47,22 @@ EOF
 Not run here: writes a root-owned file with a real secret value — this must only ever happen in
 the owner's own SSM session on the honeypot host, never in an agent transcript or this repo.
 
+The env file above holds only the two required variables. Every other `SHIPPER_*` tunable
+(`ShipperConfig`) takes its documented default unless also set in that same file:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHIPPER_LOG_PATH` | `/opt/sentinelbrief-honeypot/data/log/cowrie.json` | The Cowrie JSON log to tail. |
+| `SHIPPER_STATE_DIR` | `/var/lib/sentinelbrief-shipper` | Tail position, spool, and `spool/dead/`. |
+| `SHIPPER_IDLE_FLUSH_S` | `900` | Ship a never-closed session after this many idle seconds. |
+| `SHIPPER_MAX_EVENTS` | `2000` | Per-session event cap (floor 2 — below that no payload can ever validate). |
+| `SHIPPER_MAX_PAYLOAD_BYTES` | `1500000` | Serialized payload byte cap; must stay below `INGEST_MAX_BODY_BYTES` and Caddy's 2 MB. |
+| `SHIPPER_POST_TIMEOUT_S` | `10` | Per-POST HTTP timeout. |
+| `SHIPPER_BACKOFF_BASE_S` | `2` | Delay before the first retry after a failed POST; doubles per consecutive failure. |
+| `SHIPPER_BACKOFF_MAX_S` | `300` | Cap on the retry delay. |
+| `SHIPPER_SPOOL_MAX_FILES` | `10000` | Disk-protection cap; the OLDEST spooled payload is dropped once exceeded. |
+| `SHIPPER_POLL_INTERVAL_S` | `1` | Sleep between polls when the log has no new complete line. |
+
 Install and start the unit:
 
 ```bash
