@@ -96,7 +96,9 @@ async def get_alert_for_update(session: AsyncSession, alert_id: uuid.UUID) -> Al
     Blocks while another transaction holds the row lock; the lock lives until this session's
     commit or rollback. `worker.triage.TriagePipeline.triage_attempt` holds it for a whole triage
     attempt (m5 task-04, PRD §6.1 idempotency) so a concurrent duplicate run waits for the truth
-    instead of racing it — a blocking lock, never `SKIP LOCKED`/`NOWAIT`.
+    instead of racing it — a blocking lock, never `SKIP LOCKED`/`NOWAIT`. The row is re-populated
+    from the locked read, so a stale identity-map copy in the caller's session cannot decide
+    anything (m5 task-04 fix-1, review I3).
 
     Args:
         session: The request/job-scoped `AsyncSession`.
@@ -109,7 +111,12 @@ async def get_alert_for_update(session: AsyncSession, alert_id: uuid.UUID) -> Al
         NotFoundError: When no row with `alert_id` exists.
     """
     row = (
-        await session.execute(select(AlertRow).where(AlertRow.id == alert_id).with_for_update())
+        await session.execute(
+            select(AlertRow)
+            .where(AlertRow.id == alert_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one_or_none()
     if row is None:
         raise NotFoundError(f"alert {alert_id} not found")

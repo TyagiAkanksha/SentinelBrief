@@ -454,8 +454,8 @@ class TriagePipeline:
             await session.rollback()
             logger.info("triage attempt skipped alert_id=%s status=%s", alert_id, status)
             return AttemptResult(status="skipped", verdict_id=None, outcome=None)
-        alert = SessionAlert.model_validate(row.raw)
         try:
+            alert = SessionAlert.model_validate(row.raw)
             outcome = await self.run(alert, session=session)
             verdict_id = await persist_verdict(
                 session,
