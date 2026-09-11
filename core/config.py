@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr = SecretStr("")
     llm_base_url: str = "https://api.openai.com/v1"
     llm_json_mode: Literal["json_object", "json_schema"] = "json_object"
+    llm_timeout_s: Annotated[float, Field(gt=0)] = 60.0
+    """Per-request HTTP timeout for one LLM call, in seconds (the SDK retries up to 2 times inside
+    one `complete_*` call, so one call can take up to 3× this). Size `TRIAGE_ATTEMPT_TIMEOUT_S`
+    above the tool loop's worst case: (TOOL_LOOP_MAX_ITER + 4) calls × this value is the
+    theoretical bound; the defaults (10 × 60 s vs 100 s) rely on the attempt deadline cutting a
+    pathological loop, which is the intended backstop (M5 ruling R15)."""
     cheap_model: str = ""
     strong_model: str = ""
     escalate_severity_gte: Annotated[int, Field(ge=1, le=5)] = 4

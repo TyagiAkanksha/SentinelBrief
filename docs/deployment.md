@@ -49,12 +49,18 @@ Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST─
 
 Secret-bearing values live as SSM `SecureString` parameters under `/sentinelbrief/`:
 `DATABASE_URL`, `LLM_API_KEY`, `INGEST_HMAC_SECRET`, `ADMIN_TOKEN`, `ABUSEIPDB_API_KEY`
-(optional), `MAXMIND_LICENSE_KEY` (deploy-time only — used to fetch the GeoLite2 `.mmdb` into a
-volume; the file itself is never committed or baked into an image). The owner writes them from
-their own terminal; the instance role reads + decrypts them. On the box,
-`/opt/sentinelbrief/fetch-secrets.sh` renders them into `/opt/sentinelbrief/.env` (mode 600; prints
-only a count, never a value). All **non-secret pinned values** (`ENVIRONMENT=production`,
-`CORS_ORIGINS`, model ids, thresholds, `REDIS_URL`, `API_URL`) live in the production compose file.
+(optional), `POSTGRES_PASSWORD`, `MAXMIND_LICENSE_KEY` (deploy-time only — used to fetch the
+GeoLite2 `.mmdb` into a volume; the file itself is never committed or baked into an image). The
+owner writes them from their own terminal; the instance role reads + decrypts them. On the box,
+`/opt/sentinelbrief/fetch-secrets.sh` renders **both** files: the api/worker secrets into
+`/opt/sentinelbrief/.env`, and `POSTGRES_PASSWORD` alone into its own
+`/opt/sentinelbrief/.env.postgres` (both mode 600; prints only counts, never a value). All
+**non-secret pinned values** (`ENVIRONMENT=production`, `CORS_ORIGINS`, model ids, thresholds,
+`REDIS_URL`, `API_URL`) live in the production compose file (`REDIS_URL` is a non-secret here — no
+password on the compose network — even though `Settings` types it `SecretStr`). Caddy's
+`request_body { max_size 2MB }` (`infra/deploy/prod/Caddyfile`) parses to the same 2,000,000 bytes
+as `INGEST_MAX_BODY_BYTES` and is enforced first, on wire bytes, before the api's own check ever
+runs — "outer bound" means enforced first, not larger; never raise the app cap above it.
 `infra/deploy/env-checklist.md` (M6) is the authority on every variable: which service needs it,
 whether it is a secret, where its value comes from.
 
@@ -70,6 +76,12 @@ Deploy/redeploy cycle, via an SSM session:
 3. `docker compose pull && docker compose up -d`.
 4. `docker compose run --rm api uv run alembic upgrade head` when the release carries a migration
    (never at container start).
+
+The GeoLite2 `.mmdb` files are fetched once, deploy-time, as a one-off — never baked into the
+image or run automatically at container start: `MAXMIND_LICENSE_KEY` is read from SSM inline (it
+is never rendered into a file by `fetch-secrets.sh`) and passed only to a throwaway container that
+writes into the `/opt/sentinelbrief/geoip` volume the `api`/`worker` services mount read-only
+(`infra/deploy/prod/README.md` has the exact command).
 
 Images are built locally by `infra/deploy/push_ecr.sh`, tagged `latest` **and** the git short SHA;
 the production compose file pins the **SHA tags**, so a running service can never silently change

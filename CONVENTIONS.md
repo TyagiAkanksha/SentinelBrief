@@ -197,7 +197,9 @@ no contract forbids the import.
   setting has a PRD or `.env.example` default; secrets (`LLM_API_KEY`, `DATABASE_URL`,
   `REDIS_URL`, `INGEST_HMAC_SECRET`, `ADMIN_TOKEN`, `ABUSEIPDB_API_KEY`, `MAXMIND_LICENSE_KEY`) are
   `SecretStr` so a `repr()` in a log line can never leak them; call sites read
-  `.get_secret_value()`.
+  `.get_secret_value()`. `REDIS_URL` is `SecretStr` because a deployed URL MAY carry a password;
+  in this deployment it carries none and is pinned, in plain text, in the production compose file
+  (`infra/deploy/prod/docker-compose.yml`).
 - `Settings()` must construct with **zero** env vars set (that is what keeps `create_app()`
   DB-less). `api/main.py` is the only place that enforces non-empty required values.
 - `MODEL_PRICES_JSON` is a JSON object `{"<model id>": {"input_per_mtok": <usd>, "output_per_mtok":

@@ -416,8 +416,9 @@ Terraform stack live; migration documented.
 - §6.1 step 1: an in-app `Content-Length` guard bounds the ingest request body — a declared
   length over `INGEST_MAX_BODY_BYTES` is `413`, a signed-route request with no usable
   `Content-Length` (e.g. chunked) is `411` — both checked before the HMAC signature ever reads a
-  body byte (m6 task-02; the prod Caddyfile's own 2 MB `max_size` is the outer, on-the-wire
-  bound, task-03).
+  body byte (m6 task-02; the prod Caddyfile's own 2 MB `max_size` (task-03) parses to the SAME
+  2,000,000 bytes, not a larger value — it is the "outer bound" only in the sense that it is
+  enforced first, on wire bytes, before this app-level check ever runs).
 
 **v1.4 — 2026-09-10.** M5 build-time amendment; no scope change.
 - §6.2: the job's own retry count is named explicitly as `TRIAGE_JOB_MAX_TRIES` = 3 total attempts

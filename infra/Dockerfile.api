@@ -24,6 +24,7 @@ COPY evals ./evals
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 COPY honeypot/assets.yaml ./honeypot/assets.yaml
+COPY scripts ./scripts
 
 # Install the project itself. `uv sync` here installs the project editable against /app, so the
 # runtime stage must copy the venv AND the sources it points at (see the COPY lines below).
@@ -43,6 +44,7 @@ COPY --from=builder --chown=appuser:appuser /app/evals ./evals
 COPY --from=builder --chown=appuser:appuser /app/alembic ./alembic
 COPY --from=builder --chown=appuser:appuser /app/alembic.ini ./alembic.ini
 COPY --from=builder --chown=appuser:appuser /app/honeypot ./honeypot
+COPY --from=builder --chown=appuser:appuser /app/scripts ./scripts
 # The `uv` binary itself (not just the venv it built) so the README-documented migration
 # invocation (`uv run alembic upgrade head`) works in the runtime image too.
 COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv

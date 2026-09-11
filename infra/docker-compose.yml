@@ -36,6 +36,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: on-failure
     logging: *default-logging
 
   api:
@@ -53,6 +54,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: on-failure
     logging: *default-logging
 
   redis:
@@ -67,6 +69,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: on-failure
     logging: *default-logging
 
   worker:
@@ -89,6 +92,7 @@ services:
       timeout: 10s
       start_period: 20s
       retries: 3
+    restart: on-failure
     logging: *default-logging
 
   web:
@@ -106,6 +110,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    restart: on-failure
     logging: *default-logging
 
 volumes:
