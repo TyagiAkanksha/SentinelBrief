@@ -330,7 +330,7 @@ Hosting (v1.1): the dashboard is a container on the app host served by Caddy at 
 **Phase 1 (ship this first)** — the same single-host topology AdvisorDesk runs in production; `docs/deployment.md` is the doc of record and is finalized at M6:
 - App host: one EC2 instance (t3.small to start, ~$15/mo; t3.medium if the six containers are memory-bound), Amazon Linux 2023, inbound 80/443 only, no SSH — management through SSM Session Manager. `docker compose` on the box: `caddy`, `web`, `api`, `worker`, `postgres`, `redis`. Images built locally, pushed to ECR, tagged with the git SHA; the production compose file pins those tags and is committed as a synced copy under `infra/deploy/prod/`.
 - Secrets: SSM Parameter Store under `/sentinelbrief/*`, rendered on the box into a root-only `.env` by `fetch-secrets.sh` (prints a count, never a value). Non-secret pinned values live in the production compose file.
-- Data: Postgres on a named volume; nightly `pg_dump | gzip` to an S3 bucket with a 30-day lifecycle, from a cron container. Log rotation (`json-file`, `max-size 10m`, `max-file 3`) on every service from day one — honeypot traffic is chatty.
+- Data: Postgres on a named volume; nightly `pg_dump | gzip` to an S3 bucket with a 30-day lifecycle, from a host systemd timer. Log rotation (`json-file`, `max-size 10m`, `max-file 3`) on every service from day one — honeypot traffic is chatty.
 - Honeypot: cheapest instance in a **separate VPC or account**, SSM-managed with no `sshd` (§10.9); Cowrie in Docker on port 22; shipper as a systemd unit that tails the Cowrie JSON log, assembles sessions, signs and POSTs on session close, and spools locally when the ingest URL is unreachable. Outbound: 443 to the ingest host and the SSM endpoints only.
 - Frontend: the `web` container behind Caddy (no Vercel — v1.1). `NEXT_PUBLIC_API_URL` is baked at image build time, so the API's public origin changing means a rebuild.
 - Domain: `sentinelbrief.<yourdomain>` → web, `api.sentinelbrief.<yourdomain>` → api; Cloudflare DNS-only (grey-cloud) A records to the instance's Elastic IP so SSE is not buffered; Caddy obtains Let's Encrypt certificates automatically.
@@ -419,6 +419,8 @@ Terraform stack live; migration documented.
   body byte (m6 task-02; the prod Caddyfile's own 2 MB `max_size` (task-03) parses to the SAME
   2,000,000 bytes, not a larger value — it is the "outer bound" only in the sense that it is
   enforced first, on wire bytes, before this app-level check ever runs).
+- §11 Data bullet: nightly `pg_dump | gzip` to S3 from a host systemd timer using the
+  instance role (was: a container on a cron schedule) (m6 task-04).
 
 **v1.4 — 2026-09-10.** M5 build-time amendment; no scope change.
 - §6.2: the job's own retry count is named explicitly as `TRIAGE_JOB_MAX_TRIES` = 3 total attempts

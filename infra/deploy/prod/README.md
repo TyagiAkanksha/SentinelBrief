@@ -62,6 +62,30 @@ MAXMIND_LICENSE_KEY="$(aws ssm get-parameter --region us-east-1 --name \
   uv run python scripts/fetch_geoip.py --out-dir infra/geoip
 ```
 
+## Backups
+
+Nightly `pg_dump | gzip` → S3 runs from a host systemd timer, not a compose service
+(`infra/deploy/database.md` is the full doc — restore procedure, rehearsal, retention decision).
+Install once, on the box:
+
+```sh
+cp backup.sh restore-rehearsal.sh backup.env /opt/sentinelbrief/
+chmod 700 /opt/sentinelbrief/backup.sh /opt/sentinelbrief/restore-rehearsal.sh
+chmod 600 /opt/sentinelbrief/backup.env
+cp sentinelbrief-backup.service sentinelbrief-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sentinelbrief-backup.timer
+```
+
+Run one now to confirm it works end to end (before the 48 h soak starts):
+
+```sh
+systemctl start sentinelbrief-backup.service && journalctl -u sentinelbrief-backup -n 5
+```
+
+Local copies (the 3 newest) live under `/var/backups/sentinelbrief/`; older ones are pruned by the
+script and, in S3, by the 30-day lifecycle rule (`infra/deploy/s3-lifecycle.json`).
+
 ## Secrets rotation
 
 1. Update the parameter value in SSM.

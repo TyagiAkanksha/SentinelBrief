@@ -35,6 +35,7 @@ mkdir -p /usr/local/lib/docker/cli-plugins
 curl -fsSL https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-$(uname -m) -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 systemctl disable --now sshd && systemctl mask sshd
+echo 'SystemMaxUse=200M' >> /etc/systemd/journald.conf && systemctl restart systemd-journald
 mkdir -p /opt/sentinelbrief-honeypot/etc /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 999:999 /opt/sentinelbrief-honeypot/data
 useradd --system --no-create-home --shell /sbin/nologin shipper
 usermod -aG docker ssm-user
@@ -56,6 +57,10 @@ Notes on each line:
 - `systemctl disable --now sshd && systemctl mask sshd` — port 22 must be free before Cowrie
   starts; masking prevents anything from re-enabling `sshd` later. SSM Agent is preinstalled on
   AL2023 and needs no port.
+- `echo 'SystemMaxUse=200M' >> /etc/systemd/journald.conf && systemctl restart systemd-journald`
+  — bounds the journal's on-disk size before Cowrie starts producing chatty traffic
+  (`infra/deploy/database.md`'s "Logs" footnote observes this budget with `journalctl
+  --disk-usage`).
 - `mkdir -p /opt/sentinelbrief-honeypot/etc /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R
   999:999 /opt/sentinelbrief-honeypot/data` — the `etc/` directory holds the copied
   `cowrie.cfg` (step 4); without it, Docker creates a root-owned directory at the missing bind

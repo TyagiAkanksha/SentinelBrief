@@ -104,9 +104,12 @@ exhaustion stay `429`.
 
 - Postgres data lives on a named volume on the instance's EBS root (or a dedicated EBS volume if
   growth warrants it).
-- A `backup` service (small `postgres:16` image with the AWS CLI, or a host cron) runs nightly
-  `pg_dump | gzip` and uploads to an S3 bucket with a 30-day lifecycle rule. The restore procedure
-  (`gunzip | psql`) is documented in `infra/deploy/database.md` at M6 and rehearsed once.
+- A host systemd timer, `sentinelbrief-backup.timer` (03:15 UTC, `Persistent=true`), runs
+  `/opt/sentinelbrief/backup.sh` nightly: `pg_dump | gzip` through the running compose `postgres`
+  service, uploaded to an S3 bucket with a 30-day lifecycle rule using the instance role — no
+  extra image, no AWS credentials in a container. The restore procedure (`gunzip | psql`) and the
+  rehearsal script (`restore-rehearsal.sh`) are documented in `infra/deploy/database.md` at M6 and
+  rehearsed once.
 - Honeypot traffic is voluminous. A retention policy for `alerts.raw` (e.g. keep 90 days of raw
   payloads, keep verdicts forever) is an owner decision recorded in `infra/deploy/database.md`
   before the 48 h M6 soak, not after the disk fills.

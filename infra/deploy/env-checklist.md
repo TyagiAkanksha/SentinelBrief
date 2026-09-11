@@ -115,6 +115,15 @@ is config, not env; `caddy_data`/`caddy_config` are named volumes for its ACME s
 `honeypot/shipper/README.md` is the shipper's own reference: its `ShipperConfig` table is the
 authority on every `SHIPPER_*` default and meaning, kept in sync with `ShipperConfig` itself.
 
+## Host (root) — backup timer
+
+Read by `/opt/sentinelbrief/backup.sh` and `/opt/sentinelbrief/restore-rehearsal.sh`, run as root
+by `sentinelbrief-backup.timer` — outside the compose network, no container `env_file` involved.
+
+| Variable | Secret? | Where it is set | Value / source |
+|---|---|---|---|
+| `BACKUP_S3_BUCKET` | N | `/opt/sentinelbrief/backup.env` (committed, `infra/deploy/prod/backup.env`) | `sentinelbrief-backups-181040156847` — the real S3 bucket name; instance-specific but not a credential (`infra/deploy/database.md`). |
+
 ## Dev/test only
 
 | Variable | Secret? | Where it is set | Value / source |

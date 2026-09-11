@@ -1,0 +1,1 @@
+{"Rules": [{"ID": "expire-postgres-dumps-30d", "Status": "Enabled", "Filter": {"Prefix": "postgres/"}, "Expiration": {"Days": 30}, "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 2}}]}

@@ -3,6 +3,8 @@
 *.env
 !.env.example
 .env.local
+# backup.env carries only a non-secret bucket name (infra/deploy/database.md) — committed
+!infra/deploy/prod/backup.env
 
 # personal notes — never in the public repo
 /SentinelBrief-INDEX.md
