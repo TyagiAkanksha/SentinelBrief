@@ -7,13 +7,16 @@ Protocol so the free tier's daily quota is spent once per IP per day; a failure 
 The AbuseIPDB account is the owner's own (PRD §13) — until `ABUSEIPDB_API_KEY` is set this tool
 always answers `unavailable("no_api_key")`, logged once per instance.
 
-Account-wide quota back-off (m5 task-05): AbuseIPDB's free tier is a single daily quota shared by
-every IP looked up, not a per-IP limit. A `429` therefore sets ONE negative cache key (`QUOTA_KEY`,
-no IP in it) for `quota_backoff_s` seconds; while that key exists, every lookup for any IP answers
+Account-wide quota back-off (m5 task-05; ordering fixed at fix-1, review I1/PC2): AbuseIPDB's free
+tier is a single daily quota shared by every IP looked up, not a per-IP limit. A `429` therefore
+sets ONE negative cache key (`QUOTA_KEY`, no IP in it) for `quota_backoff_s` seconds; while that
+key exists, every lookup for an IP with no warm cache entry of its own answers
 `unavailable("quota_exceeded")` without making an HTTP call, so a single `429` cannot burn through
-the rest of the day's calls one rejected IP at a time. `quota_backoff_s=0` disables the back-off
-entirely (each `429` is independent, as before this task). The per-ip success key is never written
-on any failure path, including this one.
+the rest of the day's calls one rejected IP at a time. The flag is checked AFTER the per-ip cache
+read, not before: a warm per-ip entry costs no quota and is served even during the back-off; only
+misses are suppressed. `quota_backoff_s=0` disables the back-off entirely (each `429` is
+independent, as before this task). The per-ip success key is never written on any failure path,
+including this one.
 
 The tool never raises (the "tools never raise" contract, `worker/tools/base.py`): a bad address,
 a missing key, a quota/auth/other HTTP error, a transport failure, or a malformed response body
@@ -122,9 +125,6 @@ class IpReputationTool:
                 self._warned_no_api_key = True
             return unavailable("no_api_key")
 
-        if self._quota_backoff_s > 0 and await self._cache.get(QUOTA_KEY) is not None:
-            return unavailable("quota_exceeded")
-
         cache_key = CACHE_KEY_PREFIX + ip
         cached = await self._cache.get(cache_key)
         if cached is not None:
@@ -135,6 +135,9 @@ class IpReputationTool:
             if isinstance(payload, dict):
                 return {**payload, "cached": True}
             logger.debug("lookup_ip_reputation cache hit was not a JSON object; treating as a miss")
+
+        if self._quota_backoff_s > 0 and await self._cache.get(QUOTA_KEY) is not None:
+            return unavailable("quota_exceeded")
 
         try:
             response = await self._http.get(

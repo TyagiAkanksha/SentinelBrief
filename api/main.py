@@ -18,7 +18,6 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from api.factory import create_app
-from core.cache import RedisTTLCache
 from core.config import Settings, require_nonempty
 from core.db import make_engine, make_session_factory
 from core.queue import enqueue_triage, make_redis
@@ -49,10 +48,12 @@ async def enqueue(alert_id: uuid.UUID) -> None:
     await enqueue_triage(redis_client, alert_id)
 
 
+# No `cache=` kwarg (m5 task-05 fix-1, review I2): a public GET route must never be able to grow
+# a Redis instance that also holds the ARQ queue (PRD §10.1) — `create_app()`'s own bounded
+# `InMemoryTTLCache` default stays the production list/stats cache.
 app: FastAPI = create_app(
     session_factory=session_factory,
     settings=settings,
     enqueue=enqueue,
     redis=redis_client,
-    cache=RedisTTLCache(redis_client),
 )

@@ -20,3 +20,6 @@ Format: one bullet per idea, with the task that surfaced it in a trailing parent
 - Bound the number of tool calls the model can request inside one loop turn (a
   `TOOL_CALLS_PER_TURN_MAX` setting; excess calls recorded as `unavailable("turn_budget_exceeded")`)
   — today only the turn count is capped (m4 N-M3, with M8's token budget).
+- `core.cache.RedisTTLCache` logs one WARNING per failed `get`/`set`; gate it behind a
+  once-per-transition flag (first failure after a success, and recovery) so a Redis outage does
+  not flood the worker log (m5 task-05 M2).

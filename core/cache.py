@@ -1,11 +1,12 @@
 """`TTLCache` — the in-process cache seam `api/routes/alerts_read.py` reads list/stats responses
 through (PRD §8's 15 s / 60 s cache TTLs; M2 final review, plan defect 12) — m3 task-02.
 
-`RedisTTLCache` (m5 task-05) is the shared-across-processes implementation: it backs the api's
-list/stats cache (`api/main.py`) and the worker's 24 h AbuseIPDB reputation cache
-(`worker/main.py::startup`), both under the wire-key prefix `REDIS_CACHE_KEY_PREFIX`. A Redis
-failure on `get` is a miss and on `set` is a no-op — neither the read routes nor
-`lookup_ip_reputation` can raise because Redis blinked.
+`RedisTTLCache` (m5 task-05; fix-1 review I2) is the shared-across-processes implementation: it
+backs ONLY the worker's 24 h AbuseIPDB reputation cache (`worker/main.py::startup`), under the
+wire-key prefix `REDIS_CACHE_KEY_PREFIX`. The api's list/stats cache stays the bounded
+`InMemoryTTLCache` — a public GET route must never be able to grow a Redis instance that also
+holds the ARQ queue (PRD §10.1). A Redis failure on `get` is a miss and on `set` is a no-op —
+`lookup_ip_reputation` can never raise because Redis blinked.
 """
 
 from __future__ import annotations

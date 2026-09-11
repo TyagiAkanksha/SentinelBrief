@@ -30,10 +30,13 @@ PRD §4 fixes the top-level layout. Inside the Python packages:
 
 ```
 core/
+  cache.py         # TTLCache Protocol; InMemoryTTLCache (api response cache, bounded); RedisTTLCache (worker reputation cache)
+  cli.py           # UsageError / Parser / fail — the one copy of the CLI presentation helpers
   config.py        # pydantic-settings Settings — the single config surface
   db.py            # async engine / session-factory constructors (wiring, not a request-path layer)
   errors.py        # typed exception family (§4)
   llm.py           # LLMClient Protocol + result/usage types + parse/cost helpers — NO SDK import
+  queue.py         # ARQ job/queue names, enqueue_triage, Redis client factories
   signing.py       # HMAC sign/verify for ingest (shared with the shipper and scripts/)
   models/          # SQLAlchemy ORM rows (pure leaf) — classes carry the `Row` suffix
   schemas/         # Pydantic DTOs: Verdict (PRD §6.5), SessionAlert, ingest/response shapes
@@ -123,8 +126,9 @@ no contract forbids the import.
   enveloped as `422` with location + message only — never the echoed input. Unhandled exceptions
   become a `500` envelope with a generic message; the traceback goes to the log.
 - **Routes contain no `try/except`.** Rollback happens in the session dependency; mapping happens
-  in the registered handlers. One documented carve-out: `GET /healthz` catches database/connection
-  errors to answer `503 {"status": "degraded", ...}` instead of a `500` envelope, because a
+  in the registered handlers. One documented carve-out: `GET /healthz` catches database **and
+  Redis** connection errors — both probes always run and are always reported (`{"status", "db",
+  "redis"}`) — to answer `503 {"status": "degraded", ...}` instead of a `500` envelope, because a
   liveness probe must never look like an application crash. The second carve-out is
   `worker/tools/registry.py::ToolRegistry.execute` (M4, controller ruling Q6): the worker's
   boundary with tool code fed attacker-influenced input catches `Exception` — never

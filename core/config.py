@@ -84,7 +84,8 @@ class Settings(BaseSettings):
     alerts_list_cache_ttl_s: int = 15
     stats_cache_ttl_s: int = 60
     alerts_cache_max_entries: int = 1024
-    """Bound on the in-process list/stats cache; M5's Redis backend uses its own maxmemory."""
+    """Bound on the in-process list/stats response cache — the production cache too: a public
+    route must never grow the shared Redis (M5 task-05 review I2)."""
     tool_result_max_chars: Annotated[int, Field(ge=1)] = 4000
     """Character budget every tool result is truncated to before it is fed back to the model or
     persisted (PRD §6.3, m4 task-01). One backstop for every tool, not a per-tool setting — see
@@ -126,8 +127,9 @@ class Settings(BaseSettings):
     """`maxAgeInDays` sent to AbuseIPDB's `check` endpoint (AbuseIPDB's own default window, m4
     task-04)."""
     abuseipdb_cache_max_entries: Annotated[int, Field(ge=1)] = 4096
-    """Bound on the in-process `lookup_ip_reputation` cache; M5's Redis backend uses its own
-    maxmemory instead (m4 task-04) — the in-process cache is now only the DB-less/test default."""
+    """Bound on the in-process `lookup_ip_reputation` cache used when no Redis is wired
+    (DB-less/test default); the worker's `RedisTTLCache` is bounded by distinct IPs × the 24 h
+    TTL — no Redis `maxmemory` is configured on purpose (the instance also holds the ARQ queue)."""
     abuseipdb_quota_backoff_s: Annotated[int, Field(ge=0)] = 900
     """After an AbuseIPDB `429`, skip the vendor for this many seconds — one account-wide flag
     (PRD §6.3), never per-IP; `0` disables the back-off (m5 task-05)."""
