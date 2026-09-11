@@ -90,10 +90,14 @@ if wrong):
 - **Domain (PRD §13 working assumption):** `sentinelbrief.tyagiakanksha.com` /
   `api.sentinelbrief.tyagiakanksha.com` throughout `infra/deploy/`; the owner confirms at task-05
   step 0; a change is one `sed` over the hits task-03's report lists.
-- **The deploy is an owner checkpoint (task-05 step 7).** Nothing in tasks 01–06 creates a cloud
-  resource or a DNS record; the controller stops after task-05's review with the walkthrough's
-  command list and resumes with task-06 after the owner's go (or an explicit per-session grant
-  to run the `aws` steps from this machine — `aws` is under `ask` in `.claude/settings.json`).
+- **The deploy is controller-run under the owner's explicit grant (2026-09-11: "explicitly
+  allowing you to access aws and dns as needed and do deployments as well"; domain confirmed).**
+  Tasks 01–05 still create no cloud resource while their documents are written and reviewed;
+  task-05 step 7 is then executed by the controller from this machine's AWS CLI credentials
+  (us-east-1), following `infra/deploy/ec2-single-host.md` exactly, with fresh production
+  secrets generated in-shell and never printed, and the two Cloudflare A records added through the
+  dashboard (no API token exists locally) or by the owner on request. Cost if wrong: the
+  resources are small (t3.small + t4g.nano) and every step is reversible by termination.
 
 ## Tasks (briefs written at the M5 gate, 2026-09-11)
 
