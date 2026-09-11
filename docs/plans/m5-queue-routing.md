@@ -28,9 +28,11 @@ with `SELECT … FOR UPDATE`, holds the lock through the LLM/tool loop and the s
 transaction, and returns `skipped` when the row is no longer `pending` (M8's retriage flips it
 back deliberately). Routing lives in `worker/routing.py` as a pure decision plus one tool-less
 strong-model call over the cheap pass's conversation. `verdict.created` is published on Redis
-pub/sub after the commit (M8's SSE consumes it). `core.cache.RedisTTLCache` backs the api's
-list/stats cache and the worker's AbuseIPDB cache behind the M3 `TTLCache` Protocol;
-`api/factory.py` gains `enqueue` and `redis` seams.
+pub/sub after the commit (M8's SSE consumes it). `core.cache.RedisTTLCache` backs the worker's
+AbuseIPDB cache behind the M3 `TTLCache` Protocol (bounded by distinct IPs × the 24 h TTL); the
+api's list/stats cache stays the bounded in-process `InMemoryTTLCache` — a public route must never
+grow the Redis that also holds the queue (task-05 review I2, ruling R14); `api/factory.py` gains
+`enqueue` and `redis` seams.
 
 **Tech Stack:** M4 stack + `arq` 0.28 · `redis` 5 (asyncio) · compose `redis:7-alpine` and
 `worker` services · a dedicated test Redis (`TEST_REDIS_URL`).

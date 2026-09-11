@@ -67,7 +67,9 @@ re-globbing the fixture order.
   `.env.example`, `worker/triage_one.py`, `evals/run.py`, `scripts/seed_dev.py`,
   `alembic/env.py`, `api/openapi.json` + `web/src/types/generated/*` (the `HealthResponse`
   DTO gains `redis` — same commit), `SUGGESTIONS.md` (drop the two entries this task lands:
-  the CLI helper and the 429 negative cache), `README.md` (`/healthz` example body)
+  the CLI helper and the 429 negative cache; fix-1 adds the once-per-transition WARNING idea),
+  `README.md` (`/healthz` example body), `CONVENTIONS.md` (§4: the `/healthz` carve-out's Redis
+  branch; §2: `cli.py`/`cache.py`/`queue.py` in the `core/` map — review M1/M4, PC1)
 
 ## Interfaces
 
@@ -103,8 +105,12 @@ re-globbing the fixture order.
   #   redis: app.state.redis is None -> "unconfigured"; await redis.ping() raises RedisError | OSError -> "error"; else "ok"
   #   status: "ok" iff db == "ok" and redis == "ok" -> 200; else 503. Body always carries all three keys.
 
-  # api/main.py — create_app(..., redis=redis_client, cache=RedisTTLCache(redis_client))
+  # api/main.py — create_app(..., redis=redis_client)   — NO cache= kwarg: the api keeps the factory's bounded InMemoryTTLCache
+  #   (review I2, ruling R14: a public route must never grow the shared Redis; 15 s / 60 s TTLs gain nothing from Redis; the
+  #   briefing draft wired RedisTTLCache here and was reverted in fix-1)
   # worker/main.py::startup — cache = RedisTTLCache(ctx["redis"]); pipeline = TriagePipeline.from_settings(s, llm=llm, http=ctx["http"], cache=cache)
+  #   (the ONLY RedisTTLCache consumer; bounded by distinct IPs × the 24 h TTL; no Redis maxmemory is configured on purpose —
+  #   the instance also holds the ARQ queue and ARQ's job/result keys carry expiries, so volatile-lru could evict queued jobs)
   #   (ARQ has already put its pool at ctx["redis"] when on_startup runs — task-01's Context)
 
   # worker/tools/ip_reputation.py
@@ -112,8 +118,9 @@ re-globbing the fixture order.
   class IpReputationTool:
       def __init__(self, *, api_key, http, cache, cache_ttl_s, max_age_days, quota_backoff_s: int = 0) -> None    # quota_backoff_s < 0 -> ValueError
       async def run(...):
-          # after the key check and BEFORE the per-ip cache read: if self._quota_backoff_s > 0 and await self._cache.get(QUOTA_KEY) is not None:
-          #     return unavailable("quota_exceeded")                                   (no HTTP call)
+          # after the key check and AFTER the per-ip cache read (a warm entry costs no quota and is served even during the
+          # back-off — review I1/PC2, ruling R14; the briefing draft had the flag BEFORE the read): if self._quota_backoff_s > 0 and
+          # await self._cache.get(QUOTA_KEY) is not None: return unavailable("quota_exceeded")      (no HTTP call for a miss)
           # on a 429: if self._quota_backoff_s > 0: await self._cache.set(QUOTA_KEY, b"1", self._quota_backoff_s); return unavailable("quota_exceeded")
           # The per-ip success key is never written on any failure (unchanged). The tool still never wraps cache calls itself:
           # RedisTTLCache guarantees get/set never raise; InMemoryTTLCache raises only on a programming error (ttl <= 0).
@@ -147,7 +154,10 @@ re-globbing the fixture order.
 | custom prefix | `tests/test_redis_cache.py::test_custom_key_prefix` | `key_prefix="t:"` → wire key `t:k` |
 | healthz matrix | `tests/test_health.py::test_healthz_{unconfigured_both, ok_when_db_and_redis_answer, 503_when_redis_down, 503_when_db_down}` | DB-less `create_app()` → 503 `{"status": "degraded", "db": "unconfigured", "redis": "unconfigured"}`; `create_app(session_factory=db_session_factory, redis=arq_redis)` → 200 all ok; redis at `127.0.0.1:1` → 503 `{"…", "db": "ok", "redis": "error"}`; DB at `127.0.0.1:1` + real redis → 503 `{"db": "error", "redis": "ok"}` |
 | ping timeout consumed | `tests/test_health.py::test_healthz_redis_error_answers_within_the_socket_timeout` | `make_redis("redis://10.255.255.1:6379/0", socket_timeout_s=0.5)` (a non-routable address: connect must time out, not be refused) → 503 within 3 s wall clock (`perf_counter`; generous bound, pins that the timeout is applied at all — rule 7) |
-| api wiring | `tests/test_api_main.py::test_api_main_installs_a_redis_cache` | `isinstance(module.app.state.cache, RedisTTLCache)` |
+| api wiring (review I2, fix-1) | `tests/test_api_main.py::test_api_main_keeps_the_bounded_in_process_response_cache` | `isinstance(module.app.state.cache, InMemoryTTLCache)` and its bound equals `module.settings.alerts_cache_max_entries` (PRD §10.1: a public route never grows the shared Redis) |
+| warm entry during back-off (review I1, fix-1) | `tests/test_ip_reputation_tool.py::test_warm_per_ip_entry_is_served_during_quota_backoff` | A cached (200), B arms the flag (429), A again → the cached payload with `cached: True`, handler count 2 |
+| miss during back-off (fix-1) | `…::test_cache_miss_during_quota_backoff_makes_no_request` | C (never seen) → `quota_exceeded`, handler count still 2 |
+| key check first (review M21, fix-1) | `…::test_no_api_key_beats_the_quota_flag` | unkeyed tool with the flag pre-seeded → `no_api_key`, zero requests |
 | worker wiring | `tests/test_worker_main.py::test_startup_installs_a_redis_backed_reputation_cache` | `ctx["redis"] = arq_redis` before `startup(ctx)` → the reputation tool's `_cache` is a `RedisTTLCache` (private attribute, accepted pattern) |
 | hit does no DB work | `tests/test_cache_hit_no_db.py::test_list_and_stats_cache_hits_check_out_no_connection` | `event.listen(db_engine.sync_engine, "checkout", counter)`; GET `/api/v1/alerts` twice and `/api/v1/stats` twice through `create_app(session_factory=…, cache=InMemoryTTLCache())`; checkouts after the first pair `== n`, after the second pair still `== n` (M3 N-M3). Mutation: delete `cache.get` in `_cached_json` → the count grows |
 | quota back-off | `tests/test_ip_reputation_tool.py::test_429_sets_the_quota_flag_and_later_lookups_skip_the_network` | `quota_backoff_s=600`: ip A → handler returns 429 → `quota_exceeded`; ip B (different, rule 5) → `quota_exceeded` with the handler count still `1`; recording cache saw `set("abuseipdb:quota_exceeded", b"1", 600)` and NO set under `abuseipdb:<ip>` |
