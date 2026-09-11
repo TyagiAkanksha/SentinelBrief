@@ -38,6 +38,14 @@ new `test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call` pin
 branch (both terminal statuses, plus the `triage_alert` "skipped" -> "triaged" mapping), and
 `test_no_pending_orm_state_before_the_tool_loop` re-proves the M4 task-05 "clean identity map"
 guarantee now that the loaded row also carries a lock.
+
+m5 task-04 fix-1 (review I1, M1) adds: a lock-release assertion appended to
+`test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call` (the skip branch's own
+`rollback()` releases the lock — deleting it is a killed mutant, not a silent hole), and
+`test_triage_attempt_releases_the_lock_when_the_raw_payload_no_longer_validates`, which pins that
+a malformed `raw` payload's `pydantic.ValidationError` still releases the lock (today it escapes
+`triage_attempt` BEFORE the `try:` that owns the rollback, so this is RED until Part B moves the
+`SessionAlert.model_validate` call inside it).
 """
 
 from __future__ import annotations
@@ -47,8 +55,9 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
+import pydantic
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.errors import LLMCallError, NotFoundError, VerdictValidationError
@@ -387,6 +396,15 @@ async def test_triage_attempt_skips_an_already_triaged_alert_without_an_llm_call
     status = await pipeline.triage_alert(db_session, triaged_id)
     assert status == "triaged"
 
+    # The skip released the lock with its own rollback (m5 task-04): a fresh session's
+    # `get_alert_for_update` must return promptly, not hang behind the skipped attempt's lock.
+    async with db_session_factory() as lock_check_session:
+        locked_row = await asyncio.wait_for(
+            get_alert_for_update(lock_check_session, failed_id), timeout=2.0
+        )
+        assert locked_row.id == failed_id
+        await lock_check_session.commit()
+
 
 class SessionSpyTool:
     """Records the triage session's ORM/transaction state the instant a tool executes (m5
@@ -438,3 +456,44 @@ async def test_no_pending_orm_state_before_the_tool_loop(db_session: AsyncSessio
     assert spy.dirty == set()
     assert spy.new == set()
     assert spy.in_transaction is True
+
+
+async def test_triage_attempt_releases_the_lock_when_the_raw_payload_no_longer_validates(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """m5 task-04 fix-1 (review M1): `SessionAlert.model_validate(row.raw)` must run INSIDE the
+    attempt's own `try:` so a malformed payload's `pydantic.ValidationError` still hits the
+    `except BaseException: rollback(); raise` that owns the lock -- RED today (the validation call
+    sits before the `try:`, so the lock lives until the session itself closes and the fresh
+    session's `get_alert_for_update` below times out).
+    """
+    alert_id = await seed_alert(db_session, "alert4", session_id="malformed-raw-001")
+    await db_session.commit()
+
+    async with db_session_factory() as corrupt_session:
+        await corrupt_session.execute(
+            update(AlertRow).where(AlertRow.id == alert_id).values(raw={"source": "cowrie"})
+        )
+        await corrupt_session.commit()
+
+    fake = FakeLLMClient([])
+    pipeline = TriagePipeline(llm=fake, model="fake-model", prompt_version="triage-v1")
+
+    with pytest.raises(pydantic.ValidationError):
+        await pipeline.triage_attempt(db_session, alert_id)
+
+    async with db_session_factory() as lock_check_session:
+        locked_row = await asyncio.wait_for(
+            get_alert_for_update(lock_check_session, alert_id), timeout=2.0
+        )
+        assert locked_row.id == alert_id
+        await lock_check_session.commit()
+
+    async with db_session_factory() as fresh:
+        row = await fresh.get(AlertRow, alert_id)
+        assert row is not None
+        assert row.status == "pending"
+        verdict_count = await fresh.scalar(
+            select(func.count()).select_from(VerdictRow).where(VerdictRow.alert_id == alert_id)
+        )
+    assert verdict_count == 0

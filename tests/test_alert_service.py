@@ -10,6 +10,11 @@ m5 task-04 (PRD §6.1 idempotency, §12 M5) adds `get_alert_for_update`: the blo
 FOR UPDATE` `worker.triage.TriagePipeline.triage_attempt` holds for the whole attempt, so a
 concurrent duplicate run waits for the truth (this transaction's commit or rollback) instead of
 racing it, per the M5 spine's "row lock, not SKIP LOCKED" ruling.
+
+m5 task-04 fix-1 (review I3) adds `test_get_alert_for_update_refreshes_a_stale_identity_map_row`:
+without `populate_existing=True`, `get_alert_for_update` can hand back a row's STALE
+identity-map copy instead of the one it just locked, when the caller's session already holds an
+older copy of that row — RED until Part B lands the fix.
 """
 
 from __future__ import annotations
@@ -131,3 +136,30 @@ async def test_get_alert_for_update_blocks_until_the_holder_commits(
     finally:
         if not task.done():
             task.cancel()
+
+
+async def test_get_alert_for_update_refreshes_a_stale_identity_map_row(
+    db_session: AsyncSession, db_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """m5 task-04 fix-1 (review I3): without `populate_existing=True`, a `SELECT ... FOR UPDATE`
+    over a row already cached in the session's identity map returns that STALE copy instead of
+    the freshly locked one -- SQLAlchemy's default identity-map behavior, not a locking bug. RED
+    until Part B adds `.execution_options(populate_existing=True)`.
+    """
+    alert = load_alert(session_id="stale-identity-map-001")
+    result = await insert_alert(db_session, alert)
+    await db_session.commit()
+
+    row = await get_alert(db_session, result.alert_id)  # caches the row as "pending" in session A
+    assert row.status == "pending"
+    await db_session.commit()
+
+    async with db_session_factory() as session_b:
+        await set_alert_status(session_b, result.alert_id, "triaged")
+        await session_b.commit()
+
+    try:
+        refreshed = await get_alert_for_update(db_session, result.alert_id)
+        assert refreshed.status == "triaged"  # not the stale "pending" cached above
+    finally:
+        await db_session.rollback()
