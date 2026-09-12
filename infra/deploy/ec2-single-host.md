@@ -130,10 +130,11 @@ aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --protocol tcp -
 aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --ip-permissions 'IpProtocol=tcp,FromPort=443,ToPort=443,Ipv6Ranges=[{CidrIpv6=::/0}]'
 ```
 
-`--cidr-ipv6` is not a valid AWS CLI option on the `secgroupsimplify` shorthand (task-05 fix-1,
-review I1 — `Unknown options: --cidr-ipv6` against the installed CLI); the two IPv6 rules above
-use the long-form `--ip-permissions` instead, verified with `--dry-run` against a real security
-group in this account: `DryRunOperation: Request would have succeeded` for both.
+There is no IPv6 CIDR shorthand flag on the `secgroupsimplify` form of this command (task-05
+fix-1, review I1 — the AWS CLI rejects a naturally-guessed flag name here with `Unknown options`);
+the two IPv6 rules above use the long-form `--ip-permissions` instead, verified with `--dry-run`
+against a real security group in this account: `DryRunOperation: Request would have succeeded`
+for both.
 
 Confirm the AL2023 x86_64 AMI alias resolves (read-only — safe to run any time):
 
@@ -348,8 +349,8 @@ aws ec2 revoke-security-group-egress --group-id <hp-sg-id> --protocol -1 --port 
 aws ec2 authorize-security-group-egress --group-id <hp-sg-id> --protocol tcp --port 443 --cidr 0.0.0.0/0
 ```
 
-(`--ip-permissions` again, not `--cidr-ipv6` — review I1, verified with `--dry-run`:
-`DryRunOperation: Request would have succeeded`.)
+(`--ip-permissions` again — no IPv6 CIDR shorthand exists for this command, review I1 — verified
+with `--dry-run`: `DryRunOperation: Request would have succeeded`.)
 
 Launch from [`honeypot/user-data.sh`](../../honeypot/user-data.sh) (arm64 — Cowrie is multi-arch):
 
@@ -368,6 +369,16 @@ aws ec2 allocate-address --domain vpc
 aws ec2 associate-address --instance-id <hp-instance-id> --allocation-id <hp-allocation-id>
 ```
 
+Open the SSM session on the honeypot host now — **everything from here to the end of step 9**
+(and `VERIFY.md` checks 8–9's honeypot half) runs as root in this session (task-05 fix-2, review
+N2), dropped only where a command must specifically run as the unprivileged `shipper` user (the
+read-path proof below):
+
+```sh
+aws ssm start-session --target <hp-instance-id>
+sudo -i
+```
+
 Now follow [`honeypot/README.md`](../../honeypot/README.md) steps 4–6 (copy the compose files —
 each a single text file, so a plain heredoc through the SSM session is enough — pin the Cowrie
 image digest, start Cowrie, verify the fake banner). Then install the shipper together with
@@ -379,11 +390,21 @@ That README's `sudo cp -r honeypot/shipper /opt/sentinelbrief-shipper/src` step 
 repo checkout, which this host never has (`honeypot/README.md`'s "What is NOT on this host"), and
 an S3 courier is impossible too — the honeypot role has no inline policy (step 1). The one
 mechanism that works on a host with neither: a base64'd tarball, pasted through the SSM session
-(task-05 fix-1, review M5). On the laptop, from the repo root:
+(task-05 fix-1, review M5), with a `sha256sum` check on both ends so a truncated paste is caught
+before extraction, not after (task-05 fix-2, review N1). On the laptop, from the repo root:
 
 ```sh
-tar czf - -C honeypot shipper | base64 -w0 > /tmp/shipper.b64
+tar czf /tmp/shipper.tgz -C honeypot shipper
+sha256sum /tmp/shipper.tgz
+base64 /tmp/shipper.tgz > /tmp/shipper.b64
 ```
+
+**Do not add `-w0`** to `base64` — its unwrapped output is one 40,000+ character line (today's
+tree: 46,548 bytes on one line with no newline), and the heredoc below is read from the SSM
+session's tty in canonical mode, where the ~4096-byte line-discipline buffer silently discards
+input past that length; the paste arrives truncated and `tar xzf` fails. The default 76-column
+wrapping (~613 short lines for today's tree) has every line far under that limit, and `base64 -d`
+ignores the added newlines.
 
 Then, in the SSM session on the honeypot host:
 
@@ -391,6 +412,14 @@ Then, in the SSM session on the honeypot host:
 base64 -d > /tmp/shipper.tgz <<'EOF'
 <paste the contents of /tmp/shipper.b64 here>
 EOF
+sha256sum /tmp/shipper.tgz
+```
+
+**This must match the laptop's `sha256sum` above before you continue** — a mismatch means the
+paste was truncated or corrupted; re-copy `/tmp/shipper.b64`'s contents and try again rather than
+extracting a partial archive:
+
+```sh
 mkdir -p /opt/sentinelbrief-shipper/src
 tar xzf /tmp/shipper.tgz -C /opt/sentinelbrief-shipper/src --strip-components=1
 ```
@@ -408,7 +437,7 @@ Then start the unit and check it **after 60 s, not immediately** — a `RestartS
 only visible after a few restarts have had time to happen:
 
 ```sh
-sudo systemctl enable --now sentinelbrief-shipper
+systemctl enable --now sentinelbrief-shipper
 sleep 60
 systemctl is-active sentinelbrief-shipper
 ```
@@ -464,10 +493,11 @@ aws s3 ls s3://sentinelbrief-backups-181040156847/postgres/
 ./restore-rehearsal.sh   # "restore ok alerts=... verdicts=... tool_calls=... alembic=..." — paste into database.md's block
 ```
 
-On the honeypot host, prove the journal is actually persistent — `SystemMaxUse=200M` is inert if
-the journal is volatile (`/run`, wiped on reboot) rather than persistent (`/var/log/journal`).
-`honeypot/user-data.sh` already sets `Storage=persistent` and creates `/var/log/journal`, so this
-should already hold; confirm rather than assume:
+On the honeypot host (the same root SSM session opened in step 9 — re-run its
+`start-session`/`sudo -i` if it dropped), prove the journal is actually persistent —
+`SystemMaxUse=200M` is inert if the journal is volatile (`/run`, wiped on reboot) rather than
+persistent (`/var/log/journal`). `honeypot/user-data.sh` already sets `Storage=persistent` and
+creates `/var/log/journal`, so this should already hold; confirm rather than assume:
 
 ```sh
 journalctl --disk-usage

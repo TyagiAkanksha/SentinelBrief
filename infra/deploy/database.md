@@ -67,7 +67,9 @@ cleanly rather than erroring, so this is expected and not itself a sign of a bad
 **Rehearsal** (does *not* touch the live database — restores into a disposable scratch database,
 counts rows, and drops it): `/opt/sentinelbrief/restore-rehearsal.sh` (committed copy:
 `infra/deploy/prod/restore-rehearsal.sh`). It copies the newest (or a named) object under
-`postgres/` from S3, creates `sentinelbrief_restore_check` fresh (`DROP DATABASE IF EXISTS` +
+`postgres/` from S3 (the instance role's `s3:GetObject` on `postgres/*` —
+`infra/deploy/iam/app-host-inline.json`'s `BackupBucketReadOwnDumps` statement, task-05 fix-1),
+creates `sentinelbrief_restore_check` fresh (`DROP DATABASE IF EXISTS` +
 `CREATE DATABASE`), restores the dump into it with `-v ON_ERROR_STOP=1` (a partial restore fails
 loudly instead of silently succeeding), prints `restore ok alerts=<n> verdicts=<n>
 tool_calls=<n> alembic=<version>` from four `SELECT`s (`count(*)` on `alerts`, `verdicts`,

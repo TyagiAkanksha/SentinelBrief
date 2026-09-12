@@ -40,7 +40,7 @@ own terminal in the SSM session (never typed or stored anywhere else):
 ```bash
 sudo install -m 600 -o root -g root /dev/null /etc/sentinelbrief-shipper.env
 sudo tee /etc/sentinelbrief-shipper.env >/dev/null <<'EOF'
-SHIPPER_INGEST_URL=https://api.sentinelbrief.<domain>/api/v1/alerts
+SHIPPER_INGEST_URL=https://api.sentinelbrief.tyagiakanksha.com/api/v1/alerts
 INGEST_HMAC_SECRET=<pasted from the owner's terminal — never committed anywhere>
 EOF
 ```
@@ -66,6 +66,7 @@ The env file above holds only the two required variables. Every other `SHIPPER_*
 Install and start the unit:
 
 ```bash
+cd /opt/sentinelbrief-shipper/src
 sudo cp sentinelbrief-shipper.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now sentinelbrief-shipper

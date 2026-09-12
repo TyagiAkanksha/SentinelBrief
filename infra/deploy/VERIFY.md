@@ -72,16 +72,21 @@ Expected: `401`.
 (recorded during deployment)
 ```
 
-A 2.1 MB body with a truthful `Content-Length` is OVER the cap — the app's own `413`. Captured
-with `-i` (full response, headers + body) so the recorded output is unambiguously the app's JSON
-error envelope, not Caddy's own error page:
+A 2.1 MB body with a truthful `Content-Length` is OVER **both** caps — Caddy's own `request_body
+{ max_size 2MB }` is also 2,000,000 bytes, so a recent Caddy version may answer on the declared
+`Content-Length` before the app ever sees the request. Captured with `-i` (full response, headers
++ body) so the recorded envelope decides which layer actually answered — this is falsifiable, not
+asserted (task-05 fix-2, review N4): there is no body size that isolates the app's cap from
+Caddy's, since the two numbers are identical:
 
 ```sh
 head -c 2100000 /dev/zero > /tmp/body-2.1mb.bin
 curl -s -i -X POST $API/api/v1/alerts -H 'content-type: application/json' --data-binary @/tmp/body-2.1mb.bin
 ```
 
-Expected: `HTTP/2 413` with a JSON body `{"error":{"code":"payload_too_large"...}}`.
+Expected: `HTTP/2 413` with a JSON body `{"error":{"code":"payload_too_large"...}}` (the app
+answered first); if instead the body is not that JSON envelope, Caddy answered first — record
+that finding instead of the expectation above.
 
 ```text
 (recorded during deployment)
@@ -242,7 +247,8 @@ a container has logged past 10 MB (expect this on `api` under attacker traffic).
 (recorded during deployment)
 ```
 
-Honeypot host — the same `docker inspect` check against `cowrie`, plus the journald budget:
+Honeypot host (in the root SSM session from `ec2-single-host.md` step 9's `sudo -i` — task-05
+fix-2, review N2) — the same `docker inspect` check against `cowrie`, plus the journald budget:
 
 ```sh
 docker inspect --format '{{.HostConfig.LogConfig}}' $(docker compose -f /opt/sentinelbrief-honeypot/docker-compose.yml ps -q)
@@ -254,6 +260,10 @@ journalctl --disk-usage
 ```
 
 ## 9. Honeypot hardening
+
+All commands below run in the same root SSM session as check 8's honeypot half
+(`ec2-single-host.md` step 9's `sudo -i` — task-05 fix-2, review N2): `ss -ltnp`'s owning-process
+column and `systemctl`/`docker` all need root, not `ssm-user`.
 
 ```sh
 ss -ltnp | grep ':22 '

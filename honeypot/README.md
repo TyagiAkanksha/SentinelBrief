@@ -77,9 +77,11 @@ Copy `honeypot/docker-compose.yml` to `/opt/sentinelbrief-honeypot/docker-compos
 `honeypot/etc/cowrie.cfg` to `/opt/sentinelbrief-honeypot/etc/cowrie.cfg` (the compose file's
 relative bind source `./etc/cowrie.cfg` resolves against the compose file's own directory, so the
 cfg must land at exactly that path — not loose in `/opt/sentinelbrief-honeypot/`) via an SSM
-Session Manager session (`aws ssm start-session` and a heredoc — **not** an S3 object as a
-courier: this host's instance role, `AmazonSSMManagedInstanceCore` only, cannot read any bucket,
-task-05 fix-1 review M5) — **never `scp`**, there is no `sshd` on this host to receive it.
+Session Manager session (`aws ssm start-session --target <instance-id>`, then `sudo -i` — no
+`usermod -aG docker` runs on this host (step 3), so every `docker`/`mkdir` command below needs
+root, task-05 fix-2 review N2 — and a heredoc, **not** an S3 object as a courier: this host's
+instance role, `AmazonSSMManagedInstanceCore` only, cannot read any bucket, task-05 fix-1 review
+M5) — **never `scp`**, there is no `sshd` on this host to receive it.
 
 Then, in the same SSM session:
 
