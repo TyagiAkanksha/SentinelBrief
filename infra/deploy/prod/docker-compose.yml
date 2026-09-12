@@ -55,7 +55,7 @@ services:
     # REAL account id (AdvisorDesk's, verified 2026-09-11 via `aws sts get-caller-identity`; not a
     # secret); the SHA stays a placeholder until the first push (task-05 replaces both tags in the
     # same sitting).
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:0000000
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:066b783
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
@@ -69,7 +69,7 @@ services:
     logging: *default-logging
 
   api:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:0000000
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:066b783
     env_file:
       - /opt/sentinelbrief/.env
     environment:
@@ -91,7 +91,7 @@ services:
     logging: *default-logging
 
   worker:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:0000000  # same image + tag as api
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:066b783  # same image + tag as api
     command: ["arq", "worker.main.WorkerSettings"]
     env_file:
       - /opt/sentinelbrief/.env
