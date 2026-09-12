@@ -143,7 +143,11 @@ secret generated in-shell and never printed, every resource name recorded in `do
       `delivered … status=202`; on the app host `docker compose logs worker --since 5m | grep
       'triage'` shows the job; `curl -s https://api.sentinelbrief.<domain>/api/v1/alerts?limit=1`
       shows it `triaged`.
-  11. **Backups** — `cp` the unit files to `/etc/systemd/system/`, `systemctl daemon-reload &&
+  11. **Backups** — (task-04 review M8/M6: after `enable --now`, `systemctl list-timers sentinelbrief-backup.timer`
+      must show a NEXT run — AL2023's systemd must accept the `UTC` suffix in `OnCalendar` (≥ 252);
+      and on the honeypot host `journalctl --disk-usage` + `grep -E '^(Storage|SystemMaxUse)='
+      /etc/systemd/journald.conf` prove the journal is persistent so `SystemMaxUse=200M` is not
+      inert — set `Storage=persistent` in the same user-data line if it is volatile) `cp` the unit files to `/etc/systemd/system/`, `systemctl daemon-reload &&
       systemctl enable --now sentinelbrief-backup.timer`, `systemctl start
       sentinelbrief-backup.service && journalctl -u sentinelbrief-backup -n 3` → `backup ok
       key=…`; `aws s3 ls s3://sentinelbrief-backups-<acct>/postgres/`; `./restore-rehearsal.sh` →
