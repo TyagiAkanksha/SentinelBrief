@@ -66,7 +66,9 @@ housekeeping rows (rule 15) close it: README status, plans registry, spine Statu
   OTHER_KNOWN_EVENTIDS: frozenset[str]  # the 7 ids in its "Other events" list
   @dataclass(frozen=True)
   class SessionReport:
-      n_alerts: int; n_invalid: int                      # rows whose raw fails SessionAlert.model_validate (count + the ValidationError's first `loc`, never the value)
+      n_alerts: int; n_invalid: int                      # rows whose raw fails SessionAlert.model_validate
+      invalid_alert_ids: list[str]; invalid_locs: dict[str, int]   # the alert UUIDs (not attacker-controlled) and the ValidationError's FIRST loc joined with '.' → count (names/indices only, never a value or message) — task-06 fix-1, review I1
+      extra_envelope_fields: list[str]                   # sorted union of SessionAlert.model_extra keys across the sample (names only; `shipper` is expected) — review M5
       eventid_counts: dict[str, int]                     # over all events
       unknown_eventids: dict[str, int]                   # ids in neither frozenset
       extra_fields_by_eventid: dict[str, list[str]]      # sorted field NAMES present in model_extra, per eventid (never values)
@@ -87,14 +89,19 @@ housekeeping rows (rule 15) close it: README status, plans registry, spine Statu
   per unknown eventid ("`<id>` seen N times — add to cowrie-events.md's 'other events' list"),
   one per extra field on a summarized eventid ("`<eventid>.<field>` seen — consider a synthetic
   fixture carrying it (v2 fixtures, M7) — NEVER edit an existing v1 fixture"), one if
-  `n_invalid > 0` ("N payloads failed SessionAlert — inspect on the box: `select id, received_at
-  from alerts where …` — the report never prints raw"), one if `n_truncated > 0`.
+  `n_invalid > 0` ("N payload(s) failed `SessionAlert` — ids: `<uuid>, …` (first locs: `<loc>×n`);
+  inspect on the box with `select id, received_at from alerts where id in (…)` — the report never
+  prints raw"), one if `n_truncated > 0`. Every eventid / field name printed passes `_safe_name()`
+  (64 chars, `[A-Za-z0-9_.:-]` only — review M6).
 
 ## Interfaces → test table
 
 `tests/test_check_real_sessions.py` — DB fixtures; seeds through `tests/helpers.py::seed_alert`
 (the five fixtures + hand-built variants); `_ATTACKER_STRINGS` from the seeded payloads (a
-username, a command, a URL) must be absent from `render()`'s output.
+username, a command, a URL) must be absent from `render()`'s output; task-06 fix-1 adds
+`tests/test_check_real_sessions_hygiene.py` covering ALL seven classes the Global Constraint names
+(username, password, command, URL, IP, banner, session id) plus sensor/shasum/outfile/message and
+both extra kinds, over `render()` and `main()` stdout+stderr (review I3).
 
 | Interfaces line | test file::test name | failure branch covered |
 |---|---|---|
