@@ -26,9 +26,11 @@ Cloudflare DNS (grey-cloud A records → Elastic IP)
         ├── sentinelbrief.<domain>      → web container    :3000
         └── api.sentinelbrief.<domain>  → api container    :8000
                 │
-        ┌───────┴────────┬──────────────┬──────────────┐
-      worker           postgres        redis        backup (cron)
-    (ARQ, LLM)        (named volume)  (queue/pubsub) (pg_dump → S3)
+        ┌───────┴────────┬─────────────┐
+      worker           postgres        redis
+    (ARQ, LLM)        (named volume)  (queue/pubsub)
+
+  + host systemd timer: sentinelbrief-backup (pg_dump → S3) — not a container
 
 Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST──► api.sentinelbrief.<domain>/api/v1/alerts
 ```
@@ -162,7 +164,7 @@ rotation observed.
 | AdvisorDesk | SentinelBrief |
 |---|---|
 | Supabase Postgres (external) | Self-hosted Postgres in compose + nightly `pg_dump` to S3 (honeypot volume would blow through Supabase's free tier) |
-| Three containers (api, admin, client) | Six (caddy, web, api, worker, postgres, redis) + backup cron |
+| Three containers (api, admin, client) | Six (caddy, web, api, worker, postgres, redis) + a host systemd backup timer |
 | Google OAuth admin app | No login anywhere; one admin bearer token for `retriage` only |
 | In-memory rate limiter | Redis-backed rate limiter (survives restarts; Redis already present) |
 | No second host | Isolated honeypot host, SSM-only, Cowrie on 22 |

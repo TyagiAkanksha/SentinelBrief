@@ -31,7 +31,7 @@ aws s3 cp "s3://$BACKUP_S3_BUCKET/$KEY" "$LOCAL_COPY" --only-show-errors
   -c 'CREATE DATABASE sentinelbrief_restore_check'
 
 # 3.
-gunzip -c "$LOCAL_COPY" | "${COMPOSE[@]}" exec -T postgres psql -U sentinel -d sentinelbrief_restore_check -v ON_ERROR_STOP=1 -q
+gunzip -c "$LOCAL_COPY" | "${COMPOSE[@]}" exec -T postgres psql -U sentinel -d sentinelbrief_restore_check -v ON_ERROR_STOP=1 -q -o /dev/null
 
 # 4.
 ALERTS="$("${COMPOSE[@]}" exec -T postgres psql -U sentinel -d sentinelbrief_restore_check -tAc 'select count(*) from alerts')"

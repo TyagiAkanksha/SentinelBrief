@@ -12,8 +12,9 @@ LOCAL_DIR=/var/backups/sentinelbrief
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="$LOCAL_DIR/sentinelbrief-$STAMP.sql.gz"
 mkdir -p "$LOCAL_DIR"; chmod 700 "$LOCAL_DIR"
-"${COMPOSE[@]}" exec -T postgres pg_dump -U sentinel -d sentinelbrief --format=plain --no-owner --no-privileges | gzip -6 > "$OUT"
-test -s "$OUT"                                           # an empty dump is a failure, not a backup
+"${COMPOSE[@]}" exec -T postgres pg_dump -U sentinel -d sentinelbrief --format=plain --no-owner --no-privileges | gzip -6 > "$OUT.part"
+test -s "$OUT.part"                                      # an empty dump is a failure, not a backup
+mv "$OUT.part" "$OUT"                                    # only now does the file match the *.sql.gz glob below
 aws s3 cp "$OUT" "s3://$BACKUP_S3_BUCKET/postgres/$(basename "$OUT")" --only-show-errors
 echo "backup ok key=postgres/$(basename "$OUT") bytes=$(stat -c %s "$OUT")"
 ls -1t "$LOCAL_DIR"/sentinelbrief-*.sql.gz | tail -n +4 | xargs -r rm -f    # keep the 3 newest locally

@@ -69,13 +69,16 @@ Nightly `pg_dump | gzip` → S3 runs from a host systemd timer, not a compose se
 Install once, on the box:
 
 ```sh
-cp backup.sh restore-rehearsal.sh backup.env /opt/sentinelbrief/
-chmod 700 /opt/sentinelbrief/backup.sh /opt/sentinelbrief/restore-rehearsal.sh
-chmod 600 /opt/sentinelbrief/backup.env
+install -o root -g root -m 700 backup.sh restore-rehearsal.sh /opt/sentinelbrief/
+install -o root -g root -m 600 backup.env /opt/sentinelbrief/
 cp sentinelbrief-backup.service sentinelbrief-backup.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now sentinelbrief-backup.timer
 ```
+
+`install` (not `cp` + `chmod`) sets the owner and group in one step — both scripts `source
+/opt/sentinelbrief/backup.env` **as root** from a root systemd unit, and an SSM session lands as
+`ssm-user`, not root, so a plain `cp` would leave the files owned by the wrong account.
 
 Run one now to confirm it works end to end (before the 48 h soak starts):
 

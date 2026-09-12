@@ -5,4 +5,5 @@ After=docker.service
 Requires=docker.service
 [Service]
 Type=oneshot
+TimeoutStartSec=30min
 ExecStart=/opt/sentinelbrief/backup.sh
