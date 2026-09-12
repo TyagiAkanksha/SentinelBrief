@@ -124,8 +124,10 @@ pin the shape of both files.
      /opt/sentinelbrief-honeypot/data` (uid 999 = the image's `cowrie` user — verified on the pinned
      digest, `cowrie:x:999:999`; the briefing said 1000, which would have left Cowrie unable to write
      its log on the box), `useradd --system
-     --no-create-home --shell /sbin/nologin shipper` (task-02's unit runs as this user),
-     `usermod -aG docker ssm-user`.
+     --no-create-home --shell /sbin/nologin shipper` (task-02's unit runs as this user). (The
+     `usermod -aG docker ssm-user` line was REMOVED at task-05 fix-1: AL2023 creates `ssm-user`
+     lazily at the first SSM session, so it aborts user-data under `set -e`; SSM steps use `sudo -i`.
+     The journald line is `SystemMaxUse=200M` + `Storage=persistent`, applied in place.)
   4. Copy `honeypot/docker-compose.yml` → `/opt/sentinelbrief-honeypot/docker-compose.yml` and
      `honeypot/etc/cowrie.cfg` → `/opt/sentinelbrief-honeypot/etc/cowrie.cfg` (the relative `./etc/…`
      bind resolves against the compose file's directory; a missing source makes Docker create a

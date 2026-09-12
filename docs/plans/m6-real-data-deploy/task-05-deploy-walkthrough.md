@@ -55,8 +55,11 @@ secret generated in-shell and never printed, every resource name recorded in `do
   template), `infra/deploy/iam/app-host-trust.json`, `infra/deploy/iam/app-host-inline.json`,
   `infra/deploy/iam/honeypot-host-trust.json` (same trust document; kept separate so each role's
   files sit together), `infra/deploy/user-data-app.sh`, `honeypot/user-data.sh` (task-01's
-  runbook step 3 block extracted verbatim into a file the console's user-data field takes;
-  `honeypot/README.md` step 3 becomes "paste `honeypot/user-data.sh`")
+  runbook step 3 block, extracted into a file the console's user-data field takes and now the
+  SOURCE OF TRUTH — `honeypot/README.md` step 3 points at it; task-05 fix-1 (review I3/M6) drops
+  `usermod -aG docker ssm-user` (AL2023 creates `ssm-user` lazily at the first session; SSM steps
+  use `sudo -i`) and makes journald persistent in place (`Storage=persistent` + `mkdir -p
+  /var/log/journal` + restart) in BOTH user-data scripts)
 - Create (test-author): `tests/test_deploy_docs.py`
 - Modify: `docs/deployment.md` (finalize: resource-name placeholders `<recorded at deploy>` become
   a "Resources (recorded YYYY-MM-DD)" table the owner fills at deploy; the Verification section
@@ -94,8 +97,9 @@ secret generated in-shell and never printed, every resource name recorded in `do
   2. **S3 backup bucket** — `aws s3api create-bucket --bucket sentinelbrief-backups-<acct>`;
      `put-public-access-block` (all four true); `put-bucket-lifecycle-configuration …
      file://infra/deploy/s3-lifecycle.json`; `put-bucket-encryption` (SSE-S3).
-  3. **SSM parameters** — six `aws ssm put-parameter --type SecureString --name
-     /sentinelbrief/<NAME> --value '<value>'` lines (`DATABASE_URL` =
+  3. **SSM parameters** — five required `aws ssm put-parameter --type SecureString --name
+     /sentinelbrief/<NAME> --value '<value>'` lines (`DATABASE_URL`, `POSTGRES_PASSWORD`, `LLM_API_KEY`,
+     `INGEST_HMAC_SECRET`, `ADMIN_TOKEN`) (`DATABASE_URL` =
      `postgresql://sentinel:<POSTGRES_PASSWORD>@postgres:5432/sentinelbrief` — the SAME password
      as the `POSTGRES_PASSWORD` parameter), plus the two optional ones; the reminder that the
      shell history should be cleared (`history -c`) or the commands run with a leading space
@@ -107,8 +111,8 @@ secret generated in-shell and never printed, every resource name recorded in `do
      --tag-specifications …Name=sentinelbrief-app`; `allocate-address` + `associate-address`.
      `user-data-app.sh`: `dnf install -y docker`, compose plugin (the same pinned release as
      task-01's), `systemctl enable --now docker`, `systemctl disable --now sshd && systemctl mask
-     sshd`, `mkdir -p /opt/sentinelbrief/geoip /var/backups/sentinelbrief`, `usermod -aG docker
-     ssm-user`, journald `SystemMaxUse=500M`.
+     sshd`, `mkdir -p /opt/sentinelbrief/geoip /var/backups/sentinelbrief`, journald `SystemMaxUse=500M` + `Storage=persistent` in place, `chown 1001:1001
+     /opt/sentinelbrief/geoip` (the api image's `appuser` — review I4; the geoip one-off writes there).
   5. **DNS** — two A records at Cloudflare, `sentinelbrief` and `api.sentinelbrief`, DNS-only
      (grey cloud), re-check the proxy icon after saving; `dig +short` both until they answer the
      EIP.
@@ -166,14 +170,15 @@ secret generated in-shell and never printed, every resource name recorded in `do
   0. `curl -s $API/healthz` → `{"status":"ok","db":"ok","redis":"ok"}`.
   1. TLS + headers: `curl -sI $WEB | grep -iE 'strict-transport|x-frame|HTTP/'` → `HTTP/2 200`,
      HSTS, `DENY`; same for `$API/healthz`.
-  2. Ingest gates: unsigned POST → `401 {"error":{"code":"unauthorized"…}}`; a 1.9 MB unsigned
-     body → `413 payload_too_large` (the app's declared-length guard — under Caddy's cap); a 3 MB
-     body with a truthful `Content-Length` → ALSO the app's `413` (the declared length is checked
-     before any byte streams — task-03 review M9: Caddy's `max_size` only bites once bytes stream
-     past 2 000 000). To observe CADDY's cap send a 3 MB CHUNKED body
-     (`-H 'Transfer-Encoding: chunked'`): Caddy cuts the stream before the app's `411` — record the
-     client-visible status (Caddy's own error, not 413). A SMALL chunked unsigned POST → `411
-     length_required`.
+  2. Ingest gates: unsigned POST → `401` (status via `-o /dev/null -w '%{http_code}'`); a 1.9 MB
+     unsigned body → `401` too (its declared length is UNDER the 2 000 000 cap, so the guard passes
+     it to the signature check — task-05 review I5/PC1; the repo's own
+     `test_body_at_cap_reaches_signature_check` pins that); a **2.1 MB** body with a truthful
+     `Content-Length` (`head -c 2100000 /dev/zero`) → the APP's `413` with the JSON envelope
+     `payload_too_large` captured via `-i` (proves it is the app's, not Caddy's page); a SMALL
+     chunked unsigned POST (`-H 'Transfer-Encoding: chunked'`) → `411 length_required`; a 3 MB
+     CHUNKED body → Caddy's own error (Caddy cuts the stream past 2 000 000 bytes before the app
+     could answer 411 — record the client-visible status; it is not 413).
   3. First real session `triaged` (step 10's outputs).
   4. CORS: `Origin: https://evil.example.com` → no `access-control-allow-origin`; `Origin: $WEB` →
      header echoes `$WEB`.
