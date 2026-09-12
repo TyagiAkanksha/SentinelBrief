@@ -116,3 +116,18 @@ def test_followups_section_says_none_when_clean() -> None:
     rendered = module.render(report)
 
     assert rendered.endswith("## Suggested follow-ups\n- None.\n")
+
+
+def test_summary_captions_present() -> None:
+    """N4: both Summary-table captions (M1: percentiles/per-eventid counts exclude invalid rows;
+    M2: `raw_bytes_*` is a payload-size proxy, not on-disk size) must actually render — mutation
+    (r)'s target: deleting both lines previously passed 24/24.
+    """
+    module = _load_check_real_sessions()
+    report = module.SessionReport(**_base_kwargs())
+
+    rendered = module.render(report)
+
+    assert "n_alerts - n_invalid` rows that validated" in rendered
+    assert "a payload-size proxy — not on-disk size" in rendered
+    assert "pg_database_size" in rendered

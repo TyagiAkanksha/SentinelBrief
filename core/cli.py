@@ -10,10 +10,13 @@ copy of `UsageError`/`_Parser`/`_fail` before this task; all three now import fr
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import NoReturn
 
 from core.errors import SentinelBriefError
+
+_URL_LIKE = re.compile(r"\S+://\S+")
 
 
 class UsageError(SentinelBriefError):
@@ -49,6 +52,13 @@ class Parser(argparse.ArgumentParser):
         existing "one stderr line, clean exit 1" contract; only the message content changes for
         this one failure shape.
 
+        m6 task-06 fix-2 N1: argparse's OTHER value-bearing shape (`argument --limit: invalid
+        int value: '<token>'`, from a `type=`-converting flag like `--limit`/`--concurrency`)
+        also echoes its raw token, which could likewise be a DSN with a password. Every message
+        is therefore also passed through an unconditional URL-like redaction (any
+        `scheme://value` token becomes `<redacted>`) after the "unrecognized arguments"
+        substitution — a no-op when the message carries no such token.
+
         Args:
             message: argparse's own description of the usage problem.
 
@@ -57,6 +67,7 @@ class Parser(argparse.ArgumentParser):
         """
         if message.startswith("unrecognized arguments"):
             message = "unrecognized argument(s) — values withheld"
+        message = _URL_LIKE.sub("<redacted>", message)
         raise UsageError(f"{message} (see --help)")
 
 

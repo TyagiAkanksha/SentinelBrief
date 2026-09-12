@@ -36,6 +36,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -51,15 +52,20 @@ from core.schemas.alert import SessionAlert
 from evals.scoring import percentile
 
 _SAFE_NAME_MAX_LEN = 64
-_UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_.:-]")
+_UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_.:*-]")
+_MAX_INVALID_IDS_SHOWN = 20
+"""The invalid-row bullet lists at most this many ids, then `… and N more` (m6 task-06 fix-2
+N5) — a broadly-drifted large sample must never produce one unbounded line of UUIDs."""
 
 
 def _safe_name(name: str) -> str:
     """Sanitize `name` (an eventid or a field name) for safe rendering in the markdown report.
 
-    Truncates to 64 characters, then replaces any character outside `[A-Za-z0-9_.:-]` with `?`.
+    Truncates to 64 characters, then replaces any character outside `[A-Za-z0-9_.:*-]` with `?`.
     Names come from the JSON keys the Cowrie shipper forwards — no attacker can set one today,
-    but a future Cowrie plugin could (m6 task-06 fix-1 M6); this never touches a *value*.
+    but a future Cowrie plugin could (m6 task-06 fix-1 M6); this never touches a *value*. `*` is
+    allowed (m6 task-06 fix-2 N3) because `_first_loc_key` uses it to normalize an integer list
+    index (e.g. `events.*.timestamp`) — that marker must survive this sanitization pass too.
     """
     return _UNSAFE_NAME_CHARS.sub("?", name[:_SAFE_NAME_MAX_LEN])
 
@@ -276,7 +282,11 @@ def _suggested_followups(report: SessionReport) -> list[str]:
             )
 
     if report.n_invalid > 0:
-        ids = ", ".join(report.invalid_alert_ids)
+        shown_ids = report.invalid_alert_ids[:_MAX_INVALID_IDS_SHOWN]
+        ids = ", ".join(shown_ids)
+        remaining = len(report.invalid_alert_ids) - len(shown_ids)
+        if remaining > 0:
+            ids += f", … and {remaining} more"
         locs = ", ".join(
             f"{_safe_name(loc)}×{count}" for loc, count in sorted(report.invalid_locs.items())
         )
@@ -439,6 +449,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return fail("config_error", "no database URL (pass --database-url or set DATABASE_URL)")
 
     limit = max(1, min(args.limit, 5000))
+    if limit != args.limit:
+        print(f"note: --limit clamped to {limit}", file=sys.stderr)
 
     async def _run() -> SessionReport:
         engine = make_engine(database_url, schema=args.schema)

@@ -17,6 +17,18 @@ total` counts an invalid row too). Seeding goes through `tests.helpers.load_aler
 `_load_and_edit` shape (test files never import from each other, so this is a small, deliberate
 duplication) — except the one deliberately invalid raw-SQL row (M3), which bypasses `insert_alert`
 on purpose, exactly like the pinned file's own `_insert_invalid_raw_row`.
+
+m6 task-06 fix-2 adds three more pins to this file:
+- **N2**: `_first_loc_key` (the one function that touches a `ValidationError`) has a negative
+  pin — a row whose `events[0].timestamp` is an attacker-controlled string must surface only
+  `events.*.timestamp` (the declared field path, index normalized to `*`), never the payload or
+  pydantic's own `msg` (which embeds the payload via `input_value=...`).
+- **N4**: the `--limit` `1..5000` clamp is no longer silent — `main()` prints one `note: --limit
+  clamped to <n>` stderr line when it actually fires; pinned here for the CLI. The two Summary
+  captions (M1/M2) are pinned in `tests/test_check_real_sessions_followups.py` instead (built by
+  hand, no DB needed).
+- **N5**: the invalid-ids bullet caps at the first 20 ids, then `… and N more` — never an
+  unbounded line of UUIDs for a broadly-drifted sample.
 """
 
 from __future__ import annotations
@@ -143,18 +155,58 @@ def _malicious_key_alert() -> SessionAlert:
     return _load_and_edit("alert1", session_id="canary-malicious-key-session", edit=_edit)
 
 
-def _insert_invalid_raw_row(url: str, schema: str) -> None:
+def _insert_invalid_raw_row(url: str, schema: str, *, index: int = 0) -> None:
     """Insert one `alerts` row whose `raw` cannot possibly have passed `SessionAlert.model_
     validate` on ingest — a raw SQL `insert` bypassing `insert_alert` on purpose, mirroring the
-    pinned file's own `_insert_invalid_raw_row` (M3: `raw_bytes_total` must still count it)."""
+    pinned file's own `_insert_invalid_raw_row` (M3: `raw_bytes_total` must still count it).
+    `index` distinguishes multiple invalid rows in the same schema (N5: `fingerprint` is UNIQUE).
+    """
     import psycopg
 
-    raw = json.dumps({"source": "cowrie", "session_id": "invalid-row-m3", "note": "no events"})
+    raw = json.dumps(
+        {"source": "cowrie", "session_id": f"invalid-row-m3-{index}", "note": "no events"}
+    )
     with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute(
             f'INSERT INTO "{schema}".alerts (fingerprint, source, event_time, raw, status) '
             f"VALUES (%s, %s, now(), %s::jsonb, %s)",
-            ("invalid-row-m3-fingerprint", "cowrie", raw, "pending"),
+            (f"invalid-row-m3-fingerprint-{index}", "cowrie", raw, "pending"),
+        )
+
+
+_CANARY_TIMESTAMP_PAYLOAD = "ATTACKER-CONTROLLED-TIMESTAMP-PAYLOAD"
+
+
+def _insert_invalid_timestamp_row(url: str, schema: str) -> None:
+    """Insert one `alerts` row that looks like a real session except `events[0].timestamp` is an
+    attacker-controlled, unparseable string — the ONE way to make pydantic's `ValidationError`
+    carry attacker text (in `input`/`msg`) on a field `_first_loc_key` must never surface (N2).
+    Raw SQL, bypassing `insert_alert` on purpose, exactly like `_insert_invalid_raw_row` above.
+    """
+    import psycopg
+
+    raw = json.dumps(
+        {
+            "source": "cowrie",
+            "session_id": "n2-invalid-timestamp-session",
+            "src_ip": "203.0.113.9",
+            "sensor": "hp-n2-01",
+            "events": [
+                {
+                    "eventid": "cowrie.session.connect",
+                    "timestamp": _CANARY_TIMESTAMP_PAYLOAD,
+                    "session": "n2-invalid-timestamp-session",
+                    "src_ip": "203.0.113.9",
+                    "sensor": "hp-n2-01",
+                }
+            ],
+        }
+    )
+    with psycopg.connect(url, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            f'INSERT INTO "{schema}".alerts (fingerprint, source, event_time, raw, status) '
+            f"VALUES (%s, %s, now(), %s::jsonb, %s)",
+            ("invalid-timestamp-fingerprint", "cowrie", raw, "pending"),
         )
 
 
@@ -294,3 +346,101 @@ def test_main_exits_1_on_unreachable_database_without_leaking_password(
     assert "Traceback" not in captured.err
     assert captured.err.count("\n") == 1
     assert "error: database_error:" in captured.err
+
+
+# --- N2: _first_loc_key never surfaces the ValidationError's attacker-controlled input/msg ------
+
+
+def test_invalid_row_timestamp_canary_never_leaks_and_loc_normalizes_to_star(
+    tmp_schema: tuple[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A row whose `events[0].timestamp` is attacker-controlled must surface only the declared
+    field path `events.*.timestamp` in the "Suggested follow-ups" bullet — never the payload
+    itself and never pydantic's own `msg` (which embeds the payload via `input_value=...`, hence
+    the "Input should be" check). Mutation self-check (a) target: `_first_loc_key` returning
+    `err["input"]`/`err["msg"]` instead of `err["loc"]` makes this test fail on both assertions.
+    """
+    url, schema = tmp_schema
+    module = _load_check_real_sessions()
+    _insert_invalid_timestamp_row(url, schema)
+
+    async def _collect() -> Any:
+        engine = make_engine(url, schema=schema)
+        try:
+            factory = make_session_factory(engine)
+            return await module.collect(factory, limit=5)
+        finally:
+            await engine.dispose()
+
+    report = asyncio.run(_collect())
+    assert report.n_invalid == 1
+    assert report.invalid_locs == {"events.*.timestamp": 1}
+    rendered = module.render(report)
+
+    assert "events.*.timestamp" in rendered
+    assert _CANARY_TIMESTAMP_PAYLOAD not in rendered
+    assert "Input should be" not in rendered
+
+    rc = module.main(["--database-url", url, "--schema", schema, "--limit", "5"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "events.*.timestamp" in captured.out
+    assert _CANARY_TIMESTAMP_PAYLOAD not in captured.out
+    assert "Input should be" not in captured.out
+    assert captured.err == ""
+
+
+# --- N4: the --limit clamp is no longer silent ---------------------------------------------------
+
+
+def test_main_prints_a_note_when_limit_is_clamped(
+    tmp_schema: tuple[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--limit 10000` is clamped to `5000` (M8) and `main()` must say so on stderr — an owner who
+    fat-fingers `--limit` at T+48h must not silently get a smaller sample than they asked for.
+    A `--limit` within bounds (the other tests in this file) prints nothing extra, so
+    `captured.err == ""` there still holds.
+    """
+    url, schema = tmp_schema
+    module = _load_check_real_sessions()
+
+    rc = module.main(["--database-url", url, "--schema", schema, "--limit", "10000"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == "note: --limit clamped to 5000\n"
+
+
+# --- N5: the invalid-ids bullet is capped, never an unbounded line of UUIDs ---------------------
+
+
+def test_invalid_ids_bullet_capped_at_20_with_suffix(tmp_schema: tuple[str, str]) -> None:
+    """25 invalid rows must render at most 20 ids in the "Suggested follow-ups" bullet, followed
+    by `… and 5 more` — `invalid_alert_ids` itself stays the full, uncapped list (the cap is a
+    presentation concern in `_suggested_followups`, not a data-loss one).
+    """
+    url, schema = tmp_schema
+    module = _load_check_real_sessions()
+    for i in range(25):
+        _insert_invalid_raw_row(url, schema, index=i)
+
+    async def _collect() -> Any:
+        engine = make_engine(url, schema=schema)
+        try:
+            factory = make_session_factory(engine)
+            return await module.collect(factory, limit=30)
+        finally:
+            await engine.dispose()
+
+    report = asyncio.run(_collect())
+    assert report.n_invalid == 25
+    assert len(report.invalid_alert_ids) == 25
+
+    rendered = module.render(report)
+
+    expected_prefix = ", ".join(report.invalid_alert_ids[:20])
+    assert expected_prefix in rendered
+    assert "… and 5 more" in rendered
+    assert report.invalid_alert_ids[20] not in rendered
