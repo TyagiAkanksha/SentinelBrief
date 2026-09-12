@@ -186,9 +186,11 @@ run escalated to the strong model.
 ## Deployment
 
 Target topology, secrets handling, backups and the verification checklist:
-[`docs/deployment.md`](docs/deployment.md). Scripts and synced production config land under
-`infra/deploy/` at M6: `push_ecr.sh` (build + push both images to ECR), `env-checklist.md` (every
-variable, its secrecy and its source), and the synced copies of what runs on the box under
+[`docs/deployment.md`](docs/deployment.md). The owner-run walkthrough that brings up both hosts
+end to end: [`infra/deploy/ec2-single-host.md`](infra/deploy/ec2-single-host.md), verified against
+[`infra/deploy/VERIFY.md`](infra/deploy/VERIFY.md). Scripts and synced production config land
+under `infra/deploy/` at M6: `push_ecr.sh` (build + push both images to ECR), `env-checklist.md`
+(every variable, its secrecy and its source), and the synced copies of what runs on the box under
 `infra/deploy/prod/` (`docker-compose.yml`, `Caddyfile`, `fetch-secrets.sh`, `README.md`). The
 honeypot host's owner-run runbook: [`honeypot/README.md`](honeypot/README.md).
 

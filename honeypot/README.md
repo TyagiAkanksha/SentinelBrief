@@ -26,29 +26,18 @@ Runs on the instance at first boot, via EC2 cloud-init — never on the operator
 cannot be executed here (implementer: syntax-checked with `bash -n` after extracting it to a
 scratch file instead).
 
-```sh
-#!/bin/bash
-set -euo pipefail
-dnf install -y docker python3.12
-systemctl enable --now docker
-mkdir -p /usr/local/lib/docker/cli-plugins
-curl -fsSL https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-$(uname -m) -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-systemctl disable --now sshd && systemctl mask sshd
-echo 'SystemMaxUse=200M' >> /etc/systemd/journald.conf && systemctl restart systemd-journald
-mkdir -p /opt/sentinelbrief-honeypot/etc /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R 999:999 /opt/sentinelbrief-honeypot/data
-useradd --system --no-create-home --shell /sbin/nologin shipper
-usermod -aG docker ssm-user
-```
+Paste the contents of `honeypot/user-data.sh` (task-05 extracted this block verbatim into that
+file and `bash -n`s it in `tests/test_deploy_docs.py`) into the console's "User data" field at
+instance launch.
 
-Notes on each line:
+Notes on each line (`honeypot/user-data.sh`):
 
 - `#!/bin/bash` and `set -euo pipefail` — EC2 cloud-init only executes user data that starts with
   `#!` (a shell script) or `#cloud-config`; anything else is logged as unhandled non-multipart
   user data and never runs at all, which would leave a real `sshd` up on a security group that
   admits port 22 from `0.0.0.0/0`. `set -euo pipefail` stops the script on the first failure (a
-  failed `curl` below, for example) instead of continuing into a half-built host. Task-05 extracts
-  this block verbatim into `honeypot/user-data.sh` and `bash -n`s it.
+  failed `curl` below, for example) instead of continuing into a half-built host. This block lives
+  verbatim in `honeypot/user-data.sh` (task-05), `bash -n`'d by `tests/test_deploy_docs.py`.
 - `dnf install -y docker python3.12` — AL2023's `docker` package ships no compose plugin
   (installed separately below); `python3.12` is task-02's shipper runtime.
 - The compose plugin install is pinned to `v5.5.1` (verified against

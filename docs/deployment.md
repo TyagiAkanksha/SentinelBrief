@@ -1,8 +1,8 @@
 # Deployment — Phase 1 target topology (doc of record)
 
-**Status:** target, written before M6. This file is finalized at M6 with the real resource names,
-and from then on it is the doc of record: the box must match this file and the committed copies
-under `infra/deploy/prod/`, or the drift is committed back in the same sitting.
+**Status:** finalized at M6 (task-05) with the real resource names below. From here on this file
+is the doc of record: the box must match this file and the committed copies under
+`infra/deploy/prod/`, or the drift is committed back in the same sitting.
 
 It is the same single-host shape the author's AdvisorDesk runs in production (live since
 2026-08-09), with the differences listed at the end.
@@ -45,7 +45,28 @@ Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST─
   80/443 only, an IAM instance role/profile granting `AmazonSSMManagedInstanceCore` (management —
   there is no SSH port), `AmazonEC2ContainerRegistryReadOnly` (image pulls), an inline policy
   reading `/sentinelbrief/*` SSM parameters (+ `kms:Decrypt` via ssm), and `s3:PutObject` on the
-  backup bucket. Concrete resource IDs are recorded in the execution ledger at M6, not here.
+  backup bucket. Concrete resource names are recorded in the table below, filled in by the owner
+  at deploy time (`infra/deploy/ec2-single-host.md` step 12).
+
+## Resources (recorded at deploy)
+
+| Resource | Value |
+|---|---|
+| Region | `<recorded at deploy>` |
+| AWS account id | `<recorded at deploy>` |
+| App-host VPC id | `<recorded at deploy>` |
+| Honeypot VPC id | `<recorded at deploy>` |
+| App-host instance id | `<recorded at deploy>` |
+| Honeypot instance id | `<recorded at deploy>` |
+| App-host Elastic IP | `<recorded at deploy>` |
+| Honeypot Elastic IP | `<recorded at deploy>` |
+| App-host security group | `<recorded at deploy>` |
+| Honeypot security group | `<recorded at deploy>` |
+| App-host IAM role | `<recorded at deploy>` |
+| Honeypot IAM role | `<recorded at deploy>` |
+| S3 backup bucket | `<recorded at deploy>` |
+| ECR repositories | `<recorded at deploy>` |
+| Domain | `<recorded at deploy>` |
 
 ## Secrets: SSM Parameter Store, never in the repo or chat
 
@@ -153,11 +174,12 @@ LLM client's log line, which must appear only in the `worker` container.
 ## Verification
 
 `infra/deploy/VERIFY.md` (M6) is the checklist, in the AdvisorDesk shape: every check is the exact
-command to run against the live stack with a block to paste the real output into. Minimum
-coverage: `/healthz`, a signed POST from the honeypot host reaching `triaged`, SSE arriving
-unbuffered through the custom domain, CORS allow/deny, rate-limit `429`s from two real IPs plus
-the forged-XFF check, the "no LLM in api logs" grep, a backup object appearing in S3, and log
-rotation observed.
+command to run against the live stack with a block to paste the real output into. It runs checks
+0–11: `/healthz`, TLS + security headers, the ingest gates (incl. the body-cap semantics), a
+signed POST from the honeypot host reaching `triaged`, CORS allow/deny, the dashboard, the "no LLM
+in api logs" grep, backups (S3 object + restore rehearsal + `pg_database_size`), log rotation,
+honeypot hardening, Redis degrade/recover, and (from M8) rate limits from two real IPs plus the
+forged-XFF check and SSE arriving unbuffered through the custom domain.
 
 ## Differences from AdvisorDesk
 
