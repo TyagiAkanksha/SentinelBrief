@@ -53,7 +53,10 @@ in time this file names exactly what's running.
 The GeoLite2 `.mmdb` files are fetched deploy-time, never baked into the image or run
 automatically at container start. The MaxMind license key is read from SSM inline and passed only
 to a throwaway container — it never lands in a file on disk (the services keep their bind mount
-`:ro`; the rw override below is for this one-off only):
+`:ro`; the rw override below is for this one-off only). `/opt/sentinelbrief/geoip` is created
+`chown`'d to uid:gid `1001:1001` by `user-data-app.sh` (task-05 fix-1, review I4) — that is the
+`appuser` the api image (`infra/Dockerfile.api`) runs as, and this one-off writes into the bind
+mount as that same non-root user:
 
 ```sh
 MAXMIND_LICENSE_KEY="$(aws ssm get-parameter --region us-east-1 --name \

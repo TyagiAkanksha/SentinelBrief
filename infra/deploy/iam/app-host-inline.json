@@ -23,6 +23,12 @@
       "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847/postgres/*"
     },
     {
+      "Sid": "BackupBucketReadOwnDumps",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847/postgres/*"
+    },
+    {
       "Sid": "BackupBucketList",
       "Effect": "Allow",
       "Action": "s3:ListBucket",

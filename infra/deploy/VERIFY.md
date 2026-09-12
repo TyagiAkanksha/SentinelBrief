@@ -40,70 +40,78 @@ Expected: both print `HTTP/2 200`, a `Strict-Transport-Security` (HSTS) header, 
 
 ## 2. Ingest gates (the body-cap semantics)
 
+*(Rewritten at task-05 fix-1 — controller ruling R11/PC1, review I5/M2/M8: the deployed
+`INGEST_MAX_BODY_BYTES` is `2,000,000`, `.env.example`'s default, not overridden by the prod
+compose file — see `env-checklist.md`.)*
+
 An unsigned POST is rejected before the body is even read:
 
 ```sh
-curl -s -X POST $API/api/v1/alerts -H 'content-type: application/json' -d '{}'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' -d '{}'
 ```
 
-Expected: `401 {"error":{"code":"unauthorized"...}}`.
+Expected: `401`.
 
 ```text
 (recorded during deployment)
 ```
 
-A 1.9 MB unsigned body — the app's own declared-length guard rejects it before the HMAC signature
-ever reads a byte:
+A 1.9 MB unsigned body is UNDER the 2,000,000-byte cap, so the app's declared-length guard passes
+it straight through to the HMAC signature check — **also `401`, not `413`** (the repo's own
+`tests/test_ingest_body_cap.py::test_body_at_cap_reaches_signature_check` pins exactly this; a
+`413` here would mean the cap regressed):
 
 ```sh
 python3 -c "print('x'*1900000)" > /tmp/body-1.9mb.txt
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' --data-binary @/tmp/body-1.9mb.txt
 ```
 
-Expected: `413 payload_too_large` (`INGEST_MAX_BODY_BYTES`, checked on the declared
-`Content-Length` — under Caddy's 2 MB cap, so Caddy never even sees this one bite).
+Expected: `401`.
 
 ```text
 (recorded during deployment)
 ```
 
-A 3 MB body with a truthful `Content-Length` also gets the app's `413` — the declared length is
-checked before any byte streams (task-03 review M9: Caddy's `max_size` only bites once bytes
-stream past 2,000,000 — it does not race the app's own check):
+A 2.1 MB body with a truthful `Content-Length` is OVER the cap — the app's own `413`. Captured
+with `-i` (full response, headers + body) so the recorded output is unambiguously the app's JSON
+error envelope, not Caddy's own error page:
 
 ```sh
-python3 -c "print('x'*3000000)" > /tmp/body-3mb.txt
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' --data-binary @/tmp/body-3mb.txt
+head -c 2100000 /dev/zero > /tmp/body-2.1mb.bin
+curl -s -i -X POST $API/api/v1/alerts -H 'content-type: application/json' --data-binary @/tmp/body-2.1mb.bin
 ```
 
-Expected: `413 payload_too_large` again — the client-visible status is the app's, not Caddy's.
+Expected: `HTTP/2 413` with a JSON body `{"error":{"code":"payload_too_large"...}}`.
 
 ```text
 (recorded during deployment)
 ```
 
-To observe CADDY's own cap instead, send the same 3 MB body **chunked**, so no `Content-Length`
-is declared and Caddy's `request_body { max_size 2MB }` cuts the stream before the app's own
-guard gets a full body to measure:
-
-```sh
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @/tmp/body-3mb.txt
-```
-
-Expected: Caddy's own error status (not the app's `413`) — record whatever Caddy actually returns.
-
-```text
-(recorded during deployment)
-```
-
-A SMALL chunked unsigned POST — no usable `Content-Length` to check, so the app's guard fails
-closed:
+A SMALL chunked unsigned POST has no usable `Content-Length` — the app's guard fails closed:
 
 ```sh
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' -d '{}'
 ```
 
 Expected: `411 length_required`.
+
+```text
+(recorded during deployment)
+```
+
+A 3 MB CHUNKED body: no `Content-Length` is declared, so Caddy's own `request_body { max_size
+2MB }` cuts the stream past 2,000,000 bytes before the app ever gets a full body to answer `411`
+on. Captured with `-i` so the recorded output shows whichever layer actually answered — this is
+falsifiable, not asserted: if the recorded body is the app's JSON envelope, record that finding
+instead of the expectation below:
+
+```sh
+head -c 3000000 /dev/zero > /tmp/body-3mb.bin
+curl -s -i -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @/tmp/body-3mb.bin
+```
+
+Expected: Caddy's own error status and page (not the app's `413` JSON envelope) — record whatever
+Caddy actually returns.
 
 ```text
 (recorded during deployment)

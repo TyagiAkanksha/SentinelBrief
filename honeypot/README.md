@@ -20,15 +20,14 @@ IP. Instance role: `AmazonSSMManagedInstanceCore` only — no other permissions,
   adds them.
 - Nothing else in either direction.
 
-## 3. User data (pasted verbatim at instance launch)
+## 3. User data (pasted at instance launch)
 
 Runs on the instance at first boot, via EC2 cloud-init — never on the operator's machine; it
-cannot be executed here (implementer: syntax-checked with `bash -n` after extracting it to a
-scratch file instead).
+cannot be executed here (implementer: syntax-checked with `bash -n`).
 
-Paste the contents of `honeypot/user-data.sh` (task-05 extracted this block verbatim into that
-file and `bash -n`s it in `tests/test_deploy_docs.py`) into the console's "User data" field at
-instance launch.
+Paste the contents of `honeypot/user-data.sh` into the console's "User data" field at instance
+launch. That file — not this README — is the source of truth (task-05 fix-1, review I3/M6): it is
+`bash -n`'d by `tests/test_deploy_docs.py` and kept in sync with the notes below by hand.
 
 Notes on each line (`honeypot/user-data.sh`):
 
@@ -36,8 +35,7 @@ Notes on each line (`honeypot/user-data.sh`):
   `#!` (a shell script) or `#cloud-config`; anything else is logged as unhandled non-multipart
   user data and never runs at all, which would leave a real `sshd` up on a security group that
   admits port 22 from `0.0.0.0/0`. `set -euo pipefail` stops the script on the first failure (a
-  failed `curl` below, for example) instead of continuing into a half-built host. This block lives
-  verbatim in `honeypot/user-data.sh` (task-05), `bash -n`'d by `tests/test_deploy_docs.py`.
+  failed `curl` below, for example) instead of continuing into a half-built host.
 - `dnf install -y docker python3.12` — AL2023's `docker` package ships no compose plugin
   (installed separately below); `python3.12` is task-02's shipper runtime.
 - The compose plugin install is pinned to `v5.5.1` (verified against
@@ -46,9 +44,12 @@ Notes on each line (`honeypot/user-data.sh`):
 - `systemctl disable --now sshd && systemctl mask sshd` — port 22 must be free before Cowrie
   starts; masking prevents anything from re-enabling `sshd` later. SSM Agent is preinstalled on
   AL2023 and needs no port.
-- `echo 'SystemMaxUse=200M' >> /etc/systemd/journald.conf && systemctl restart systemd-journald`
-  — bounds the journal's on-disk size before Cowrie starts producing chatty traffic
-  (`infra/deploy/database.md`'s "Logs" footnote observes this budget with `journalctl
+- `printf 'SystemMaxUse=200M\nStorage=persistent\n' >> /etc/systemd/journald.conf`, then
+  `mkdir -p /var/log/journal && systemctl restart systemd-journald` — bounds the journal's
+  on-disk size before Cowrie starts producing chatty traffic AND makes it persistent in place
+  (task-05 fix-1, review M6: AL2023 ships `Storage=auto` with no `/var/log/journal`, i.e.
+  volatile by default — without this, `SystemMaxUse=200M` bounds a journal that is wiped on every
+  reboot) (`infra/deploy/database.md`'s "Logs" footnote observes this budget with `journalctl
   --disk-usage`).
 - `mkdir -p /opt/sentinelbrief-honeypot/etc /opt/sentinelbrief-honeypot/data/{log,lib} && chown -R
   999:999 /opt/sentinelbrief-honeypot/data` — the `etc/` directory holds the copied
@@ -63,8 +64,12 @@ Notes on each line (`honeypot/user-data.sh`):
   `var/lib/cowrie`.
 - `useradd --system --no-create-home --shell /sbin/nologin shipper` — task-02's systemd unit runs
   as this unprivileged user, never root.
-- `usermod -aG docker ssm-user` — lets an SSM Session Manager session run `docker compose`
-  commands without `sudo`.
+
+There is deliberately no `usermod -aG docker ssm-user` line (task-05 fix-1, review I3): AL2023's
+SSM Agent creates the `ssm-user` account **lazily, at the first SSM session**, not at boot — a
+`usermod` on a not-yet-existing user aborts the whole script under `set -euo pipefail`, line 2.
+Every `docker compose` command in this runbook and in `infra/deploy/ec2-single-host.md` runs
+inside an SSM session after `sudo -i`, so no group membership is needed.
 
 ## 4. Copy the compose files and pin the image digest
 
@@ -72,8 +77,9 @@ Copy `honeypot/docker-compose.yml` to `/opt/sentinelbrief-honeypot/docker-compos
 `honeypot/etc/cowrie.cfg` to `/opt/sentinelbrief-honeypot/etc/cowrie.cfg` (the compose file's
 relative bind source `./etc/cowrie.cfg` resolves against the compose file's own directory, so the
 cfg must land at exactly that path — not loose in `/opt/sentinelbrief-honeypot/`) via an SSM
-Session Manager session (`aws ssm start-session` and a heredoc, or an S3 object as a courier) —
-**never `scp`**, there is no `sshd` on this host to receive it.
+Session Manager session (`aws ssm start-session` and a heredoc — **not** an S3 object as a
+courier: this host's instance role, `AmazonSSMManagedInstanceCore` only, cannot read any bucket,
+task-05 fix-1 review M5) — **never `scp`**, there is no `sshd` on this host to receive it.
 
 Then, in the same SSM session:
 

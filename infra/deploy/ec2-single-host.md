@@ -31,7 +31,9 @@ runbooks: [`honeypot/README.md`](../../honeypot/README.md) (task-01), the shippe
 - **Instance sizes.** App: `t3.small`, x86_64. Honeypot: `t4g.nano`, arm64 (the honeypot compose
   has no arch-specific image and Cowrie publishes multi-arch, so the cheaper Graviton instance is
   free to use).
-- **Local tools:** `aws` CLI v2, Docker, `git`.
+- **Local tools:** `aws` CLI v2, Docker, `git`. **Run every `aws` command below from the
+  repository root** — every `file://infra/deploy/…` and `file://honeypot/user-data.sh` path is
+  relative to it (task-05 fix-1, review M9).
 - **Generate the four secrets locally, in the shell only** — never write one to a file, never
   paste one into a chat, never let one touch this repo:
 
@@ -110,6 +112,10 @@ history -c
 literal `<POSTGRES_PASSWORD>` above is a placeholder for you to substitute, not a real value ever
 written to disk. See [`env-checklist.md`](env-checklist.md) for what reads each of these.
 
+None of the lines above pass `--overwrite`, deliberately — a fat-fingered replay can never
+silently clobber a good value. If you typo'd a value and need to correct it, re-run that one line
+with `--overwrite` added.
+
 ## 4. App host
 
 Security group — inbound 80/443 only, no port 22 (management is SSM Session Manager only):
@@ -119,10 +125,15 @@ aws ec2 create-security-group --group-name sentinelbrief-app \
   --description "SentinelBrief app host" --vpc-id vpc-00735b325754614bd
 # note the returned GroupId as <app-sg-id>
 aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --protocol tcp --port 80 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --protocol tcp --port 80 --cidr-ipv6 ::/0
+aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --ip-permissions 'IpProtocol=tcp,FromPort=80,ToPort=80,Ipv6Ranges=[{CidrIpv6=::/0}]'
 aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --protocol tcp --port 443 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --protocol tcp --port 443 --cidr-ipv6 ::/0
+aws ec2 authorize-security-group-ingress --group-id <app-sg-id> --ip-permissions 'IpProtocol=tcp,FromPort=443,ToPort=443,Ipv6Ranges=[{CidrIpv6=::/0}]'
 ```
+
+`--cidr-ipv6` is not a valid AWS CLI option on the `secgroupsimplify` shorthand (task-05 fix-1,
+review I1 — `Unknown options: --cidr-ipv6` against the installed CLI); the two IPv6 rules above
+use the long-form `--ip-permissions` instead, verified with `--dry-run` against a real security
+group in this account: `DryRunOperation: Request would have succeeded` for both.
 
 Confirm the AL2023 x86_64 AMI alias resolves (read-only — safe to run any time):
 
@@ -131,10 +142,17 @@ aws ssm get-parameter --region us-east-1 \
   --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 ```
 
-Launch the instance from [`user-data-app.sh`](user-data-app.sh) (installs Docker + the compose
-plugin, `systemctl disable --now sshd && systemctl mask sshd`, creates
-`/opt/sentinelbrief/geoip` and `/var/backups/sentinelbrief`, adds `ssm-user` to the `docker`
-group, and bounds the journal):
+Launch the instance from [`user-data-app.sh`](user-data-app.sh) — the source of truth for the app
+host's boot script (task-05 fix-1) — which installs Docker + the compose plugin,
+`systemctl disable --now sshd && systemctl mask sshd`, creates `/var/backups/sentinelbrief` and
+`/opt/sentinelbrief/geoip` (`chown`'d to uid:gid `1001:1001`, the api image's `appuser` — review
+I4, so the geoip one-off in step 8 can write into it), and bounds the journal
+(`SystemMaxUse=500M`) **persistent in place** (`Storage=persistent` + `mkdir -p /var/log/journal`
+— review M6, no relaunch needed). There is deliberately no `usermod -aG docker ssm-user` line
+(review I3): AL2023's SSM Agent creates `ssm-user` lazily at the first session, so a `usermod` on
+a not-yet-existing user would abort the script under `set -euo pipefail` — every `docker compose`
+command below already runs inside an SSM session after `sudo -i`, so no group membership is
+needed:
 
 ```sh
 aws ec2 run-instances \
@@ -187,7 +205,11 @@ files to the box** (prod copies equal the box byte-for-byte after every apply).
 ```sh
 aws ssm start-session --target <app-instance-id>
 sudo -i
+cd /opt/sentinelbrief
 ```
+
+`sudo -i` lands in `/root`, not `/opt/sentinelbrief` — every relative `./…` and `docker compose`
+command in steps 7, 8, and 11 below assumes this `cd` was run (task-05 fix-1, review M3).
 
 In the session, for each file: create it with the right owner/mode first (`install`, not `cp` +
 `chmod` — `install` sets both in one step, which matters because the SSM session lands as
@@ -252,9 +274,10 @@ EOF
 
 ## 8. Secrets, geoip, migrate, up
 
-Still in the SSM session, in `/opt/sentinelbrief`:
+Still in the SSM session:
 
 ```sh
+cd /opt/sentinelbrief
 ./fetch-secrets.sh
 ```
 
@@ -320,10 +343,13 @@ aws ec2 create-security-group --group-name sentinelbrief-honeypot \
   --description "SentinelBrief honeypot host" --vpc-id <hp-vpc-id>
 # note the returned GroupId as <hp-sg-id>
 aws ec2 authorize-security-group-ingress --group-id <hp-sg-id> --protocol tcp --port 22 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id <hp-sg-id> --protocol tcp --port 22 --cidr-ipv6 ::/0
+aws ec2 authorize-security-group-ingress --group-id <hp-sg-id> --ip-permissions 'IpProtocol=tcp,FromPort=22,ToPort=22,Ipv6Ranges=[{CidrIpv6=::/0}]'
 aws ec2 revoke-security-group-egress --group-id <hp-sg-id> --protocol -1 --port -1 --cidr 0.0.0.0/0
 aws ec2 authorize-security-group-egress --group-id <hp-sg-id> --protocol tcp --port 443 --cidr 0.0.0.0/0
 ```
+
+(`--ip-permissions` again, not `--cidr-ipv6` — review I1, verified with `--dry-run`:
+`DryRunOperation: Request would have succeeded`.)
 
 Launch from [`honeypot/user-data.sh`](../../honeypot/user-data.sh) (arm64 — Cowrie is multi-arch):
 
@@ -342,10 +368,35 @@ aws ec2 allocate-address --domain vpc
 aws ec2 associate-address --instance-id <hp-instance-id> --allocation-id <hp-allocation-id>
 ```
 
-Now follow [`honeypot/README.md`](../../honeypot/README.md) steps 4–6 (copy the compose files,
-pin the Cowrie image digest, start Cowrie, verify the fake banner). Then install the shipper
-together with Cowrie, from [`honeypot/shipper/README.md`](../../honeypot/shipper/README.md), so
-its first read of `cowrie.json` is small (task-02 review notes) — **before**
+Now follow [`honeypot/README.md`](../../honeypot/README.md) steps 4–6 (copy the compose files —
+each a single text file, so a plain heredoc through the SSM session is enough — pin the Cowrie
+image digest, start Cowrie, verify the fake banner). Then install the shipper together with
+Cowrie, from
+[`honeypot/shipper/README.md`](../../honeypot/shipper/README.md), so its first read of
+`cowrie.json` is small (task-02 review notes).
+
+That README's `sudo cp -r honeypot/shipper /opt/sentinelbrief-shipper/src` step assumes a local
+repo checkout, which this host never has (`honeypot/README.md`'s "What is NOT on this host"), and
+an S3 courier is impossible too — the honeypot role has no inline policy (step 1). The one
+mechanism that works on a host with neither: a base64'd tarball, pasted through the SSM session
+(task-05 fix-1, review M5). On the laptop, from the repo root:
+
+```sh
+tar czf - -C honeypot shipper | base64 -w0 > /tmp/shipper.b64
+```
+
+Then, in the SSM session on the honeypot host:
+
+```sh
+base64 -d > /tmp/shipper.tgz <<'EOF'
+<paste the contents of /tmp/shipper.b64 here>
+EOF
+mkdir -p /opt/sentinelbrief-shipper/src
+tar xzf /tmp/shipper.tgz -C /opt/sentinelbrief-shipper/src --strip-components=1
+```
+
+Continue from `honeypot/shipper/README.md`'s venv-build step onward (its own `cp -r` step is
+already done by the tarball above). **Before**
 `systemctl enable --now sentinelbrief-shipper`, prove the unprivileged read path works:
 
 ```sh
@@ -367,7 +418,7 @@ systemctl is-active sentinelbrief-shipper
 From a laptop, not this box:
 
 ```sh
-ssh -p 22 root@<hp-eip>   # any password is accepted by Cowrie
+ssh -p 22 root@<hp-eip>   # almost any password — Cowrie's stock userdb rejects `root` with `root` and `123456`
 uname -a
 exit
 ```
@@ -382,16 +433,17 @@ On the app host:
 
 ```sh
 docker compose logs worker --since 5m | grep 'triage'
-curl -s https://api.sentinelbrief.tyagiakanksha.com/api/v1/alerts?limit=1
+curl -s 'https://api.sentinelbrief.tyagiakanksha.com/api/v1/alerts?page_size=1'
 ```
 
 The alert should show `"status": "triaged"`.
 
 ## 11. Backups
 
-On the app host, `/opt/sentinelbrief`:
+On the app host:
 
 ```sh
+cd /opt/sentinelbrief
 cp sentinelbrief-backup.service sentinelbrief-backup.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now sentinelbrief-backup.timer
@@ -413,16 +465,23 @@ aws s3 ls s3://sentinelbrief-backups-181040156847/postgres/
 ```
 
 On the honeypot host, prove the journal is actually persistent — `SystemMaxUse=200M` is inert if
-the journal is volatile (`/run`, wiped on reboot) rather than persistent (`/var/log/journal`):
+the journal is volatile (`/run`, wiped on reboot) rather than persistent (`/var/log/journal`).
+`honeypot/user-data.sh` already sets `Storage=persistent` and creates `/var/log/journal`, so this
+should already hold; confirm rather than assume:
 
 ```sh
 journalctl --disk-usage
 grep -E '^(Storage|SystemMaxUse)=' /etc/systemd/journald.conf
 ```
 
-If `Storage=` is missing or not `persistent`: the honeypot host is disposable (Operational notes
-below) — add `Storage=persistent` to the same `journald.conf` line in
-[`honeypot/user-data.sh`](../../honeypot/user-data.sh), terminate this instance, and re-run step 9.
+If `Storage=` is missing or not `persistent` anyway, fix it **in place** — no relaunch needed
+(task-05 fix-1, review M6):
+
+```sh
+mkdir -p /var/log/journal
+printf 'SystemMaxUse=200M\nStorage=persistent\n' >> /etc/systemd/journald.conf
+systemctl restart systemd-journald
+```
 
 ## 12. Verify
 
