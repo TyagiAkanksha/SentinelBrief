@@ -122,6 +122,11 @@ export const metadata = { title: "About — SentinelBrief" };
 //     "Evaluation results" -> RESULTS_URL   "Source code" -> REPO_URL   "Product spec" -> PRD_URL
 //   plus one internal <Link href="/alerts">Live alert queue</Link>
 //   Every external link carries rel="noreferrer" and target="_blank".
+//   Styling (ruling R25 — the original brief listed structure only, which produced a page whose
+//   links were indistinguishable from body text): links use the repo's existing treatment
+//   `text-accent underline` (precedent web/src/components/alerts/AlertRow/AlertRow.tsx); the h1
+//   matches /stats (`text-lg font-semibold`); paragraphs sit in a `max-w-prose space-y-3`
+//   container so the measure stays readable; the primary nav in layout.tsx gets `flex gap-4`.
 // web/src/app/layout.tsx: the Primary nav becomes Alerts · Stats · About.
 ```
 
@@ -133,6 +138,17 @@ export const metadata = { title: "About — SentinelBrief" };
 - **R9 — the diagram is ASCII in a `<pre>`, not an image or a chart library.** It is the PRD's own
   diagram, it costs no dependency and no asset pipeline, and the `<figcaption>` carries the same
   content for a screen reader. Cost if wrong: a nicer picture later.
+- **R25 — the page carries the dashboard's existing link, heading and measure treatment.** The
+  brief prescribed structure with no styling, so a literal implementation shipped links with the
+  body-text colour and no underline (review I1, measured in headless Chrome). Fixed in the task's
+  fix round with the repo's own token classes; a dashboard-wide pass over the older unstyled links
+  (layout nav, FilterBar, Pagination) is a deferred Minor for the M8a final review.
+- **R26 — two copy claims are true of the code and of the production compose, but the results
+  table is empty until M7.** The linked results page states "No published runs yet — the first
+  appears at M7" in its own text, so a reader who follows the link sees the truth; the sentence
+  stands, and the owner is shown this at the M8a checkpoint in case they prefer a softer wording
+  until the first v2 row lands. `STRONG_MODEL` is set in `infra/deploy/prod/docker-compose.yml`,
+  so the escalation sentence is true where the page is served.
 - **R10 — the copy is fixed by this brief.** A reviewer checks the rendered text against these three
   paragraphs. If the implementer believes a sentence is inaccurate, it stops and says so rather than
   rewording silently: the claims are load-bearing (PRD §1.3 honesty).
@@ -145,7 +161,7 @@ export const metadata = { title: "About — SentinelBrief" };
 | diagram figure | `.../ArchitectureDiagram.test.tsx` — `it("renders a figure whose caption describes the flow")` | `container.querySelector("figure")` present; the caption text mentions the honeypot, the worker and the dashboard |
 | diagram is decorative to AT | `it("hides the ASCII art from assistive technology")` | the `<pre>` carries `aria-hidden="true"`; its text contains `Cowrie`, `PostgreSQL`, `ARQ` |
 | diagram cannot overflow the page | `it("wraps the diagram in a horizontally scrollable container")` | the `<pre>`'s parent element's `className` contains `overflow-x-auto` |
-| the three paragraphs | `web/src/app/about/page.test.tsx` — `it("renders exactly the three approved paragraphs in order")` | `container.querySelectorAll("p")` — the three paragraphs are found in document order and each starts with its approved opening clause (`SentinelBrief triages honeypot alerts`, `One alert is one honeypot session.`, `This is a portfolio project`) |
+| the three paragraphs | `web/src/app/about/page.test.tsx` — `it("renders the three approved paragraphs in order by opening clause")` (the shipped test keeps the RED name; this row's wording is corrected so the next brief copying it does not overclaim — review conflict 2) | `container.querySelectorAll("p")` — the three paragraphs are found in document order and each starts with its approved opening clause (`SentinelBrief triages honeypot alerts`, `One alert is one honeypot session.`, `This is a portfolio project`) |
 | the load-bearing claims | `it("states the claims the project is held to")` | the rendered text contains `The human always decides.`, `no page view and no public request ever spends a token`, and `including the runs that came out worse` |
 | links render | `it("links to the results table, the repo, the spec and the live queue")` | four links by accessible name; the three external ones carry the `@/lib/site` hrefs, `target="_blank"` and `rel` containing `noreferrer`; the internal one is `/alerts` |
 | one heading | `it("has a single level-one heading")` | `screen.getAllByRole("heading", { level: 1 })` has length 1 |
