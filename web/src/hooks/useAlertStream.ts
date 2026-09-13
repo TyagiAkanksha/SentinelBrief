@@ -1,17 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
+import { CACHE_SETTLE_MS, POLL_INTERVAL_MS } from "@/lib/stream";
+import type { StreamStatus } from "@/lib/stream";
+
 // The SSE `event:` name the api's `verdict_event_stream` publishes (api/routes/stream.py).
 export const VERDICT_CREATED_EVENT = "verdict.created";
 
-// PRD §9: "falls back to 30 s polling".
-export const POLL_INTERVAL_MS = 30_000;
-
-// The API caches the alert list for ALERTS_LIST_CACHE_TTL_S (15 s); one trailing refresh after
-// the cache has turned over makes the list catch up with the counter — the cache is never
-// bypassed from the page (PRD §8, §10.1).
-export const CACHE_SETTLE_MS = 16_000;
-
-export type StreamStatus = "connecting" | "live" | "polling";
+// Re-exported so this hook stays the one import surface for its own callers and tests; the
+// definitions live in `@/lib/stream`, which components may import directly (review t01 N-M2).
+export { CACHE_SETTLE_MS, POLL_INTERVAL_MS };
+export type { StreamStatus };
 
 export type EventSourceLike = {
   addEventListener(type: string, listener: (event: Event) => void): void;

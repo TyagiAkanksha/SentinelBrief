@@ -1,13 +1,10 @@
-import { POLL_INTERVAL_MS } from "@/hooks/useAlertStream";
-import type { StreamStatus } from "@/hooks/useAlertStream";
+import { POLL_INTERVAL_MS } from "@/lib/stream";
+import type { StreamStatus } from "@/lib/stream";
 
 import type { LiveIndicatorProps } from "./interface";
 
-// A function, not a module-level Record: the "polling" branch is the only one that reads
-// POLL_INTERVAL_MS, and it must read it lazily, per call, rather than hardcoding "30s" (review
-// M7) — a module-level object literal would evaluate every branch eagerly at import time, which
-// breaks the pinned AlertStreamRefresher test's `vi.mock("@/hooks/useAlertStream", ...)` (that
-// mock does not export POLL_INTERVAL_MS) even when the rendered status is never "polling".
+// A function, not a module-level Record: the "polling" branch derives its label from
+// POLL_INTERVAL_MS rather than hardcoding "30s" (review M7).
 function labelForStatus(status: StreamStatus): string {
   switch (status) {
     case "connecting":
