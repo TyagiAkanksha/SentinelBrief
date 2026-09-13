@@ -6,6 +6,11 @@ export const VERDICT_CREATED_EVENT = "verdict.created";
 // PRD §9: "falls back to 30 s polling".
 export const POLL_INTERVAL_MS = 30_000;
 
+// The API caches the alert list for ALERTS_LIST_CACHE_TTL_S (15 s); one trailing refresh after
+// the cache has turned over makes the list catch up with the counter — the cache is never
+// bypassed from the page (PRD §8, §10.1).
+export const CACHE_SETTLE_MS = 16_000;
+
 export type StreamStatus = "connecting" | "live" | "polling";
 
 export type EventSourceLike = {
@@ -17,6 +22,7 @@ export type UseAlertStreamOptions = {
   url: string;
   onUpdate: () => void;
   pollIntervalMs?: number;
+  settleDelayMs?: number;
   createEventSource?: (url: string) => EventSourceLike;
 };
 
@@ -35,10 +41,14 @@ function defaultCreateEventSource(url: string): EventSourceLike {
  * review M4) — the page re-reads the database through `onUpdate` (`router.refresh()`), so no
  * attacker-influenced text from the channel is ever rendered from this path (PRD §10.6).
  *
+ * Every event also (re)starts one coalescing `settleDelayMs` timer that calls `onUpdate` once
+ * more after the API's list cache has turned over (`CACHE_SETTLE_MS`, review I1) — the immediate
+ * refresh can otherwise read a cache hit and leave the list unchanged.
+ *
  * `onUpdate` and `createEventSource` are held in refs, refreshed in their own no-dependency
  * effects on every render, so a new callback identity never tears down and reopens the
- * `EventSource` — only `url`/`pollIntervalMs` changing does (the subscribing effect's own
- * dependency array).
+ * `EventSource` — only `url`/`pollIntervalMs`/`settleDelayMs` changing does (the subscribing
+ * effect's own dependency array); the settle timer fires through the same `onUpdate` ref.
  *
  * Per the EventSource specification, a non-200 response (e.g. a 429 or 503 from `StreamGate`/
  * `StreamUnavailableError`) fails the connection permanently rather than retrying — no
@@ -46,7 +56,7 @@ function defaultCreateEventSource(url: string): EventSourceLike {
  * `pollIntervalMs` and stays there until the page is reloaded (ruling R18).
  */
 export function useAlertStream(options: UseAlertStreamOptions): AlertStreamState {
-  const { url, pollIntervalMs = POLL_INTERVAL_MS } = options;
+  const { url, pollIntervalMs = POLL_INTERVAL_MS, settleDelayMs = CACHE_SETTLE_MS } = options;
   const [status, setStatus] = useState<StreamStatus>("connecting");
   const [updates, setUpdates] = useState(0);
 
@@ -63,11 +73,19 @@ export function useAlertStream(options: UseAlertStreamOptions): AlertStreamState
   useEffect(() => {
     const source = createEventSourceRef.current(url);
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
     const stopPolling = () => {
       if (pollTimer !== null) {
         clearInterval(pollTimer);
         pollTimer = null;
+      }
+    };
+
+    const stopSettle = () => {
+      if (settleTimer !== null) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
       }
     };
 
@@ -79,6 +97,12 @@ export function useAlertStream(options: UseAlertStreamOptions): AlertStreamState
     source.addEventListener(VERDICT_CREATED_EVENT, () => {
       setUpdates((count) => count + 1);
       onUpdateRef.current();
+      // One coalescing trailing refresh: restarted by every event, so a burst settles into a
+      // single extra read once the list cache has turned over.
+      stopSettle();
+      settleTimer = setTimeout(() => {
+        onUpdateRef.current();
+      }, settleDelayMs);
     });
 
     source.addEventListener("error", () => {
@@ -93,8 +117,9 @@ export function useAlertStream(options: UseAlertStreamOptions): AlertStreamState
     return () => {
       source.close();
       stopPolling();
+      stopSettle();
     };
-  }, [url, pollIntervalMs]);
+  }, [url, pollIntervalMs, settleDelayMs]);
 
   return { status, updates };
 }
