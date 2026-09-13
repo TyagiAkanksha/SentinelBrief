@@ -61,9 +61,9 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
   `web/src/lib/stats.test.ts`, `web/src/components/ui/Stat/Stat.test.tsx`,
   `web/src/components/stats/DistributionTable/DistributionTable.test.tsx`,
   `web/src/components/stats/CostTable/CostTable.test.tsx`, `web/src/app/stats/page.test.tsx`
-- Modify (test-author, only if they enumerate an exact field set that `cost_by_day` breaks):
-  `tests/test_read_schemas.py`, `tests/test_read_routes.py`, `web/src/lib/format.test.ts`. Check
-  first; if no change is needed, say so in the report.
+- Modify (test-author): `web/src/lib/format.test.ts` (the `formatCount` cases — ruling R11); and,
+  only if they enumerate an exact field set that `cost_by_day` breaks, `tests/test_read_schemas.py`
+  and `tests/test_read_routes.py`. Check those two first; if no change is needed, say so in the report.
 
 ## Interfaces
 
@@ -184,6 +184,11 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
   later, behind a dependency decision the owner has not made.
 - **R7 — the page adds no API call beyond the existing cached `/stats`.** Nothing here computes
   (PRD §9/§10.1).
+- **R11 — `formatCount`'s tests go into the existing `web/src/lib/format.test.ts`, written by the
+  test-author.** `formatCount` is an export of `format.ts` and this repo colocates one test file per
+  module. That file is not pinned for this task; having the test-author extend it in the RED commit
+  keeps the implementer away from authored test files entirely. Cost if wrong: a few assertions
+  move.
 
 ## Interfaces → test table
 
@@ -201,7 +206,7 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
 | `categoryRows` | `it("orders categories by count desc then key asc and drops empty buckets")` | a tie broken by key; a zero-count category absent |
 | `volumeRows` | `it("keeps the API's day order and labels each row with its day")` | order preserved; `bar` relative to the busiest day |
 | zero denominators | `it("returns share 0 and bar 0 for an all-zero series")` | every count 0 → no `NaN` anywhere (`Number.isFinite` on every `share` and `bar`) |
-| `formatCount` | `web/src/lib/stats.test.ts` or the existing `format.test.ts` — `it("formatCount separates thousands and dashes missing values")` | `1234` → `"1,234"`; `null`, `NaN`, `Infinity` → `"—"` |
+| `formatCount` | existing `web/src/lib/format.test.ts` (extended by the test-author, ruling R11) — `it("formatCount separates thousands and dashes missing values")` | `1234` → `"1,234"`; `null`, `NaN`, `Infinity` → `"—"`; the existing `formatTokens` cases stay green |
 | `Stat` | `web/src/components/ui/Stat/Stat.test.tsx` — `it("renders the label, the value and the optional hint")` | the hint element is absent when `hint` is undefined |
 | `DistributionTable` | `.../DistributionTable.test.tsx` — `it("renders a caption, one row per bucket and the share as text")` | `screen.getByRole("table")` has an accessible name from the caption; the counts and percents are text; the bar div is `aria-hidden` |
 | `DistributionTable` empty | `it("renders the empty message when there are no rows")` | `emptyMessage` visible, no data rows |
