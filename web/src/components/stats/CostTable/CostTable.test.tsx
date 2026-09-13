@@ -5,10 +5,14 @@ import { render, screen, within } from "@testing-library/react";
 import { CostTable } from "@/components/stats/CostTable";
 import type { DayCost } from "@/types/api";
 
+// Ruling R21: every day carries ≥ 2 alerts, so Total ≠ Mean on every row and a row-scoped
+// `getByText` can tell the two `$…` cells of the same row apart. A single-alert fixture makes
+// Total and Mean identical by definition, which is what forced the UI's non-spec "Mean " prefix
+// the first time around — the fixture, not the UI, was the defect.
 function makeRows(): DayCost[] {
   return [
-    { day: "2026-09-01", alerts: 2, cost_usd: "0.000300", mean_cost_usd: "0.000150" },
-    { day: "2026-09-02", alerts: 1, cost_usd: "0.000228", mean_cost_usd: "0.000228" },
+    { day: "2026-09-01", alerts: 2, cost_usd: "0.000456", mean_cost_usd: "0.000228" },
+    { day: "2026-09-02", alerts: 3, cost_usd: "0.000900", mean_cost_usd: "0.000300" },
   ];
 }
 
@@ -16,16 +20,24 @@ describe("CostTable", () => {
   it("renders days newest first with formatted costs", () => {
     render(<CostTable rows={makeRows()} emptyMessage="No cost data yet" />);
 
-    const table = screen.getByRole("table", { name: "Cost per day" });
-    const dataRows = within(table).getAllByRole("row").slice(1);
+    // Skip the header row; newest day first is the reverse of the ascending API order the
+    // fixture is given in.
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
 
-    // Newest day first — the reverse of the ascending API order the fixture is given in.
-    expect(dataRows).toHaveLength(2);
-    expect(dataRows[0]).toHaveTextContent("2026-09-02");
-    expect(dataRows[1]).toHaveTextContent("2026-09-01");
+    const [newest, oldest] = rows;
 
-    expect(screen.getByText("$0.000228")).toBeInTheDocument();
-    expect(screen.getByText("$0.000300")).toBeInTheDocument();
+    // Row-scoped queries pin all four cells: a Mean cell that reads `cost_usd` instead of
+    // `mean_cost_usd`, or an Alerts cell that renders `row.alerts + 1`, must both fail here.
+    expect(within(newest!).getByText("2026-09-02")).toBeInTheDocument();
+    expect(within(newest!).getByText("3")).toBeInTheDocument();
+    expect(within(newest!).getByText("$0.000900")).toBeInTheDocument();
+    expect(within(newest!).getByText("$0.000300")).toBeInTheDocument();
+
+    expect(within(oldest!).getByText("2026-09-01")).toBeInTheDocument();
+    expect(within(oldest!).getByText("2")).toBeInTheDocument();
+    expect(within(oldest!).getByText("$0.000456")).toBeInTheDocument();
+    expect(within(oldest!).getByText("$0.000228")).toBeInTheDocument();
   });
 
   it("renders the empty message when there are no rows", () => {

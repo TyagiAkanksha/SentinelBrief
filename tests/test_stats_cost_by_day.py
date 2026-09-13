@@ -124,10 +124,14 @@ async def test_cost_by_day_counts_an_alert_once_when_it_has_two_verdicts(
 async def test_cost_by_day_mean_is_quantized_to_six_places_half_up(
     db_session: AsyncSession,
 ) -> None:
+    """Ruling R23: the exact mean must sit on the half so this test discriminates the rounding
+    *mode*, not just the six-place scale. Two alerts costing `0.000002` and `0.000003` sum to
+    `0.000005`; the exact mean is `0.0000025`, which is `0.000003` under `ROUND_HALF_UP` but
+    `0.000002` under both `ROUND_DOWN` and `ROUND_HALF_EVEN` (rounds to the nearest *even* last
+    digit, which is `2`) — so a regression to either of those modes fails here."""
     for session_id, cost in (
-        ("cbd-mean-1", Decimal("0.000034")),
-        ("cbd-mean-2", Decimal("0.000033")),
-        ("cbd-mean-3", Decimal("0.000033")),
+        ("cbd-mean-1", Decimal("0.000002")),
+        ("cbd-mean-2", Decimal("0.000003")),
     ):
         await seed_alert(
             db_session,
@@ -142,9 +146,9 @@ async def test_cost_by_day_mean_is_quantized_to_six_places_half_up(
 
     assert len(stats.cost_by_day) == 1
     row = stats.cost_by_day[0]
-    assert row.alerts == 3
-    assert row.cost_usd == Decimal("0.000100")
-    assert row.mean_cost_usd == Decimal("0.000033")
+    assert row.alerts == 2
+    assert row.cost_usd == Decimal("0.000005")
+    assert row.mean_cost_usd == Decimal("0.000003")
     assert row.mean_cost_usd.as_tuple().exponent == -6
 
 

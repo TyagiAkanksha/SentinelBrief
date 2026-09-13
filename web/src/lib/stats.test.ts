@@ -114,6 +114,9 @@ describe("categoryRows", () => {
     // first ('b' < 's'). "other" is dropped for its zero count.
     expect(rows.map((r) => r.key)).toEqual(["reconnaissance", "brute_force", "scanning"]);
     expect(rows.map((r) => r.count)).toEqual([5, 2, 2]);
+    // M1: the label must be the humanized form, not the raw key — `label: key` would still pass
+    // every assertion above.
+    expect(rows.map((r) => r.label)).toEqual(["Reconnaissance", "Brute force", "Scanning"]);
   });
 });
 
