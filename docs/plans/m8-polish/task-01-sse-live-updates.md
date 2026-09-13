@@ -111,8 +111,8 @@ Two properties carry the security weight of this task:
       summary: Annotated[str, Field(max_length=REASONING_EXCERPT_CHARS)]
 
   # core/errors.py  (append, alphabetical position not required — keep the file's existing order)
-  class StreamUnavailableError(SentinelBriefError):
-      """The event stream's Redis seam is not wired or not reachable."""
+        """The event stream's Redis seam is not wired (review M1: an UNREACHABLE Redis cannot
+      surface here — see the Cleanup note in `verdict_event_stream` below)."""
       code = "stream_unavailable"
   # api/errors.py: STATUS_BY_ERROR gains  StreamUnavailableError: 503
 
@@ -153,7 +153,8 @@ Two properties carry the security weight of this task:
       # on client disconnect, and on shutdown — so every acquire has exactly one release.
 
   async def verdict_event_stream(redis: Redis, *, heartbeat_s: float, gate: StreamGate | None = None) -> AsyncIterator[str]: ...
-      # pubsub = redis.pubsub(); await pubsub.subscribe(VERDICT_CREATED_CHANNEL)
+      # The subscribe MUST be inside the outer try (ruling R16 — this brief's original shape put it
+      # above and caused a Critical permit leak): see the Cleanup block below for the exact nesting.
       # loop: message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=heartbeat_s)
       #   message is None                      -> yield format_comment(HEARTBEAT_COMMENT)
       #   RedisTimeoutError                    -> yield format_comment(HEARTBEAT_COMMENT) and CONTINUE.
@@ -169,14 +170,24 @@ Two properties carry the security weight of this task:
       #       (the browser's EventSource reconnects on its own; the hook falls back to polling meanwhile)
       #   a message                            -> rendered = render_verdict_event(message["data"]);
       #                                           yield it when not None, else log + skip
-      # Cleanup (ruling R15): the gate release must be in an OUTER `finally` that the pubsub
-      # cleanup cannot skip — a raising `unsubscribe()`/`aclose()` during a disconnect-driven
-      # cancellation would otherwise leak a permit and eventually 429 every client:
+      # Cleanup (rulings R15 + R16). EVERY statement that can raise after the route acquired a
+      # permit — `redis.pubsub()` and `subscribe()` included — sits inside the outer `try`, and the
+      # gate release is the outer `finally`, which the pub/sub cleanup cannot skip. Getting this
+      # nesting wrong leaks one permit per failure: a dead Redis plus EventSource's automatic
+      # reconnect burns the whole `STREAM_MAX_CLIENTS` budget in minutes and 429s every visitor
+      # permanently, even after Redis recovers.
       #   try:
-      #       try: ...the loop...
-      #       finally: await pubsub.unsubscribe(); await pubsub.aclose()   # may raise
+      #       pubsub = redis.pubsub()
+      #       try:
+      #           await pubsub.subscribe(VERDICT_CREATED_CHANNEL)
+      #           ...the loop...
+      #       finally:
+      #           await pubsub.unsubscribe(); await pubsub.aclose()   # may raise
       #   finally:
       #       if gate is not None: gate.release()
+      # NOTE: an unreachable Redis cannot answer 503 here — the response headers are already on the
+      # wire when the generator first runs, so the client sees a 200 whose body aborts and
+      # EventSource retries. Do not claim otherwise in a docstring (review M1).
 
   @router.get("/stream", operation_id="stream_verdicts", response_class=StreamingResponse,
               responses={200: {"content": {"text/event-stream": {}}, "description": "SSE stream of verdict.created events."},
@@ -232,7 +243,8 @@ Two properties carry the security weight of this task:
   // web/src/components/alerts/LiveIndicator/interface.ts
   export type LiveIndicatorProps = { status: StreamStatus; updates: number };
   // LiveIndicator.tsx: a dumb <p role="status" aria-live="polite"> whose TEXT carries the state
-  //   "connecting" -> "Connecting…"   "live" -> "Live"   "polling" -> "Polling every 30s"
+  //   "connecting" -> "Connecting…"   "live" -> "Live"   "polling" -> `Polling every ${POLL_INTERVAL_MS / 1000}s`
+  //   (derive the interval from the constant — a hardcoded "30s" silently lies if it changes; review M7)
   //   plus ` · ${updates} update(s)` when updates > 0. Colour comes from a token class
   //   (text-sev-2 live / text-muted connecting / text-sev-3 polling) and is never the only signal.
 
@@ -249,10 +261,14 @@ Two properties carry the security weight of this task:
 
 ## Briefing rulings (decided — do not re-litigate; raise only if implementation proves one wrong)
 
-- **R1 — a read timeout is a heartbeat, not an end of stream.** The stream reuses the single
-  `app.state.redis` client rather than opening a second one with its own socket timeout. Its 2 s
-  socket timeout can surface as `redis.exceptions.TimeoutError` from `get_message`; that is caught
-  and yields a heartbeat. Cost if wrong: heartbeats arrive more often than `STREAM_HEARTBEAT_S`.
+- **R1 — a read timeout is a heartbeat, not an end of stream** (premise corrected by R17). The
+  stream reuses the single `app.state.redis` client. A `redis.exceptions.TimeoutError` out of
+  `get_message` is caught and yields a heartbeat rather than ending the stream. **Do not claim the
+  effective interval is `min(heartbeat_s, redis_socket_timeout_s)`** — on the pinned redis-py 5.3.1
+  an explicit per-call `timeout=` overrides the connection's `socket_timeout` and expiry *returns
+  `None`* instead of raising, so idle heartbeats arrive at exactly `STREAM_HEARTBEAT_S`. The
+  `except` branch stays as defence for a timeout raised outside that guarded read (the health check
+  or a reconnect); it is exercised by the fake-driven test, not by a healthy client.
 - **R2 — the payload is a hint.** The hook never reads `event.data`; the page re-reads the database
   through `router.refresh()`. This is the m5 task-04 review M4 deferral, and it also means no
   attacker-influenced string from the channel is ever rendered from the stream path.
@@ -264,11 +280,13 @@ Two properties carry the security weight of this task:
   of the app coroutine, so an endless `StreamingResponse` never yields a partial body to the client.
   A real server on a real socket is also closer to production, including Starlette's client-disconnect
   handling. Cost if wrong: a slower, socket-bound test.
-- **R13 — the frame-injection test asserts on physical lines, not substring counts.** The brief's
-  original `frame.count("event:") == 1` is unsatisfiable for its own example payload: JSON-escaping
-  leaves the literal words `event:` intact inside the `summary` value and escapes only the control
-  characters, so the substring appears twice however correct the implementation is. Cost if wrong:
-  nothing — the line-based form pins the property the substring form was reaching for.
+- **R13 — the frame-injection test asserts on physical lines, not substring counts, and a
+  "physical line" breaks on CR as well as LF.** The original `frame.count("event:") == 1` is
+  unsatisfiable for its own example payload: JSON-escaping leaves the literal words `event:` intact
+  inside the `summary` value and escapes only the control characters. Splitting on `"\n"` alone is
+  also not enough: the SSE specification terminates a line on CR, LF **or** CRLF, so an
+  interpolating implementation fed the `\r` payload forges a complete event while a `\n`-only
+  assertion stays green (review I1 proved exactly that with a mutant). Split on all three.
 - **R14 — import the Redis exception classes at module level.** `verdict_event_stream`'s parameter
   is named `redis`, which shadows the package inside the function body; `except
   redis.exceptions.TimeoutError` there raises `AttributeError`. Use
@@ -276,6 +294,14 @@ Two properties carry the security weight of this task:
 - **R15 — the gate release lives in an outer `finally` the pubsub cleanup cannot skip.** A raising
   `unsubscribe()`/`aclose()` during a disconnect-driven cancellation would otherwise leak a permit
   and, after `STREAM_MAX_CLIENTS` such failures, 429 every client forever.
+- **R16 — every statement that can raise after the permit is acquired lives inside the outer
+  `try`.** `redis.pubsub()` and `subscribe()` included. This brief originally placed them above it,
+  which produced a Critical permit leak (review C1): a dead Redis 429s the endpoint permanently.
+- **R17 — R1's mechanism was wrong; its behaviour stands.** See R1 as corrected above.
+- **R18 — a rejected stream does not come back on its own.** Per the EventSource specification a
+  non-200 response (our 429 or 503) fails the connection permanently: the browser fires `error`,
+  closes, and never retries. Such a tab polls every 30 s until the user reloads. That is correct
+  under R4, and it is the mechanism that made C1 sticky — worth knowing, not worth code.
 - **R4 — no auto-reconnect logic of our own.** `EventSource` reconnects natively; the hook's job is
   to notice (`error`) and keep the page fresh by polling until `open` returns. Cost if wrong: a
   page that was offline for a while refreshes on the 30 s tick rather than instantly.
