@@ -34,13 +34,12 @@ export function CostTable({ rows, emptyMessage }: CostTableProps) {
         ) : (
           newestFirst.map((row) => (
             <tr key={row.day}>
-              <td>{row.day}</td>
+              <th scope="row" className="text-left">
+                {row.day}
+              </th>
               <td>{formatCount(row.alerts)}</td>
               <td>{formatUsd(row.cost_usd)}</td>
-              {/* On a single-alert day the mean equals the total, so the two cells would
-                  otherwise carry identical text — "Mean " keeps every cell's value unambiguous
-                  regardless of the day's alert count. */}
-              <td>{`Mean ${formatUsd(row.mean_cost_usd)}`}</td>
+              <td>{formatUsd(row.mean_cost_usd)}</td>
             </tr>
           ))
         )}

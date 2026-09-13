@@ -1,4 +1,4 @@
-import { formatPercent } from "@/lib/format";
+import { formatCount, formatPercent } from "@/lib/format";
 
 import type { DistributionTableProps } from "./interface";
 
@@ -32,8 +32,10 @@ export function DistributionTable({
         ) : (
           rows.map((row) => (
             <tr key={row.key}>
-              <td>{row.label}</td>
-              <td>{row.count}</td>
+              <th scope="row" className="text-left">
+                {row.label}
+              </th>
+              <td>{formatCount(row.count)}</td>
               <td>
                 {formatPercent(row.share)}
                 <div
