@@ -11,11 +11,17 @@ Two properties carry the security weight of this module:
    connection and one Redis pub/sub connection. The route acquires; `verdict_event_stream`'s
    generator releases in its `finally` — Starlette always closes a `StreamingResponse`'s
    generator (normal end, client disconnect, or shutdown), so every acquire gets exactly one
-   release.
+   release. The shared Redis connection POOL is bounded too: a client disconnect cancels the
+   response task, and anyio re-delivers that cancellation at every subsequent await — including
+   inside redis-py's `PubSub.aclose()`, between `connection.disconnect()` and
+   `connection_pool.release()`, which closes the socket but leaves the `Connection` object in the
+   pool's `_in_use_connections` set forever (review C1). `_close_pubsub` runs detached behind an
+   `asyncio.shield` so that teardown always finishes and the connection always goes back.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -25,6 +31,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from redis.asyncio import Redis
+from redis.asyncio.client import PubSub
 from redis.exceptions import RedisError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
@@ -132,6 +139,17 @@ class StreamGate:
         self.active = max(0, self.active - 1)
 
 
+async def _close_pubsub(pubsub: PubSub) -> None:
+    """Unsubscribe then close; nested so a raising unsubscribe still closes (t01 N-M1)."""
+    try:
+        await pubsub.unsubscribe()
+    finally:
+        # redis-py's PubSub.aclose has no return annotation upstream (redis-py 5.3.1,
+        # redis/asyncio/client.py) — the ignore below is the only way to keep
+        # `mypy --strict` clean around it.
+        await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+
 async def verdict_event_stream(
     redis: Redis, *, heartbeat_s: float, gate: StreamGate | None = None
 ) -> AsyncIterator[str]:
@@ -191,11 +209,12 @@ async def verdict_event_stream(
                     continue
                 yield rendered
         finally:
-            await pubsub.unsubscribe()
-            # redis-py's PubSub.aclose has no return annotation upstream (redis-py 5.3.1,
-            # redis/asyncio/client.py) — the ignore below is the only way to keep
-            # `mypy --strict` clean around it.
-            await pubsub.aclose()  # type: ignore[no-untyped-call]
+            # A disconnect-driven cancellation is re-delivered at every await (anyio), and it
+            # lands inside redis-py's aclose() between connection.disconnect() and
+            # connection_pool.release(): the socket closes but the Connection object stays in
+            # the pool's _in_use_connections set forever. Detach the teardown so it always
+            # completes; the shield only protects THIS await, the task keeps running.
+            await asyncio.shield(asyncio.ensure_future(_close_pubsub(pubsub)))
     finally:
         if gate is not None:
             gate.release()
