@@ -114,5 +114,9 @@ the README is written against the finished product; the review closes the projec
 
 ## Status
 
-M8a in progress — briefs 01–03 written 2026-09-12 on `feat/m8a-dashboard-live` (ledger:
-`.superpowers/sdd/m8-polish/progress.md`). M8b planned — briefs 04–07 pending at the M7 gate.
+M8a **gate complete 2026-09-13** at `4c2cb08` on `feat/m8a-dashboard-live` (ledger:
+`.superpowers/sdd/m8-polish/progress.md`): tasks 01–03 approved, whole-branch review + fix wave
+approved, browser pass done; the PR into `main` waits for `m6` to merge, then the branch rebases
+(regenerate both baselines, add `--cov=sentinelbrief_shipper`, bump both prod image tags at deploy).
+M8b planned — briefs 04–07 pending at the M7 gate; M8b inherits the deferred Minors N1–N4, t01 M9,
+t02 M4 and the FRONTEND-CONVENTIONS §3 wording from the M8a final review.
