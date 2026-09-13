@@ -40,10 +40,14 @@ M0–M7 Global Constraints apply verbatim. Additionally:
 M8 runs in two halves so the dashboard can be built while M6's 48-hour soak is still running.
 
 - **M8a — tasks 1–3** (SSE live updates, `/stats`, `/about`): branch `feat/m8a-dashboard-live`, cut
-  from `main` at tag `m5`; briefs written 2026-09-12. It touches only `api/routes/stream.py`,
-  `core/schemas/`, `core/services/alerts_read.py`, `core/config.py`, `api/{deps,errors,factory}.py`
-  and `web/` — none of the files M6 is editing, so the branches cannot collide beyond
-  `.env.example` and the two regenerated baselines.
+  from `main` at tag `m5`; briefs written 2026-09-12. **Overlap with M6 (measured at the M8a
+  final review, correcting an earlier claim of "no overlap"):** nine files are touched by both
+  branches — `.env.example`, `.gitignore`, `api/deps.py`, `api/errors.py`, `api/openapi.json`,
+  `core/config.py`, `core/errors.py`, `docs/plans/README.md`,
+  `web/src/types/generated/schema.d.ts`. Expect textual conflicts in `api/deps.py` (same import
+  line and the same insertion point after `get_enqueue`), `api/errors.py` (adjacent import and
+  `STATUS_BY_ERROR` rows) and `.gitignore` (a duplicated `.claude/scheduled_tasks.lock` line);
+  the rest auto-merge; the two baselines are regenerated, never merged by hand.
 - **M8b — tasks 4–7** (per-IP rate limiter + forged-XFF check, retriage, token-budget breaker,
   README final, whole-repo review): branch `feat/m8b-polish`, cut from `main` after `m7` is tagged;
   briefs written at the M7 gate.

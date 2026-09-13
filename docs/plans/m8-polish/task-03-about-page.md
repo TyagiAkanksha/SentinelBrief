@@ -147,8 +147,10 @@ export const metadata = { title: "About — SentinelBrief" };
   table is empty until M7.** The linked results page states "No published runs yet — the first
   appears at M7" in its own text, so a reader who follows the link sees the truth; the sentence
   stands, and the owner is shown this at the M8a checkpoint in case they prefer a softer wording
-  until the first v2 row lands. `STRONG_MODEL` is set in `infra/deploy/prod/docker-compose.yml`,
-  so the escalation sentence is true where the page is served.
+  until the first v2 row lands. `STRONG_MODEL: gpt-5.4` is set in
+  `infra/deploy/prod/docker-compose.yml` **on `feat/m6-real-data-deploy`** (that file does not exist
+  on this branch); the escalation sentence is true where the page is served once M8a has rebased
+  onto `main` after `m6` — re-check at the M8a deploy gate.
 - **R10 — the copy is fixed by this brief.** A reviewer checks the rendered text against these three
   paragraphs. If the implementer believes a sentence is inaccurate, it stops and says so rather than
   rewording silently: the claims are load-bearing (PRD §1.3 honesty).
