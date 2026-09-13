@@ -106,6 +106,10 @@ class StreamGate:
     PAIRING CONTRACT: the ROUTE acquires; the GENERATOR (`verdict_event_stream`) releases in its
     `finally`. Starlette always closes a `StreamingResponse`'s generator — on normal end, on
     client disconnect, and on shutdown — so every acquire has exactly one release.
+
+    The cap is per process: `create_app()` installs one instance on `app.state.stream_gate`, so
+    running the API with multiple worker processes (e.g. `uvicorn --workers N`) multiplies the
+    real ceiling by `N`.
     """
 
     limit: int
@@ -135,10 +139,12 @@ async def verdict_event_stream(
     while idle.
 
     Reuses the shared `redis` client rather than opening a second one with its own socket
-    timeout: `redis`'s socket_timeout (`Settings.redis_socket_timeout_s`) can fire as a
-    `redis.exceptions.TimeoutError` before `timeout=heartbeat_s` does, so the effective heartbeat
-    is `min(heartbeat_s, redis_socket_timeout_s)` — harmless, since a quiet channel must never
-    end the stream (briefing ruling R1).
+    timeout. On the pinned redis-py 5.3.1, an explicit per-call `timeout=` overrides the
+    connection's `socket_timeout` and expiry returns `None` rather than raising, so the
+    effective idle interval is exactly `heartbeat_s` (ruling R17 corrects R1's premise; R1's own
+    "a read timeout is a heartbeat, not an end of stream" behaviour still holds). The `except
+    RedisTimeoutError` branch below is defensive: it guards a timeout raised outside this
+    specific call — a health check or a reconnect — not the guarded `get_message` read itself.
 
     Args:
         redis: The Redis client to subscribe through. Named `redis`, which SHADOWS the
@@ -155,10 +161,15 @@ async def verdict_event_stream(
         One SSE frame (`format_comment(HEARTBEAT_COMMENT)`, or `render_verdict_event`'s result)
         per loop iteration.
     """
-    pubsub = redis.pubsub()
-    await pubsub.subscribe(VERDICT_CREATED_CHANNEL)
+    # Ruling R16: every statement that can raise after the route has already acquired a permit —
+    # `redis.pubsub()` and `subscribe()` included — lives inside this outer `try`, so the outer
+    # `finally` below (the gate release) cannot be skipped. The brief's original shape put both
+    # calls above this `try`; a dead Redis raising out of either one leaked a permit per attempt
+    # and, via the browser's automatic reconnect, 429'd every visitor within minutes (review C1).
     try:
+        pubsub = redis.pubsub()
         try:
+            await pubsub.subscribe(VERDICT_CREATED_CHANNEL)
             while True:
                 try:
                     message = await pubsub.get_message(
@@ -181,7 +192,10 @@ async def verdict_event_stream(
                 yield rendered
         finally:
             await pubsub.unsubscribe()
-            await pubsub.aclose()  # type: ignore[no-untyped-call]  # redis-py's PubSub.aclose has no return annotation upstream
+            # redis-py's PubSub.aclose has no return annotation upstream (redis-py 5.3.1,
+            # redis/asyncio/client.py) — the ignore below is the only way to keep
+            # `mypy --strict` clean around it.
+            await pubsub.aclose()  # type: ignore[no-untyped-call]
     finally:
         if gate is not None:
             gate.release()
@@ -210,8 +224,10 @@ async def stream_verdicts(
 
     Args:
         request: The current request, used to reach `app.state.stream_gate`.
-        redis: The wired Redis client (`RedisDep`; raises `StreamUnavailableError` -> 503 when
-            unwired).
+        redis: The wired Redis client (`RedisDep`; raises `StreamUnavailableError` -> 503 only
+            when unwired). An unreachable-but-wired Redis cannot surface a 503 here: the headers
+            are already on the wire by the time `verdict_event_stream` discovers the failure, so
+            the client sees a 200 whose body aborts instead (review M1).
         settings: The app's `Settings`, for `stream_heartbeat_s`.
 
     Returns:

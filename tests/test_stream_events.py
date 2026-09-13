@@ -163,12 +163,17 @@ def test_render_verdict_event_cannot_be_escaped_by_a_newline_in_summary(
     never start a second physical SSE line; it only ever sits, inert, inside the one `data:`
     line's JSON string value.
 
-    Judgment call (recorded in the test-author report): pins the same physical-line property the
-    brief's `frame.count("event:") == 1` was reaching for, but counts LINES (split on the real
-    `\\n` byte), not the raw substring — `frame.count("event:")` is actually 2 for this exact
-    payload (the literal words "event: verdict.created" survive JSON-escaping unchanged inside
-    the `summary` string value; only the control characters around them are escaped), so the
-    brief's literal substring-count assertion cannot pass for ANY implementation, secure or not.
+    Judgment call (recorded in the test-author report), corrected in fix round 1 (review I1):
+    pins the same physical-line property the brief's `frame.count("event:") == 1` was reaching
+    for, but splits on every SSE line terminator — CR, LF, or CRLF (ruling R13 as amended), not
+    `"\\n"` alone. A `"\\n"`-only split let the `[carriage-return]` payload forge a complete
+    second physical line past every assertion here (the review's mutant 1 proved it: an
+    interpolating implementation emitted 7 physical lines and a fully forged
+    `event: verdict.created` / `data: ...` pair while every `"\\n"`-based assertion stayed
+    green). `frame.count("event:")` is still 2 for this exact payload regardless of terminator
+    (the literal words "event: verdict.created" survive JSON-escaping unchanged inside the
+    `summary` string value; only the control characters around them are escaped), so the brief's
+    literal substring-count assertion cannot pass for ANY implementation, secure or not.
     """
     payload = {**_BASE_PAYLOAD, "summary": forged_summary}
     raw = json.dumps(payload).encode()

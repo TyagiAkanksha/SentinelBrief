@@ -1,12 +1,23 @@
+import { POLL_INTERVAL_MS } from "@/hooks/useAlertStream";
 import type { StreamStatus } from "@/hooks/useAlertStream";
 
 import type { LiveIndicatorProps } from "./interface";
 
-const LABEL_BY_STATUS: Record<StreamStatus, string> = {
-  connecting: "Connecting…",
-  live: "Live",
-  polling: "Polling every 30s",
-};
+// A function, not a module-level Record: the "polling" branch is the only one that reads
+// POLL_INTERVAL_MS, and it must read it lazily, per call, rather than hardcoding "30s" (review
+// M7) — a module-level object literal would evaluate every branch eagerly at import time, which
+// breaks the pinned AlertStreamRefresher test's `vi.mock("@/hooks/useAlertStream", ...)` (that
+// mock does not export POLL_INTERVAL_MS) even when the rendered status is never "polling".
+function labelForStatus(status: StreamStatus): string {
+  switch (status) {
+    case "connecting":
+      return "Connecting…";
+    case "live":
+      return "Live";
+    case "polling":
+      return `Polling every ${POLL_INTERVAL_MS / 1000}s`;
+  }
+}
 
 // Colour is never the only signal (docs/FRONTEND-CONVENTIONS.md §9): the text always names the
 // state; these token classes are a secondary cue.
@@ -17,7 +28,7 @@ const COLOR_CLASS_BY_STATUS: Record<StreamStatus, string> = {
 };
 
 export function LiveIndicator({ status, updates }: LiveIndicatorProps) {
-  const label = LABEL_BY_STATUS[status];
+  const label = labelForStatus(status);
   const suffix = updates > 0 ? ` · ${updates} update(s)` : "";
 
   return (

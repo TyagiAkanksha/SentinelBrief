@@ -168,11 +168,14 @@ class Settings(BaseSettings):
     ::backoff_seconds` reads this, never a literal."""
     stream_heartbeat_s: Annotated[float, Field(gt=0)] = 15.0
     """How often `GET /api/v1/stream` yields a heartbeat comment while idle, in seconds (PRD §8;
-    m8a task-01). The effective heartbeat is `min(stream_heartbeat_s, redis_socket_timeout_s)`
-    since the shared client's own socket timeout can fire first (briefing ruling R1)."""
+    m8a task-01). On the pinned redis-py 5.3.1 an explicit per-call `timeout=` overrides the
+    connection's `socket_timeout`, so the effective idle interval is exactly this value (ruling
+    R17 corrects R1's premise; R1's own heartbeat-not-end-of-stream behaviour still holds)."""
     stream_max_clients: Annotated[int, Field(ge=1)] = 50
-    """Max concurrent `GET /api/v1/stream` clients; each holds one HTTP connection and one Redis
-    pub/sub connection. Past this, new requests get a `429 rate_limited` envelope (m8a task-01)."""
+    """Max concurrent `GET /api/v1/stream` clients per process; each holds one HTTP connection and
+    one Redis pub/sub connection. Past this, new requests get a `429 rate_limited` envelope (m8a
+    task-01). The cap is per process (`StreamGate` lives on `app.state`): running the API with
+    multiple worker processes multiplies the real ceiling by the process count."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

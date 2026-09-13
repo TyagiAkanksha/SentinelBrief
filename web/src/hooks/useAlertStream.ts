@@ -39,6 +39,11 @@ function defaultCreateEventSource(url: string): EventSourceLike {
  * effects on every render, so a new callback identity never tears down and reopens the
  * `EventSource` — only `url`/`pollIntervalMs` changing does (the subscribing effect's own
  * dependency array).
+ *
+ * Per the EventSource specification, a non-200 response (e.g. a 429 or 503 from `StreamGate`/
+ * `StreamUnavailableError`) fails the connection permanently rather than retrying — no
+ * behaviour change here, but it means a tab rejected at open time drops to polling every
+ * `pollIntervalMs` and stays there until the page is reloaded (ruling R18).
  */
 export function useAlertStream(options: UseAlertStreamOptions): AlertStreamState {
   const { url, pollIntervalMs = POLL_INTERVAL_MS } = options;

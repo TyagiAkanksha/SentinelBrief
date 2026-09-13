@@ -143,6 +143,12 @@ class QueueUnavailableError(SentinelBriefError):
 
 
 class StreamUnavailableError(SentinelBriefError):
-    """The event stream's Redis seam is not wired or not reachable (m8a task-01)."""
+    """The event stream's Redis seam is not wired (m8a task-01).
+
+    An unreachable-but-wired Redis cannot surface here (review M1): by the time a subscribe or
+    read fails, `GET /api/v1/stream`'s response headers are already on the wire, so the client
+    sees a 200 whose body aborts instead — see the Cleanup note on
+    `api.routes.stream.verdict_event_stream`.
+    """
 
     code = "stream_unavailable"
