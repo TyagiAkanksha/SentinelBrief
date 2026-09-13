@@ -191,7 +191,7 @@ export const metadata = { title: "About — SentinelBrief" };
 pnpm -C web lint && pnpm -C web type-check && pnpm -C web format:check && pnpm -C web test
 grep -rn "#[0-9a-fA-F]\{6\}" web/src --include='*.tsx' --include='*.ts'; echo "exit=$?"   # exit=1
 grep -rn "fetch\|getJson" web/src/app/about/page.tsx; echo "exit=$?"                      # exit=1 (the page fetches nothing)
-grep -c "http" web/src/lib/site.ts                                                        # 3 links, one definition each
+grep -c "_URL = " web/src/lib/site.ts                                                     # 3 constants (only REPO_URL carries a literal "http"; the other two interpolate it)
 API_URL=http://127.0.0.1:8000 pnpm -C web build                                           # /about prerenders as static
 ```
 
