@@ -156,7 +156,11 @@ Two properties carry the security weight of this task:
       # pubsub = redis.pubsub(); await pubsub.subscribe(VERDICT_CREATED_CHANNEL)
       # loop: message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=heartbeat_s)
       #   message is None                      -> yield format_comment(HEARTBEAT_COMMENT)
-      #   redis.exceptions.TimeoutError        -> yield format_comment(HEARTBEAT_COMMENT) and CONTINUE.
+      #   RedisTimeoutError                    -> yield format_comment(HEARTBEAT_COMMENT) and CONTINUE.
+      #       NOTE (ruling R14): the parameter is named `redis`, which SHADOWS the top-level
+      #       `redis` package inside this function — `except redis.exceptions.TimeoutError`
+      #       raises AttributeError at runtime. Import the classes at module level instead:
+      #       `from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError`.
       #       Why: the shared client's socket_timeout (Settings.redis_socket_timeout_s, 2.0) can fire
       #       before `timeout=heartbeat_s` does, and a quiet channel must never end the stream. The
       #       effective heartbeat is therefore min(heartbeat_s, redis_socket_timeout_s) — harmless,
@@ -165,7 +169,14 @@ Two properties carry the security weight of this task:
       #       (the browser's EventSource reconnects on its own; the hook falls back to polling meanwhile)
       #   a message                            -> rendered = render_verdict_event(message["data"]);
       #                                           yield it when not None, else log + skip
-      # finally: await pubsub.unsubscribe(); await pubsub.aclose(); gate.release() when gate is not None
+      # Cleanup (ruling R15): the gate release must be in an OUTER `finally` that the pubsub
+      # cleanup cannot skip — a raising `unsubscribe()`/`aclose()` during a disconnect-driven
+      # cancellation would otherwise leak a permit and eventually 429 every client:
+      #   try:
+      #       try: ...the loop...
+      #       finally: await pubsub.unsubscribe(); await pubsub.aclose()   # may raise
+      #   finally:
+      #       if gate is not None: gate.release()
 
   @router.get("/stream", operation_id="stream_verdicts", response_class=StreamingResponse,
               responses={200: {"content": {"text/event-stream": {}}, "description": "SSE stream of verdict.created events."},
@@ -247,6 +258,24 @@ Two properties carry the security weight of this task:
   attacker-influenced string from the channel is ever rendered from the stream path.
 - **R3 — the gate lives on `app.state`, not in a module global.** Two apps in one test process must
   not share a counter. `create_app()` installs it; the route acquires; the generator releases.
+- **R12 — the route's live test runs against a real `uvicorn.Server`, not `httpx.ASGITransport`.**
+  Proven empirically by the task-01 test-author (traced into httpx 0.28.1; reproduced a 120 s hang):
+  `ASGITransport.handle_async_request` collects every `http.response.body` chunk inside one `await`
+  of the app coroutine, so an endless `StreamingResponse` never yields a partial body to the client.
+  A real server on a real socket is also closer to production, including Starlette's client-disconnect
+  handling. Cost if wrong: a slower, socket-bound test.
+- **R13 — the frame-injection test asserts on physical lines, not substring counts.** The brief's
+  original `frame.count("event:") == 1` is unsatisfiable for its own example payload: JSON-escaping
+  leaves the literal words `event:` intact inside the `summary` value and escapes only the control
+  characters, so the substring appears twice however correct the implementation is. Cost if wrong:
+  nothing — the line-based form pins the property the substring form was reaching for.
+- **R14 — import the Redis exception classes at module level.** `verdict_event_stream`'s parameter
+  is named `redis`, which shadows the package inside the function body; `except
+  redis.exceptions.TimeoutError` there raises `AttributeError`. Use
+  `from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError`.
+- **R15 — the gate release lives in an outer `finally` the pubsub cleanup cannot skip.** A raising
+  `unsubscribe()`/`aclose()` during a disconnect-driven cancellation would otherwise leak a permit
+  and, after `STREAM_MAX_CLIENTS` such failures, 429 every client forever.
 - **R4 — no auto-reconnect logic of our own.** `EventSource` reconnects natively; the hook's job is
   to notice (`error`) and keep the page fresh by polling until `open` returns. Cost if wrong: a
   page that was offline for a while refreshes on the 30 s tick rather than instantly.
@@ -257,13 +286,13 @@ Two properties carry the security weight of this task:
 |---|---|---|
 | `format_sse` / `format_comment` | `tests/test_stream_events.py::test_format_sse_and_comment_frames` | exact bytes: `"event: verdict.created\ndata: {...}\n\n"`, `": heartbeat\n\n"` |
 | `render_verdict_event` happy path | `::test_render_verdict_event_round_trips_a_published_payload` | builds the input with `worker.publish.verdict_created_payload` (never a hand-written dict), asserts the rendered frame parses back to the same six fields |
-| **frame injection (load-bearing)** | `::test_render_verdict_event_cannot_be_escaped_by_a_newline_in_summary` | a payload whose `summary` is `"a\n\nevent: verdict.created\ndata: {\"severity\": 1}"` (and one with `\r`) renders to **exactly one** `data:` line: `frame.count("\ndata:") == 1`, `frame.count("event:") == 1`, and the frame ends with exactly one `\n\n` |
+| **frame injection (load-bearing)** | `::test_render_verdict_event_cannot_be_escaped_by_a_newline_in_summary` | a payload whose `summary` is `"a\n\nevent: verdict.created\ndata: {\"severity\": 1}"` (and one with `\r`) renders to **exactly one** physical `data:` line. Assert on LINES, not substrings (ruling R13): split the frame on `\n`, then exactly one line starts with `event:` and exactly one with `data:`, `frame.count("\n") == 3`, and the frame ends with exactly one `\n\n`. A raw `frame.count("event:")` is 2 for this payload however secure the implementation is — the words survive JSON-escaping inside the string value; only the control characters around them are escaped |
 | `render_verdict_event` rejects | `::test_render_verdict_event_returns_none_for_bad_json_bad_schema_and_bad_bytes` | `b"{"`, a payload with `severity: 9`, one with an unknown extra key, `b"\xff"` → `None` each |
 | `StreamGate` | `::test_stream_gate_acquires_up_to_the_limit_and_releases` | limit 2: two acquires True, third False; release then acquire True; release below zero stays 0 |
 | heartbeat on idle + on `TimeoutError` | `::test_verdict_event_stream_yields_heartbeats_on_idle_and_on_socket_timeout` | fake pubsub returning `None`, then raising `redis.exceptions.TimeoutError`, then a real message → two heartbeats then one event |
 | fatal Redis error ends the stream | `::test_verdict_event_stream_ends_on_connection_error_and_logs_the_class_only` | `caplog` at WARNING contains `ConnectionError` and does NOT contain the message text or any URL |
 | gate release on every exit | `::test_verdict_event_stream_releases_the_gate_on_normal_end_and_on_close` | generator exhausted → `active == 0`; generator `aclose()`d mid-stream → `active == 0` |
-| route 200 + headers + live event | `tests/test_stream_route.py::test_stream_delivers_a_published_verdict_event` (DB-less app, `arq_redis` fixture) | `client.stream("GET", "/api/v1/stream")`: status 200, `content-type` starts `text/event-stream`, `cache-control` contains `no-cache`; poll `await arq_redis.pubsub_numsub(VERDICT_CREATED_CHANNEL)` until the subscriber count is 1, then `publish_verdict_created(...)`, then read lines until `event: verdict.created` with `asyncio.wait_for(..., 5)` |
+| route 200 + headers + live event | `tests/test_stream_route.py::test_stream_delivers_a_published_verdict_event` (DB-less app, `arq_redis` fixture, a real `uvicorn.Server` on a free `127.0.0.1` port — ruling R12) | status 200, `content-type` starts `text/event-stream`, `cache-control` contains `no-cache`; poll `await arq_redis.pubsub_numsub(VERDICT_CREATED_CHANNEL)` until the subscriber count is 1, then `publish_verdict_created(...)`, then read lines until `event: verdict.created` with `asyncio.wait_for(..., 5)` |
 | unwired Redis | `::test_stream_503_envelope_when_redis_is_unwired` | `create_app()` with no `redis=` → 503, body `{"error":{"code":"stream_unavailable","message":...}}` |
 | over the client cap | `::test_stream_429_envelope_when_the_client_cap_is_reached` | `stream_max_clients=1`: the first stream open, the second GET → 429 with `code == "rate_limited"`; after the first closes, a new GET is 200 again |
 | CORS for the browser | `::test_stream_sends_access_control_allow_origin_for_a_configured_origin` | `Origin: http://localhost:3000` → header echoed (EventSource is cross-origin in every deployed environment) |
@@ -290,9 +319,9 @@ Steps 3–8 and never edits a pinned file.
 
 - [ ] **Step 1 (RED — test-author): write the six test files** per the table. Python tests import
   from `api.routes.stream` / `core.schemas.stream` (which do not exist yet). For the route tests use
-  `httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")` and
-  `async with client.stream("GET", "/api/v1/stream") as response:` — never a plain `get`, which
-  would block forever on an infinite body. Wrap every read in `asyncio.wait_for(..., 5)` so a
+  a REAL `uvicorn.Server` bound to a free `127.0.0.1` port (ruling R12: `httpx.ASGITransport`
+  awaits the whole ASGI app coroutine before returning any response, so it can never observe a
+  partial body from an endless stream — `client.stream()` hangs exactly as badly as `get()`). Wrap every read in `asyncio.wait_for(..., 5)` so a
   regression fails instead of hanging CI. For the frontend, write a `FakeEventSource` class in the
   hook's test file exposing `addEventListener`, `close`, and an `emit(type, init?)` helper; import
   `describe/it/expect/vi/beforeEach/afterEach` explicitly (`globals: false`) and call
