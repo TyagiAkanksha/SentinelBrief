@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Sequence
 from typing import Any
@@ -175,13 +176,16 @@ def test_render_verdict_event_cannot_be_escaped_by_a_newline_in_summary(
     frame = render_verdict_event(raw)
 
     assert frame is not None
-    lines = frame.split("\n")
-    assert frame.count("\ndata:") == 1
-    assert sum(1 for line in lines if line.startswith("event:")) == 1
-    assert sum(1 for line in lines if line.startswith("data:")) == 1
-    assert frame.count("\n") == 3  # event line + data line + the blank terminator line
-    assert frame.endswith("\n\n")
-    assert not frame.endswith("\n\n\n")
+    # A physical SSE line terminates on CR, LF, or CRLF (ruling R13 as amended) — splitting on
+    # "\n" alone let the carriage-return payload forge a second physical line while every
+    # "\n"-based assertion here still passed (review I1, mutant 1: an interpolating
+    # implementation emitted 7 physical lines for this exact payload and stayed green against
+    # the old assertions). No raw CR may reach the wire at all, whichever payload was fed in.
+    assert "\r" not in frame
+    parts = re.split(r"\r\n|\r|\n", frame)
+    assert sum(1 for part in parts if part.startswith("event:")) == 1
+    assert sum(1 for part in parts if part.startswith("data:")) == 1
+    assert len(parts) == 4  # event line, data line, "", "" (the trailing blank terminator)
 
 
 @pytest.mark.parametrize(

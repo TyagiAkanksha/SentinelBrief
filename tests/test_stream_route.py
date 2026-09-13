@@ -119,7 +119,14 @@ async def test_stream_delivers_a_published_verdict_event(
         async with client.stream("GET", STREAM_PATH) as response:
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
+            # Both proxy-buffering headers named verbatim in the Interfaces block's
+            # `SSE_HEADERS` (review I2): `no-transform` stops an intermediary from gzip-ing and
+            # buffering the stream, and `X-Accel-Buffering: no` is what stops an nginx-style
+            # reverse proxy from buffering the response — losing either is invisible in dev/CI
+            # and only shows up as "the dashboard never updates" behind a real proxy.
             assert "no-cache" in response.headers["cache-control"]
+            assert "no-transform" in response.headers["cache-control"]
+            assert response.headers["x-accel-buffering"] == "no"
 
             await asyncio.wait_for(_wait_for_one_subscriber(arq_redis), 5)
             await publish_verdict_created(
