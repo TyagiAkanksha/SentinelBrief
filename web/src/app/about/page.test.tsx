@@ -4,10 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import AboutPage from "@/app/about/page";
+import AboutPage, { metadata } from "@/app/about/page";
 import { PRD_URL, REPO_URL, RESULTS_URL } from "@/lib/site";
 
 describe("AboutPage", () => {
+  it("sets the document title via metadata.title (t03 M-meta)", () => {
+    expect(metadata.title).toBe("About — SentinelBrief");
+  });
+
   it("renders exactly the three approved paragraphs in order", () => {
     const { container } = render(<AboutPage />);
 

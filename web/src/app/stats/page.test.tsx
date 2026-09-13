@@ -15,7 +15,7 @@ vi.mock("@/lib/api/server", async () => {
   };
 });
 
-import StatsPage from "@/app/stats/page";
+import StatsPage, { metadata } from "@/app/stats/page";
 import { ApiError, getJson } from "@/lib/api/server";
 
 const mockGetJson = vi.mocked(getJson);
@@ -57,6 +57,10 @@ function makeStats(overrides: Partial<StatsOut> = {}): StatsOut {
 }
 
 describe("StatsPage", () => {
+  it("sets the document title via metadata.title (t03 M-meta)", () => {
+    expect(metadata.title).toBe("Stats — SentinelBrief");
+  });
+
   it("renders the headline stats and all four tables", async () => {
     mockGetJson.mockResolvedValueOnce(makeStats());
 

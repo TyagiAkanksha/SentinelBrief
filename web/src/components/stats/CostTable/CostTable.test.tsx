@@ -20,12 +20,20 @@ describe("CostTable", () => {
   it("renders days newest first with formatted costs", () => {
     render(<CostTable rows={makeRows()} emptyMessage="No cost data yet" />);
 
+    // Scoped through the table's own accessible name (t02 N1): a row query that accidentally
+    // picked up rows from a sibling table on the page would fail here instead of silently
+    // matching the wrong table's rows.
+    const table = screen.getByRole("table", { name: "Cost per day" });
     // Skip the header row; newest day first is the reverse of the ascending API order the
     // fixture is given in.
-    const rows = screen.getAllByRole("row").slice(1);
+    const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
 
     const [newest, oldest] = rows;
+
+    // The day cell is a `rowheader` (`<th scope="row">`), not a plain `<td>` (t02 N2) — a
+    // regression to a `<td>` fails this assertion even though `getByText` would still pass.
+    expect(within(newest!).getByRole("rowheader", { name: "2026-09-02" })).toBeInTheDocument();
 
     // Row-scoped queries pin all four cells: a Mean cell that reads `cost_usd` instead of
     // `mean_cost_usd`, or an Alerts cell that renders `row.alerts + 1`, must both fail here.
