@@ -1125,6 +1125,41 @@
         "summary": "Get Stats"
       }
     },
+    "/api/v1/stream": {
+      "get": {
+        "description": "Stream `verdict.created` events as SSE, bounded by `Settings.stream_max_clients`.",
+        "operationId": "stream_verdicts",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "SSE stream of verdict.created events."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Stream Verdicts"
+      }
+    },
     "/healthz": {
       "get": {
         "description": "Report DB + Redis liveness.",

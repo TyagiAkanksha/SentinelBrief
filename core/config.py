@@ -166,6 +166,13 @@ class Settings(BaseSettings):
     triage_job_backoff_max_s: Annotated[float, Field(ge=0)] = 60.0
     """Cap on the retry delay, in seconds (PRD §6.2, m5 task-02). `worker/retry.py
     ::backoff_seconds` reads this, never a literal."""
+    stream_heartbeat_s: Annotated[float, Field(gt=0)] = 15.0
+    """How often `GET /api/v1/stream` yields a heartbeat comment while idle, in seconds (PRD §8;
+    m8a task-01). The effective heartbeat is `min(stream_heartbeat_s, redis_socket_timeout_s)`
+    since the shared client's own socket timeout can fire first (briefing ruling R1)."""
+    stream_max_clients: Annotated[int, Field(ge=1)] = 50
+    """Max concurrent `GET /api/v1/stream` clients; each holds one HTTP connection and one Redis
+    pub/sub connection. Past this, new requests get a `429 rate_limited` envelope (m8a task-01)."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

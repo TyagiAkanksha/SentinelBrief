@@ -140,3 +140,9 @@ class QueueUnavailableError(SentinelBriefError):
     """Raised when the ARQ triage queue (Redis) cannot be reached (m5 task-01)."""
 
     code = "queue_unavailable"
+
+
+class StreamUnavailableError(SentinelBriefError):
+    """The event stream's Redis seam is not wired or not reachable (m8a task-01)."""
+
+    code = "stream_unavailable"

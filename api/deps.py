@@ -14,11 +14,17 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cache import TTLCache
 from core.config import Settings
-from core.errors import LengthRequiredError, PayloadTooLargeError, SignatureError
+from core.errors import (
+    LengthRequiredError,
+    PayloadTooLargeError,
+    SignatureError,
+    StreamUnavailableError,
+)
 from core.signing import SIGNATURE_HEADER, verify_signature
 
 # `enqueue(alert_id)` is fire-and-forget from the route's point of view — it either queues the
@@ -128,6 +134,28 @@ def require_content_length(request: Request, settings: Settings) -> None:
         raise LengthRequiredError("Content-Length required")
     if int(header) > settings.ingest_max_body_bytes:
         raise PayloadTooLargeError(f"body exceeds {settings.ingest_max_body_bytes} bytes")
+
+
+def get_redis(request: Request) -> Redis:
+    """Return the app's wired Redis client, for the `/stream` route's pub/sub subscription.
+
+    Args:
+        request: The current request, used to reach `app.state.redis`.
+
+    Returns:
+        The `Redis` client `create_app()` was built with.
+
+    Raises:
+        StreamUnavailableError: When no `redis` was wired into `create_app()` — a 503 the
+            dashboard can render, never a bare `RuntimeError` (m8a task-01).
+    """
+    redis: Redis | None = request.app.state.redis
+    if redis is None:
+        raise StreamUnavailableError("event stream unavailable")
+    return redis
+
+
+RedisDep = Annotated[Redis, Depends(get_redis)]
 
 
 async def require_signature(request: Request, settings: Settings = Depends(get_settings)) -> None:
