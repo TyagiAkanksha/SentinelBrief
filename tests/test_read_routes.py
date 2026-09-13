@@ -496,6 +496,7 @@ async def test_get_stats_returns_stats_out(
         "volume_by_day",
         "cost_total_usd",
         "cost_mean_usd",
+        "cost_by_day",
         "latency_p50_ms",
         "latency_p95_ms",
         "last_alert_at",
