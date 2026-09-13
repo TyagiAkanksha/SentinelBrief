@@ -123,6 +123,15 @@ class DayVolume(BaseModel):
     count: int
 
 
+class DayCost(BaseModel):
+    """One UTC day's spend, keyed on the day the ALERTS were received."""
+
+    day: date
+    alerts: int
+    cost_usd: Decimal
+    mean_cost_usd: Decimal
+
+
 class StatsOut(BaseModel):
     """The dashboard stats view (PRD §8): volume by day, distributions, cost, and latency."""
 
@@ -137,6 +146,7 @@ class StatsOut(BaseModel):
     latency_p50_ms: int
     latency_p95_ms: int
     last_alert_at: datetime | None
+    cost_by_day: list[DayCost]
 
 
 class ListFilters(BaseModel):

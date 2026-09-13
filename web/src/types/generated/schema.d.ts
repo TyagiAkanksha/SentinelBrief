@@ -233,6 +233,23 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * DayCost
+         * @description One UTC day's spend, keyed on the day the ALERTS were received.
+         */
+        DayCost: {
+            /** Alerts */
+            alerts: number;
+            /** Cost Usd */
+            cost_usd: string;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Mean Cost Usd */
+            mean_cost_usd: string;
+        };
+        /**
          * DayVolume
          * @description One day's alert count, for the stats view's `volume_by_day` series.
          */
@@ -352,6 +369,8 @@ export interface components {
             by_status: {
                 [key: string]: number;
             };
+            /** Cost By Day */
+            cost_by_day: components["schemas"]["DayCost"][];
             /** Cost Mean Usd */
             cost_mean_usd: string;
             /** Cost Total Usd */

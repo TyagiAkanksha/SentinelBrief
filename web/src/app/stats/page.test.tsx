@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
@@ -100,7 +100,7 @@ describe("primary nav", () => {
   it("links to Stats from the primary nav", () => {
     // Rendering the full `<html>` `RootLayout` document inside jsdom produces nesting warnings
     // (dispatch note); asserting on the source text is the accepted alternative here.
-    const layoutPath = fileURLToPath(new URL("../layout.tsx", import.meta.url));
+    const layoutPath = path.join(process.cwd(), "src", "app", "layout.tsx");
     const source = readFileSync(layoutPath, "utf-8");
 
     expect(source).toMatch(/<Link\s+href="\/stats">\s*Stats\s*<\/Link>/);

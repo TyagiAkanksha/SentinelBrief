@@ -65,11 +65,15 @@ export function formatLatency(ms: number | null): string {
   return `${ms.toLocaleString("en-US")} ms`;
 }
 
-export function formatTokens(n: number | null): string {
+export function formatCount(n: number | null): string {
   if (n === null || !Number.isFinite(n)) {
     return EM_DASH;
   }
   return n.toLocaleString("en-US");
+}
+
+export function formatTokens(n: number | null): string {
+  return formatCount(n);
 }
 
 // Maps an ISO 3166-1 alpha-2 code to its regional-indicator-symbol flag emoji; "" for anything

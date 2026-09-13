@@ -20,6 +20,7 @@ from core.models import AlertRow, AlertStatus, ToolCallRow, VerdictRow
 from core.schemas.alerts_read import (
     AlertDetail,
     AlertSummary,
+    DayCost,
     DayVolume,
     ListFilters,
     StatsOut,
@@ -291,6 +292,33 @@ async def get_stats(session: AsyncSession) -> StatsOut:
 
     last_alert_at = await session.scalar(select(func.max(AlertRow.received_at)))
 
+    cost_by_day_rows = (
+        await session.execute(
+            select(
+                day_expr.label("day"),
+                func.count(func.distinct(AlertRow.id)).label("alerts"),
+                func.coalesce(func.sum(VerdictRow.cost_usd), 0).label("cost_usd"),
+            )
+            .select_from(AlertRow)
+            .outerjoin(VerdictRow, VerdictRow.alert_id == AlertRow.id)
+            .group_by(day_expr)
+            .order_by(day_expr)
+        )
+    ).all()
+    cost_by_day = [
+        DayCost(
+            day=day,
+            alerts=alerts,
+            cost_usd=cost_usd,
+            mean_cost_usd=(
+                (cost_usd / alerts).quantize(_SIX_DP, rounding=ROUND_HALF_UP)
+                if alerts > 0
+                else Decimal("0")
+            ),
+        )
+        for day, alerts, cost_usd in cost_by_day_rows
+    ]
+
     return StatsOut(
         total_alerts=total_alerts,
         by_status=by_status,
@@ -303,4 +331,5 @@ async def get_stats(session: AsyncSession) -> StatsOut:
         latency_p50_ms=latency_p50 if latency_p50 is not None else 0,
         latency_p95_ms=latency_p95 if latency_p95 is not None else 0,
         last_alert_at=last_alert_at,
+        cost_by_day=cost_by_day,
     )

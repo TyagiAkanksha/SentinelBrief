@@ -292,6 +292,38 @@
         "title": "CowrieEvent",
         "type": "object"
       },
+      "DayCost": {
+        "description": "One UTC day's spend, keyed on the day the ALERTS were received.",
+        "properties": {
+          "alerts": {
+            "title": "Alerts",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "mean_cost_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mean Cost Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "alerts",
+          "cost_usd",
+          "mean_cost_usd"
+        ],
+        "title": "DayCost",
+        "type": "object"
+      },
       "DayVolume": {
         "description": "One day's alert count, for the stats view's `volume_by_day` series.",
         "properties": {
@@ -507,6 +539,13 @@
             "title": "By Status",
             "type": "object"
           },
+          "cost_by_day": {
+            "items": {
+              "$ref": "#/components/schemas/DayCost"
+            },
+            "title": "Cost By Day",
+            "type": "array"
+          },
           "cost_mean_usd": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Cost Mean Usd",
@@ -564,7 +603,8 @@
           "cost_mean_usd",
           "latency_p50_ms",
           "latency_p95_ms",
-          "last_alert_at"
+          "last_alert_at",
+          "cost_by_day"
         ],
         "title": "StatsOut",
         "type": "object"
