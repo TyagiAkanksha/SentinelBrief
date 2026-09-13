@@ -33,7 +33,38 @@ exposes `budget_exhausted: true`, which the layout renders as a banner.
 
 ## Global Constraints
 
-M0–M7 Global Constraints apply verbatim (branch `feat/m8-polish`). Additionally:
+M0–M7 Global Constraints apply verbatim. Additionally:
+
+### M8a / M8b split (owner decision, 2026-09-12)
+
+M8 runs in two halves so the dashboard can be built while M6's 48-hour soak is still running.
+
+- **M8a — tasks 1–3** (SSE live updates, `/stats`, `/about`): branch `feat/m8a-dashboard-live`, cut
+  from `main` at tag `m5`; briefs written 2026-09-12. It touches only `api/routes/stream.py`,
+  `core/schemas/`, `core/services/alerts_read.py`, `core/config.py`, `api/{deps,errors,factory}.py`
+  and `web/` — none of the files M6 is editing, so the branches cannot collide beyond
+  `.env.example` and the two regenerated baselines.
+- **M8b — tasks 4–7** (per-IP rate limiter + forged-XFF check, retriage, token-budget breaker,
+  README final, whole-repo review): branch `feat/m8b-polish`, cut from `main` after `m7` is tagged;
+  briefs written at the M7 gate.
+- **The canonical gate on the M8a branch is the M5-era one.** That branch has no
+  `honeypot/shipper/`, so `--cov=sentinelbrief_shipper` is NOT part of it until the rebase:
+  `uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental
+  && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals
+  --cov-fail-under=90`, with
+  `export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test
+  TEST_REDIS_URL=redis://127.0.0.1:6380/0` first, and 0 skipped.
+- **M8a rebases onto `main` once `m6` merges.** The rebase re-runs `scripts/export_openapi.py` and
+  `pnpm -C web codegen` (both baselines move on both branches), adds `--cov=sentinelbrief_shipper`
+  to every gate invocation, and re-runs the whole gate set before the PR. The M6 soak check-ins and
+  the M6 milestone gate take priority over M8a work whenever they come due.
+- **Deploying M8a needs a web image rebuilt with the public API origin.** `NEXT_PUBLIC_API_URL` is
+  inlined at `next build` (FRONTEND-CONVENTIONS §6), so the SSE hook only reaches the real API when
+  the image is built with `NEXT_PUBLIC_API_URL=https://api.sentinelbrief.tyagiakanksha.com`. Confirm
+  `infra/deploy/push_ecr.sh` passes that build arg at the M8a gate; the stream vhost's
+  `flush_interval -1` is already in `infra/deploy/prod/Caddyfile` (m6 task-03).
+
+### Everything else
 
 - Rate limits, retriage cap and token budget are settings (`PUBLIC_RATE_LIMIT_PER_MIN`,
   `RETRIAGE_PER_DAY`, `DAILY_TOKEN_BUDGET`); a `0` budget means unlimited and is the dev default.
@@ -47,21 +78,24 @@ M0–M7 Global Constraints apply verbatim (branch `feat/m8-polish`). Additionall
 - The whole-repo review runs on the strongest model with the complete Minors ledger from every
   milestone; its remediation batch is planned as `docs/plans/m8r-*.md` only if the owner opts in.
 
-## Tasks (briefs written at the M7 gate)
+## Tasks
+
+Tasks 1–3 are M8a (briefs written 2026-09-12); tasks 4–7 are M8b (briefs at the M7 gate).
 
 | # | Task | File | Depends on |
 |---|------|------|-----------|
-| 1 | `GET /api/v1/stream` SSE from Redis pub/sub + heartbeats; `useAlertStream` with 30 s polling fallback; queue page live-updates | `m8-polish/task-01-sse-live-updates.md` | M7 tag |
-| 2 | `/stats` page (volume over time, severity distribution, cost/alert trend, p95 latency, escalation rate) | `m8-polish/task-02-stats-page.md` | M7 tag |
-| 3 | `/about` page | `m8-polish/task-03-about-page.md` | M7 tag |
-| 4 | Redis-backed per-IP rate limiter on public GETs + retriage route with admin token and 20/day cap + `VERIFY.md` additions | `m8-polish/task-04-rate-limits-retriage.md` | M7 tag |
-| 5 | Daily token-budget circuit breaker in the worker + `budget_exhausted` in stats + dashboard banner | `m8-polish/task-05-token-budget-breaker.md` | task-02 |
-| 6 | README final (architecture, quickstart, results link, deployment pointer); clean-clone <10 min proof; `.env.example` final pass | `m8-polish/task-06-readme-clean-clone.md` | tasks 1–5 |
-| 7 | Whole-repo review (strongest model) with the full Minors ledger; remediation plan if opted in | `m8-polish/task-07-whole-repo-review.md` | task-6 |
+| 1 | `GET /api/v1/stream` SSE from Redis pub/sub + heartbeats; `useAlertStream` with 30 s polling fallback; queue page live-updates | `m8-polish/task-01-sse-live-updates.md` | m5 tag (M8a) |
+| 2 | `/stats` page (volume over time, severity distribution, cost/alert trend, p95 latency, escalation rate); `cost_by_day` on `StatsOut` | `m8-polish/task-02-stats-page.md` | task-01 (M8a) |
+| 3 | `/about` page (three paragraphs, architecture diagram, project links) | `m8-polish/task-03-about-page.md` | task-02 (M8a) |
+| 4 | Redis-backed per-IP rate limiter on public GETs + retriage route with admin token and 20/day cap + `VERIFY.md` additions | `m8-polish/task-04-rate-limits-retriage.md` | M7 tag (M8b) |
+| 5 | Daily token-budget circuit breaker in the worker + `budget_exhausted` in stats + dashboard banner | `m8-polish/task-05-token-budget-breaker.md` | task-02 (M8b) |
+| 6 | README final (architecture, quickstart, results link, deployment pointer); clean-clone <10 min proof; `.env.example` final pass | `m8-polish/task-06-readme-clean-clone.md` | tasks 1–5 (M8b) |
+| 7 | Whole-repo review (strongest model) with the full Minors ledger; remediation plan if opted in | `m8-polish/task-07-whole-repo-review.md` | task-06 (M8b) |
 
-Order: (1, 2, 3, 4 in parallel) → 5 → 6 → 7. Rationale: the four features are independent; the
-breaker needs the stats surface; the README is written against the finished product; the review
-closes the project.
+Order: 1 → 2 → 3 (M8a), then 4 → 5 → 6 → 7 (M8b). Rationale: the M8a three run sequentially
+because tasks 2 and 3 both edit the primary nav in `web/src/app/layout.tsx` and both regenerate
+nothing else in common; task-04 is independent of them; the breaker needs the stats surface;
+the README is written against the finished product; the review closes the project.
 
 ## Acceptance walk (PRD §12 M8 + §14)
 
@@ -76,4 +110,5 @@ closes the project.
 
 ## Status
 
-planned — briefs pending (written at the M7 gate).
+M8a in progress — briefs 01–03 written 2026-09-12 on `feat/m8a-dashboard-live` (ledger:
+`.superpowers/sdd/m8-polish/progress.md`). M8b planned — briefs 04–07 pending at the M7 gate.

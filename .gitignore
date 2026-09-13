@@ -40,3 +40,6 @@ honeypot/data/
 # per-run eval outputs stay local; docs/results.md is the published table (PRD §7.5)
 evals/results/*.json
 pytest.log
+
+# Claude Code scheduled-task lock (session-local)
+.claude/scheduled_tasks.lock
