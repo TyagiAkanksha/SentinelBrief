@@ -10,8 +10,16 @@ export function Pagination({ page, pageSize, total, hrefForPage }: PaginationPro
       <span>
         Page {page} of {pages} · {total} alerts
       </span>
-      {page > 1 && <Link href={hrefForPage(page - 1)}>Previous</Link>}
-      {page < pages && <Link href={hrefForPage(page + 1)}>Next</Link>}
+      {page > 1 && (
+        <Link href={hrefForPage(page - 1)} className="text-accent underline">
+          Previous
+        </Link>
+      )}
+      {page < pages && (
+        <Link href={hrefForPage(page + 1)} className="text-accent underline">
+          Next
+        </Link>
+      )}
     </nav>
   );
 }

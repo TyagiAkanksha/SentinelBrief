@@ -39,7 +39,9 @@ export default async function AlertDetailPage({
 
   return (
     <article>
-      <Link href="/alerts">← Alert queue</Link>
+      <Link href="/alerts" className="text-accent underline">
+        ← Alert queue
+      </Link>
       <AlertHeader alert={alert} now={new Date()} />
       {alert.verdict ? (
         <>
