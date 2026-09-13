@@ -110,8 +110,10 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
   #   GROUP BY day ORDER BY day
   # count(DISTINCT alerts.id) is load-bearing: the LEFT JOIN multiplies an alert's row by its
   # verdict count, so a retriaged alert would otherwise be counted twice in `alerts` and drag the
-  # mean down. mean_cost_usd = (cost_usd / alerts) when alerts > 0 else Decimal("0"), quantized
-  # with _SIX_DP and ROUND_HALF_UP — the same treatment cost_mean_usd already gets.
+  # mean down. mean_cost_usd = cost_usd / alerts, quantized with _SIX_DP and ROUND_HALF_UP — the
+  # same treatment cost_mean_usd already gets. No `alerts > 0` guard (ruling R24): a row exists
+  # only because at least one alert produced its group, so `alerts` is >= 1 by construction —
+  # say so in a one-line comment instead of shipping an unreachable branch.
   ```
 
   ```ts
@@ -164,7 +166,7 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
   // `API error ${status}` + the envelope message, anything else "API unreachable"), EmptyState
   // ("No alerts yet — run scripts/seed_dev.py") when total_alerts === 0, otherwise:
   //   <h1>Stats</h1>
-  //   six <Stat> cards: Total alerts (formatCount) · Triaged (formatCount) · Escalation rate
+  //   seven <Stat> cards: Total alerts (formatCount) · Triaged (formatCount) · Escalation rate
   //     (formatPercent, hint `${escalated_count} of ${triaged} triaged`) · Mean cost per alert
   //     (formatUsd, hint `Total ${formatUsd(cost_total_usd)}`) · Latency p50 / p95 (formatLatency,
   //     two cards) · Last alert (formatUtc or "—")
@@ -184,6 +186,17 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
   later, behind a dependency decision the owner has not made.
 - **R7 — the page adds no API call beyond the existing cached `/stats`.** Nothing here computes
   (PRD §9/§10.1).
+- **R21 — a pinned fixture that makes a correct implementation ambiguous is a defect in the pin,
+  not a reason to change the UI.** The original `CostTable` fixture had a single-alert day, so Total
+  and Mean were equal and `getByText` could not tell the cells apart; the fix is a two-alert fixture
+  with row-scoped assertions, never a visible "Mean " prefix the Interfaces block does not specify.
+- **R22 — the page's wiring is pinned by values, not only by labels.** The original test-table row
+  asked for labels and captions; a mutant feeding the mean card the total (a 60× overstatement on
+  live data) survived. Cost if wrong: a longer fixture.
+- **R23 — a rounding-mode test needs a fixture whose exact value sits on the half.** See the mean
+  quantization row.
+- **R24 — no unreachable guard.** `alerts >= 1` by construction for every emitted row; a comment
+  says so instead of a dead `else`.
 - **R11 — `formatCount`'s tests go into the existing `web/src/lib/format.test.ts`, written by the
   test-author.** `formatCount` is an export of `format.ts` and this repo colocates one test file per
   module. That file is not pinned for this task; having the test-author extend it in the RED commit
@@ -196,7 +209,7 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
 |---|---|---|
 | `cost_by_day` basic | `tests/test_stats_cost_by_day.py::test_cost_by_day_sums_verdict_cost_per_received_day` (DB fixtures) | two alerts on day A (0.000100 + 0.000200) and one on day B (0.000050) via `seed_alert`/`add_verdict` → two rows, ascending, exact `Decimal` totals |
 | **retriage double-count (load-bearing)** | `::test_cost_by_day_counts_an_alert_once_when_it_has_two_verdicts` | one alert, two verdicts → `alerts == 1`, `cost_usd` is the sum of both, `mean_cost_usd == cost_usd`. Mutating `count(DISTINCT alerts.id)` to `count(alerts.id)` must fail this test |
-| mean quantization | `::test_cost_by_day_mean_is_quantized_to_six_places_half_up` | three alerts, total `0.000100` → mean `Decimal("0.000033")`; assert the exponent is `-6` |
+| mean quantization | `::test_cost_by_day_mean_is_quantized_to_six_places_half_up` | a fixture whose exact mean has a 5 in the seventh place and nothing after it — two alerts with verdict costs `0.000002` + `0.000003` → exact mean `0.0000025` → `Decimal("0.000003")` (ROUND_HALF_UP); `ROUND_DOWN` and `ROUND_HALF_EVEN` both give `0.000002`, so the test discriminates the mode (ruling R23 — the original `0.000100 / 3` fixture could not); assert the exponent is `-6` |
 | pending alerts | `::test_cost_by_day_counts_alerts_with_no_verdict_at_zero_cost` | a `pending` alert alone on its day → `alerts == 1`, `cost_usd == Decimal("0")`, `mean_cost_usd == Decimal("0")` (the LEFT JOIN branch) |
 | empty database | `::test_cost_by_day_is_empty_on_an_empty_database` | `get_stats` → `cost_by_day == []` and every existing field still zero-filled |
 | wire surface | `::test_stats_response_carries_cost_by_day` (route, via `httpx` + `ASGITransport`) | `GET /api/v1/stats` JSON has `cost_by_day` with the keys `day`, `alerts`, `cost_usd`, `mean_cost_usd`; `cost_usd` is a JSON **string** (the `Decimal` convention the rest of the API already uses) |
@@ -210,8 +223,8 @@ Nothing on this page triggers compute (PRD §9): it is one cached `GET` and noth
 | `Stat` | `web/src/components/ui/Stat/Stat.test.tsx` — `it("renders the label, the value and the optional hint")` | the hint element is absent when `hint` is undefined |
 | `DistributionTable` | `.../DistributionTable.test.tsx` — `it("renders a caption, one row per bucket and the share as text")` | `screen.getByRole("table")` has an accessible name from the caption; the counts and percents are text; the bar div is `aria-hidden` |
 | `DistributionTable` empty | `it("renders the empty message when there are no rows")` | `emptyMessage` visible, no data rows |
-| `CostTable` | `.../CostTable.test.tsx` — `it("renders days newest first with formatted costs")` | two days in API (ascending) order in → the newest renders first; `$0.000228`-shaped cells |
-| `/stats` page happy path | `web/src/app/stats/page.test.tsx` — `it("renders the headline stats and all four tables")` (`vi.mock("@/lib/api/server")`) | the six card labels and the four captions are present |
+| `CostTable` | `.../CostTable.test.tsx` — `it("renders days newest first with formatted costs")` | two days in API (ascending) order in → the newest renders first; each row's FOUR cells pinned with row-scoped queries (`within(row)`), and the fixture's days carry ≥ 2 alerts so Total ≠ Mean and the two `$…` cells are distinguishable (ruling R21 — a single-alert fixture made `getByText("$0.000228")` ambiguous for a correct implementation) |
+| `/stats` page happy path | `web/src/app/stats/page.test.tsx` — `it("renders the headline stats and all four tables")` (`vi.mock("@/lib/api/server")`) | the seven card labels and the four captions are present, AND (ruling R22) every card's VALUE and every table's ROWS are pinned against a fixture whose numbers are pairwise distinguishable (`total_alerts` ≠ triaged, `cost_mean_usd` ≠ `cost_total_usd`, p50 ≠ p95, a non-trivial escalation rate) so feeding a card the wrong field, or a table the wrong row builder, fails |
 | `/stats` page empty | `it("renders the empty state when the database has no alerts")` | `total_alerts: 0` → empty message, no tables |
 | `/stats` page error | `it("renders the API error envelope message when the fetch fails")` | `getJson` rejects with `new ApiError(503, {error:{code:"internal_error",message:"db down"}})` → `role="alert"` carries both |
 | nav | `it("links to Stats from the primary nav")` (in the page test file or a layout test) | `/stats` link present |
