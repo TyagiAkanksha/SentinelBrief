@@ -13,7 +13,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <body>
         <header>
-          <nav aria-label="Primary">
+          <nav aria-label="Primary" className="flex gap-4">
             <Link href="/alerts">Alerts</Link>
             <Link href="/stats">Stats</Link>
             <Link href="/about">About</Link>
