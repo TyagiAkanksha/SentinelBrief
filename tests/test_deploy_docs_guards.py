@@ -13,6 +13,7 @@ Pure text pins — no docker, no live AWS, no SSM, same style as `tests/test_dep
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -187,4 +188,33 @@ def test_walkthrough_waits_for_cloud_init_after_each_sudo_i() -> None:
     assert count >= 2, (
         f"ec2-single-host.md has only {count} 'cloud-init status --wait' occurrence(s), expected "
         ">= 2 (one after each on-box `sudo -i`: step 7's app host and step 9's honeypot)"
+    )
+
+
+def test_shipper_tarball_paste_never_uses_base64_w0() -> None:
+    """task-05 fix-2 review N1, re-graded FIX-NOW at the M6 final review: `base64 -w0` produces one
+    40,000+ character line, and the heredoc that receives it is read from the SSM session's tty in
+    canonical mode, whose ~4096-byte line-discipline buffer silently discards the rest. The paste
+    arrives truncated and `tar xzf` fails. Nothing caught the regression before — the runbook's
+    prose explains the hazard, but no test stopped a future edit from "tidying" the command.
+
+    The check is scoped to the FENCED commands so the prose can keep naming `-w0` to explain why
+    it is wrong. The `sha256sum` compare is the runtime guard for a truncated paste, so both ends
+    of it must still be present: once on the laptop, once on the box.
+    """
+    text = _EC2_WALKTHROUGH.read_text()
+
+    fenced = "\n".join(re.findall(r"```(?:sh)?\n(.*?)```", text, re.DOTALL))
+    assert "base64 -w0" not in fenced, (
+        "ec2-single-host.md has a fenced `base64 -w0` command — its single-line output is "
+        "silently truncated by the SSM session's tty line buffer (task-05 review N1)"
+    )
+    assert "base64 /tmp/shipper.tgz" in fenced, (
+        "ec2-single-host.md no longer carries the default-wrapped `base64 /tmp/shipper.tgz` command"
+    )
+
+    count = text.count("sha256sum /tmp/shipper.tgz")
+    assert count >= 2, (
+        f"ec2-single-host.md has only {count} 'sha256sum /tmp/shipper.tgz' line(s), expected >= 2 "
+        "(the laptop side and the on-box side — comparing them is what catches a truncated paste)"
     )
