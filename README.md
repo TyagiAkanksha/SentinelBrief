@@ -5,7 +5,7 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M5 complete (queue split + routing); M6 (real data) next. The build plan
+**Status:** M6 complete — Phase-1 deploy live at `https://sentinelbrief.tyagiakanksha.com` triaging real Cowrie traffic (48 h soak passed 2026-09-14); M7 (eval hardening) next. The build plan
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 

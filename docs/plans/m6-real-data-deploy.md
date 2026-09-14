@@ -129,7 +129,9 @@ acceptance evidence.
 
 ## Status
 
-in progress — briefs written 2026-09-11 (`m6-real-data-deploy/task-01` … `task-06`; they fold the
+**Deployed 2026-09-12; 48 h soak passed 2026-09-14** (ledger `.superpowers/sdd/m6-real-data-deploy/progress.md`: acceptance walk, T+0/T+24/T+48 data points, doc pass e53f99c). Gate in progress: whole-branch review on the strongest model, fix wave, image bump + redeploy, PR, tag `m6`.
+
+Earlier: in progress — briefs written 2026-09-11 (`m6-real-data-deploy/task-01` … `task-06`; they fold the
 16 "Plan defects for the M6 briefing" rules from the M5 final review and the ledgered M5 → M6
 items); git history and the ledger (`.superpowers/sdd/m6-real-data-deploy/progress.md`) are
 authoritative.
