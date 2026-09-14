@@ -192,7 +192,10 @@ LLM client's log line, which must appear only in the `worker` container.
   read and decrypt every SecureString in the account (M6 final review C1).
 - **SSM-only management, no `sshd` on any port**, so Cowrie (in Docker, `cowrie/cowrie`) owns
   port 22 outright. There is nothing to move to a high port.
-- Outbound security group: 443 to the ingest hostname and to the SSM endpoints only.
+- Outbound security group: TCP 443 to any address (the ingest origin and the SSM endpoints are
+  what it actually uses; VPC endpoints deferred — reaching only those destinations needs three
+  interface endpoints at ≈ $22/month, more than the instance itself, so v1 allows `0.0.0.0/0` on
+  443 and the IAM deny above is the compensating control. PRD §15 v1.6).
 - The shipper (`honeypot/shipper/`) runs as a systemd unit: tails `cowrie.json`, groups events by
   `session`, posts one signed alert on `cowrie.session.closed`, spools to local disk with
   exponential backoff when the ingest URL is unreachable, and drains the spool in order when it

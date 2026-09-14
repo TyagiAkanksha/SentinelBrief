@@ -21,6 +21,14 @@ _EC2_WALKTHROUGH = _REPO_ROOT / "infra" / "deploy" / "ec2-single-host.md"
 _USER_DATA_APP = _REPO_ROOT / "infra" / "deploy" / "user-data-app.sh"
 _HONEYPOT_USER_DATA = _REPO_ROOT / "honeypot" / "user-data.sh"
 _IAM_DIR = _REPO_ROOT / "infra" / "deploy" / "iam"
+_DEPLOYMENT_DOC = _REPO_ROOT / "docs" / "deployment.md"
+
+
+def _fenced_blocks(text: str) -> list[str]:
+    """Every ```` ```sh ````/```` ``` ```` fenced command block in a markdown file — the lines an
+    owner actually runs, as opposed to the prose that describes them (copied from
+    `tests/test_deploy_docs.py::_FENCED_BLOCK_RE`, not imported — CONVENTIONS.md §10)."""
+    return re.findall(r"```(?:sh)?\n(.*?)```", text, re.DOTALL)
 
 
 def _as_list(value: object) -> list[object]:
@@ -136,14 +144,23 @@ def test_both_run_instances_blocks_require_imdsv2_at_one_hop() -> None:
     `run-instances` blocks must pin `HttpTokens=required,HttpPutResponseHopLimit=1`, and the
     walkthrough must carry the in-place `modify-instance-metadata-options` form for instances
     that are already running (the two live instances were fixed that way, not relaunched).
+
+    Scoped to the fenced `run-instances` commands, not a raw count over the file: the surrounding
+    prose also names the flag, so a whole-file count would stay >= 2 even after one launch block
+    lost it.
     """
     text = _EC2_WALKTHROUGH.read_text()
-    count = text.count("HttpTokens=required,HttpPutResponseHopLimit=1")
-    assert count >= 2, (
-        f"ec2-single-host.md has only {count} "
-        "'HttpTokens=required,HttpPutResponseHopLimit=1' occurrence(s), expected >= 2 (the app "
-        "host's and the honeypot's run-instances blocks)"
+    launch_fences = [f for f in _fenced_blocks(text) if "aws ec2 run-instances" in f]
+    assert len(launch_fences) == 2, (
+        f"expected exactly 2 fenced `aws ec2 run-instances` blocks in ec2-single-host.md (the app "
+        f"host's and the honeypot's), found {len(launch_fences)}"
     )
+    for fence in launch_fences:
+        assert "HttpTokens=required,HttpPutResponseHopLimit=1" in fence, (
+            "a `run-instances` block does not pin "
+            "`--metadata-options HttpTokens=required,HttpPutResponseHopLimit=1` — AL2023's default "
+            f"hop limit of 2 exposes IMDS to containers (final review M2):\n{fence}"
+        )
     assert "modify-instance-metadata-options" in text, (
         "ec2-single-host.md does not carry the in-place "
         "'aws ec2 modify-instance-metadata-options' form for an already-running instance"
@@ -182,13 +199,21 @@ def test_walkthrough_waits_for_cloud_init_after_each_sudo_i() -> None:
     instance's user-data has finished; a `docker compose` command run in that window fails for a
     reason that looks like a bug. Both on-box entry points (step 7's app host, step 9's honeypot)
     must block on `cloud-init status --wait` first.
+
+    Scoped to the fenced commands, not a raw count over the file: the prose explaining the wait
+    also names it, so a whole-file count would stay >= 2 even after one fence lost the line.
     """
     text = _EC2_WALKTHROUGH.read_text()
-    count = text.count("cloud-init status --wait")
-    assert count >= 2, (
-        f"ec2-single-host.md has only {count} 'cloud-init status --wait' occurrence(s), expected "
-        ">= 2 (one after each on-box `sudo -i`: step 7's app host and step 9's honeypot)"
+    entry_fences = [f for f in _fenced_blocks(text) if "sudo -i" in f]
+    assert len(entry_fences) == 2, (
+        f"expected exactly 2 fenced on-box entry blocks (`sudo -i`) in ec2-single-host.md, found "
+        f"{len(entry_fences)}"
     )
+    for fence in entry_fences:
+        assert "cloud-init status --wait" in fence, (
+            "an on-box `sudo -i` block does not then run `cloud-init status --wait` — the SSM "
+            f"agent answers before user-data has necessarily finished (review N8):\n{fence}"
+        )
 
 
 def test_shipper_tarball_paste_never_uses_base64_w0() -> None:
@@ -217,4 +242,23 @@ def test_shipper_tarball_paste_never_uses_base64_w0() -> None:
     assert count >= 2, (
         f"ec2-single-host.md has only {count} 'sha256sum /tmp/shipper.tgz' line(s), expected >= 2 "
         "(the laptop side and the on-box side — comparing them is what catches a truncated paste)"
+    )
+
+
+def test_deployment_doc_states_the_honeypot_egress_truthfully() -> None:
+    """M6 final review M3 / ruling R19: `docs/deployment.md` is the doc of record, and it claimed
+    the honeypot's outbound was "443 to the ingest hostname and to the SSM endpoints only" while
+    the delivered security group allows TCP 443 to `0.0.0.0/0` (which `ec2-single-host.md` and
+    `honeypot/README.md` both said honestly). PRD v1.6 records the relaxation and names the IAM
+    Deny as the compensating control; this pins the doc of record against drifting back to the
+    overstatement.
+    """
+    text = _DEPLOYMENT_DOC.read_text()
+    assert "443 to the ingest hostname and to the SSM endpoints only" not in text, (
+        "docs/deployment.md overstates the honeypot's egress restriction — the SG allows TCP 443 "
+        "to 0.0.0.0/0 (final review M3, PRD v1.6)"
+    )
+    assert "VPC endpoints deferred" in text, (
+        "docs/deployment.md does not record that narrowing the honeypot's egress to VPC endpoints "
+        "is deferred (PRD v1.6 / ruling R19)"
     )

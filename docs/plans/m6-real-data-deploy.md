@@ -42,7 +42,10 @@ M0–M5 Global Constraints apply verbatim (branch `feat/m6-real-data-deploy`). A
   `.env` on the box is rendered by `fetch-secrets.sh`; the honeypot host holds only
   `INGEST_HMAC_SECRET`.
 - The honeypot host shares nothing else with the app host; its instance role has SSM core
-  permissions only; egress is 443 to the ingest hostname and SSM endpoints.
+  permissions only; egress is 443 to the ingest hostname and SSM endpoints. *(Both halves of this
+  constraint were wrong as written — see rulings R17 and R19 below: the managed policy allows
+  `ssm:GetParameter` on `*` and the explicit Deny is the control, and the SG allows 443 to
+  `0.0.0.0/0`.)*
 - Production compose pins git-SHA tags; `latest` is never referenced by the box.
 - `infra/deploy/prod/*` equal the box byte-for-byte after every apply; drift is committed back in
   the same sitting.
