@@ -32,3 +32,38 @@ def test_push_ecr_refuses_a_dirty_working_tree() -> None:
 
     assert "status --porcelain" in text, text
     assert "dirty" in text, text
+
+
+_FETCH_SECRETS = _REPO_ROOT / "infra" / "deploy" / "prod" / "fetch-secrets.sh"
+
+
+def test_fetch_secrets_renders_both_files_or_neither() -> None:
+    """M6 final review, task-03 review N1: the two rendered files carry the SAME password —
+    the app file's `DATABASE_URL` embeds the postgres file's `POSTGRES_PASSWORD`. The original
+    script moved the app file into place BEFORE fetching `POSTGRES_PASSWORD`, so a transient SSM
+    failure on that last fetch left a half-rendered PAIR: a new app secret set against the old
+    postgres password, which is worse than leaving both old. Both `mv`s must therefore come after
+    every required fetch. The final review's mutation M9 (restoring the old order) survived every
+    test on the branch, which is why this pin exists.
+    """
+    assert _FETCH_SECRETS.exists(), f"{_FETCH_SECRETS} does not exist"
+    text = _FETCH_SECRETS.read_text()
+
+    proc = subprocess.run(
+        ["bash", "-n", str(_FETCH_SECRETS)], capture_output=True, text=True, timeout=10
+    )
+    assert proc.returncode == 0, f"bash -n {_FETCH_SECRETS} failed:\n{proc.stderr}"
+
+    app_mv = 'mv "$OUT" "$OUT_DEST"'
+    pg_fetch_loop = "for P in POSTGRES_PASSWORD"
+    pg_mv = 'mv "$OUT_PG" "$OUT_PG_DEST"'
+    for needle in (app_mv, pg_fetch_loop, pg_mv):
+        assert needle in text, f"fetch-secrets.sh no longer contains {needle!r}"
+
+    assert text.index(app_mv) > text.index(pg_fetch_loop), (
+        "fetch-secrets.sh moves the app secrets file into place BEFORE fetching "
+        "POSTGRES_PASSWORD — a failure there leaves a half-rendered pair (review N1)"
+    )
+    assert text.index(pg_mv) > text.index(pg_fetch_loop), (
+        "fetch-secrets.sh moves the postgres secrets file into place before its own fetch"
+    )
