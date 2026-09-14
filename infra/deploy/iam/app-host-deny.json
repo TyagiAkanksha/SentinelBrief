@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyParameterReadsOutsideSentinelBrief",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory"
+      ],
+      "NotResource": [
+        "arn:aws:ssm:*:181040156847:parameter/sentinelbrief/*",
+        "arn:aws:ssm:*::parameter/aws/*"
+      ]
+    }
+  ]
+}

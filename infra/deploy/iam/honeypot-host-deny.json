@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyAllParameterReadsInThisAccount",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory",
+        "ssm:DescribeParameters",
+        "kms:Decrypt"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:181040156847:parameter/*",
+        "arn:aws:kms:*:181040156847:key/*"
+      ]
+    }
+  ]
+}
