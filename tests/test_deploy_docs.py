@@ -361,22 +361,42 @@ def test_user_data_scripts_parse_and_disable_sshd() -> None:
 def test_deployment_doc_has_resource_table_and_check_list() -> None:
     """Interfaces -> test table row "deployment.md" (task-05 brief line 219):
     `::test_deployment_doc_has_resource_table_and_check_list` -- `docs/deployment.md` carries the
-    "Resources (recorded at deploy)" table with at least 8 `<recorded at deploy>` placeholder
-    cells (task-05 brief line 202-205: region, account id, 2 VPC ids, 2 instance ids, 2 EIPs, SG
-    names, role names, bucket, ECR repos, domain -- more than 8 fields, so 8 is a conservative
-    floor), and names the `VERIFY.md` check range `0-11` in its Verification section. A
-    `docs/deployment.md` left with the old "recorded in the execution ledger at M6, not here"
-    placeholder wording instead of a real fill-in table is the mutant this catches.
+    "Resources (recorded at deploy)" table with at least 8 rows and ZERO `<recorded at deploy>`
+    placeholder cells (task-06 doc pass: the deploy happened and every value is recorded now --
+    task-05 brief line 202-205's fields: region, account id, 2 VPC ids, 2 instance ids, 2 EIPs, SG
+    names, role names, bucket, ECR repos, domain), and names the `VERIFY.md` check range `0-11` in
+    its Verification section. A `docs/deployment.md` left with the old "recorded in the execution
+    ledger at M6, not here" placeholder wording, or with any cell still unfilled, is the mutant
+    this catches.
     """
     text = _require(_DEPLOYMENT_DOC)
 
-    assert "Resources (recorded at deploy)" in text, (
+    heading = "## Resources (recorded at deploy)"
+    assert heading in text, (
         "docs/deployment.md has no 'Resources (recorded at deploy)' section/table"
     )
 
-    recorded_count = text.count("<recorded at deploy>")
-    assert recorded_count >= 8, (
-        f"docs/deployment.md has only {recorded_count} '<recorded at deploy>' cell(s), need >= 8"
+    # Scope the row count to just the Resources table (up to the next '## ' heading), not every
+    # markdown table in the file (e.g. the "Differences from AdvisorDesk" table lower down).
+    section_start = text.index(heading) + len(heading)
+    next_heading = text.find("\n## ", section_start)
+    section = text[section_start : next_heading if next_heading != -1 else len(text)]
+
+    data_row_count = (
+        sum(
+            1
+            for line in section.splitlines()
+            if line.startswith("| ") and not line.startswith("|---")
+        )
+        - 1
+    )  # subtract the header row ("| Resource | Value |")
+    assert data_row_count >= 8, (
+        f"docs/deployment.md's resource table has only {data_row_count} data row(s), need >= 8"
+    )
+
+    recorded_count = section.count("<recorded at deploy>")
+    assert recorded_count == 0, (
+        f"docs/deployment.md still has {recorded_count} unfilled '<recorded at deploy>' cell(s)"
     )
 
     assert ("0–11" in text) or ("checks 0–11" in text), (

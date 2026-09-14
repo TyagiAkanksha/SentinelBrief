@@ -34,6 +34,13 @@ runbooks: [`honeypot/README.md`](../../honeypot/README.md) (task-01), the shippe
 - **Local tools:** `aws` CLI v2, Docker, `git`. **Run every `aws` command below from the
   repository root** — every `file://infra/deploy/…` and `file://honeypot/user-data.sh` path is
   relative to it (task-05 fix-1, review M9).
+- **No `session-manager-plugin` installed locally?** Every on-box command in steps 7–9 below
+  (`aws ssm start-session --target <id>` then `sudo -i`) can be run instead, non-interactively, as
+  `aws ssm send-command --document-name AWS-RunShellScript --instance-ids <id> --parameters
+  'commands=["<the same command>"]'` (which already runs as root — no `sudo -i` needed). This is
+  what actually drove the 2026-09-12 deploy, since the controller's workstation had no plugin
+  installed; the two forms are equivalent, the interactive session is just more convenient for a
+  multi-command sitting.
 - **Generate the four secrets locally, in the shell only** — never write one to a file, never
   paste one into a chat, never let one touch this repo:
 
@@ -293,13 +300,20 @@ docker compose pull
 ```
 
 The geoip one-off (skip if no MaxMind key — the tool then answers `{"unavailable": true}`; exact
-command in [`prod/README.md`](prod/README.md#geoip-one-off)):
+command in [`prod/README.md`](prod/README.md#geoip-one-off)). **Deploy-day finding (2026-09-12):**
+the `api`/`worker` services already mount `/opt/sentinelbrief/geoip` **read-only** — running this
+one-off against the same compose service with the same mount target collides with that `:ro`
+mount and the write fails. Use `--no-deps` (skip starting `api`'s own dependencies) and a
+**separate** read-write mount target, then move the downloaded files into place:
 
 ```sh
+mkdir -p /tmp/geoip
 MAXMIND_LICENSE_KEY="$(aws ssm get-parameter --region us-east-1 --name \
   /sentinelbrief/MAXMIND_LICENSE_KEY --with-decryption --query Parameter.Value --output text)" \
-  docker compose run --rm -e MAXMIND_LICENSE_KEY -v /opt/sentinelbrief/geoip:/app/infra/geoip api \
+  docker compose run --rm --no-deps -e MAXMIND_LICENSE_KEY -v /tmp/geoip:/app/infra/geoip api \
   uv run python scripts/fetch_geoip.py --out-dir infra/geoip
+mv /tmp/geoip/*.mmdb /opt/sentinelbrief/geoip/
+chown 1001:1001 /opt/sentinelbrief/geoip/*.mmdb
 ```
 
 Migrate **before** `up -d` (never `exec` into the still-running old container —
@@ -432,6 +446,20 @@ already done by the tarball above). **Before**
 test -d /opt/sentinelbrief-honeypot/data/log
 sudo -u shipper head -c 1 /opt/sentinelbrief-honeypot/data/log/cowrie.json
 ```
+
+**Deploy-day finding (2026-09-12):** the honeypot VPC's default resolver negative-caches
+`NXDOMAIN`. If the shipper starts (and so starts resolving `api.sentinelbrief.tyagiakanksha.com`)
+before step 5's DNS `A` records exist, the resolver keeps answering `NXDOMAIN` for a while even
+after the records are created — the shipper spools locally and retries, but delivery is delayed
+until the cache expires. Start the shipper **after** DNS resolves:
+
+```sh
+resolvectl query api.sentinelbrief.tyagiakanksha.com   # must answer <app-eip>, not NXDOMAIN
+```
+
+If it still answers `NXDOMAIN` and you cannot wait out the cache, a temporary `/etc/hosts` entry
+(`<app-eip> api.sentinelbrief.tyagiakanksha.com`) unblocks delivery immediately — TLS still
+validates correctly by SNI — and can be removed once `resolvectl` answers on its own.
 
 Then start the unit and check it **after 60 s, not immediately** — a `RestartSec=5` crash loop is
 only visible after a few restarts have had time to happen:

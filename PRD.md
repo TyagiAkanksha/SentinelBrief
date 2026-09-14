@@ -412,7 +412,7 @@ Terraform stack live; migration documented.
 
 ## 15. Changelog
 
-**v1.5 — 2026-09-11.** M6 build-time amendment; no scope change.
+**v1.5 — 2026-09-11 / 2026-09-14.** M6 build-time amendment; no scope change.
 - §6.1 step 1: an in-app `Content-Length` guard bounds the ingest request body — a declared
   length over `INGEST_MAX_BODY_BYTES` is `413`, a signed-route request with no usable
   `Content-Length` (e.g. chunked) is `411` — both checked before the HMAC signature ever reads a
@@ -421,6 +421,15 @@ Terraform stack live; migration documented.
   enforced first, on wire bytes, before this app-level check ever runs).
 - §11 Data bullet: nightly `pg_dump | gzip` to S3 from a host systemd timer using the
   instance role (was: a container on a cron schedule) (m6 task-04).
+- Fixture-vs-real finding, recorded 2026-09-14 at the end of the 48 h production soak (m6
+  task-06): every real Cowrie event carries `src_port`, `dst_ip`, `dst_port`, `protocol`, and
+  `uuid` on every event (the v1 fixtures under `fixtures/cowrie/` put `src_port`/`dst_ip`/
+  `dst_port`/`protocol` only on the `connect` event and never carry `uuid` at all);
+  `cowrie.client.kex` additionally carries `hassh`, `hasshAlgorithms`, `kexAlgs`, `keyAlgs`,
+  `encCS`, `macCS`, `compCS`, `langCS`; `cowrie.client.size` carries `width`/`height`;
+  `cowrie.client.fingerprint` carries `fingerprint`/`key`/`type`; no unknown eventids appeared
+  across the soak's 284 real sessions. The v1 fixtures are never edited to add these fields — M7's
+  v2 fixtures carry them instead (`SUGGESTIONS.md`).
 
 **v1.4 — 2026-09-10.** M5 build-time amendment; no scope change.
 - §6.2: the job's own retry count is named explicitly as `TRIAGE_JOB_MAX_TRIES` = 3 total attempts

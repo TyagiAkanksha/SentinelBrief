@@ -81,7 +81,12 @@ pastes its output here:
 restore ok alerts=<n> verdicts=<n> tool_calls=<n> alembic=<version>
 ```
 
-(recorded during deployment)
+```
+restore ok alerts=0 verdicts=0 tool_calls=0 alembic=0001
+```
+
+(recorded during deployment) — 2026-09-12, walkthrough step 11, before any honeypot session
+existed yet, hence the zero row counts; also pasted into `infra/deploy/VERIFY.md` check 7.
 
 ## Retention decision (owner, recorded before the 48 h soak)
 
@@ -90,7 +95,21 @@ session × sessions per day from `VERIFY.md` check 7's `pg_database_size` line);
 the M8 decision (candidate policy: prune `alerts.raw` events older than 90 days, keep envelope +
 verdicts forever). A pruning job is out of M6 scope (`SUGGESTIONS.md`).
 
-Measured at soak: `<rows/day>` `<MB/day>` `<projected 90-day size>`
+Measured at the 48 h soak (`.superpowers/sdd/m6-real-data-deploy/progress.md`, "Soak T+24 h" /
+"Soak T+48 h" lines):
+
+| Metric | Value |
+|---|---|
+| Volume | ≈ 110–120 alerts/day (24 in the first 5.2 h on 09-12, 112 on 09-13, 148 on 09-14 to 18:39Z; 284 total from 125 distinct source IPs at T+48 h) |
+| Storage per alert | ≈ 5.5 KiB across the three tables (`alerts`, `verdicts`, `tool_calls`) including indexes (655,360 B / 116 rows at T+24 h) |
+| Growth rate | ≈ 0.6 MB/day |
+| Projected 90-day size | ≈ 55 MB |
+| Projected 365-day size | ≈ 220 MB (against a 20 GB root volume, 17% used at T+48 h) |
+| `pg_database_size` | 8,351 kB at T+24 h → 8,919 kB at T+48 h |
+| Raw payload proxy | ≈ 1.8 KB/session (`raw_bytes_mean`, `check_real_sessions.py`) |
+
+**Decision:** keep everything stands — no pruning job in v1 (the projected 365-day size is a
+rounding error against a 20 GB volume).
 
 ## Logs (footnote — task-05 copies these into `VERIFY.md` check 8 verbatim)
 

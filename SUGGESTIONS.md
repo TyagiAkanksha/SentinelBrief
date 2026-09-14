@@ -23,3 +23,9 @@ Format: one bullet per idea, with the task that surfaced it in a trailing parent
 - `core.cache.RedisTTLCache` logs one WARNING per failed `get`/`set`; gate it behind a
   once-per-transition flag (first failure after a success, and recovery) so a Redis outage does
   not flood the worker log (m5 task-05 M2).
+- Add synthetic v2 fixtures carrying the real-event extras `check_real_sessions.py` found during
+  the M6 soak (`src_port`/`dst_ip`/`dst_port`/`protocol`/`uuid` on every event; `hassh`/
+  `hasshAlgorithms`/`kexAlgs`/`keyAlgs`/`encCS`/`macCS`/`compCS`/`langCS` on `cowrie.client.kex`;
+  `width`/`height` on `cowrie.client.size`; `fingerprint`/`key`/`type` on
+  `cowrie.client.fingerprint`) — as new fixture files, never by editing an existing v1 fixture
+  (m6 task-06 follow-ups; PRD v1.5 changelog).

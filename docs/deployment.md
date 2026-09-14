@@ -23,8 +23,8 @@ Cloudflare DNS (grey-cloud A records → Elastic IP)
    EC2 t3.small (Amazon Linux 2023, inbound 80/443 only, no SSH — SSM only)
         │
       Caddy (auto-HTTPS via Let's Encrypt)
-        ├── sentinelbrief.<domain>      → web container    :3000
-        └── api.sentinelbrief.<domain>  → api container    :8000
+        ├── sentinelbrief.tyagiakanksha.com      → web container    :3000
+        └── api.sentinelbrief.tyagiakanksha.com  → api container    :8000
                 │
         ┌───────┴────────┬─────────────┐
       worker           postgres        redis
@@ -32,7 +32,7 @@ Cloudflare DNS (grey-cloud A records → Elastic IP)
 
   + host systemd timer: sentinelbrief-backup (pg_dump → S3) — not a container
 
-Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST──► api.sentinelbrief.<domain>/api/v1/alerts
+Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST──► api.sentinelbrief.tyagiakanksha.com/api/v1/alerts
 ```
 
 - **DNS:** two A records (`sentinelbrief`, `api.sentinelbrief`) point at the instance's Elastic
@@ -52,21 +52,45 @@ Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST─
 
 | Resource | Value |
 |---|---|
-| Region | `<recorded at deploy>` |
-| AWS account id | `<recorded at deploy>` |
-| App-host VPC id | `<recorded at deploy>` |
-| Honeypot VPC id | `<recorded at deploy>` |
-| App-host instance id | `<recorded at deploy>` |
-| Honeypot instance id | `<recorded at deploy>` |
-| App-host Elastic IP | `<recorded at deploy>` |
-| Honeypot Elastic IP | `<recorded at deploy>` |
-| App-host security group | `<recorded at deploy>` |
-| Honeypot security group | `<recorded at deploy>` |
-| App-host IAM role | `<recorded at deploy>` |
-| Honeypot IAM role | `<recorded at deploy>` |
-| S3 backup bucket | `<recorded at deploy>` |
-| ECR repositories | `<recorded at deploy>` |
-| Domain | `<recorded at deploy>` |
+| Region | `us-east-1` |
+| AWS account id | `181040156847` |
+| App-host VPC id | `vpc-00735b325754614bd` (default VPC) |
+| Honeypot VPC id | `vpc-0299952fca49b28e2` (10.99.0.0/24) |
+| App-host instance id | `i-0227c9985795b0a55` (t3.small) |
+| Honeypot instance id | `i-0d39be212c09e3072` (t4g.nano) |
+| App-host Elastic IP | `52.3.248.39` |
+| Honeypot Elastic IP | `54.152.86.189` |
+| App-host security group | `sentinelbrief-app` (`sg-076bc72600a052d6a`) |
+| Honeypot security group | `sentinelbrief-honeypot` (`sg-07e626008120d8170`) |
+| App-host IAM role | `sentinelbrief-app-host` |
+| Honeypot IAM role | `sentinelbrief-honeypot-host` |
+| S3 backup bucket | `sentinelbrief-backups-181040156847` |
+| ECR repositories | `sentinelbrief/api`, `sentinelbrief/web` (`181040156847.dkr.ecr.us-east-1.amazonaws.com`) |
+| Domain | `sentinelbrief.tyagiakanksha.com`, `api.sentinelbrief.tyagiakanksha.com` |
+
+## Deploy-day notes
+
+Deviations discovered running `infra/deploy/ec2-single-host.md` for real (2026-09-12), recorded
+here so the runbook and reality stay the same document:
+
+- **On-box steps ran via `aws ssm send-command --document-name AWS-RunShellScript`**, not an
+  interactive `aws ssm start-session`: the controller's workstation had no `session-manager-plugin`
+  installed. `send-command` ran the identical commands as root non-interactively; the runbook's
+  SSM-session form (`aws ssm start-session` + `sudo -i`) is equivalent and is what an owner running
+  this walkthrough from a workstation with the plugin installed should use.
+- **The geoip one-off needs `--no-deps` and a separate rw mount target.** The `api`/`worker`
+  services mount `/opt/sentinelbrief/geoip` **read-only**; running the geoip one-off with the same
+  compose service and the same mount target collides with that `:ro` mount. The working form uses
+  `--no-deps` (skip starting `api`'s dependencies) and mounts a **separate** read-write path (e.g.
+  `/tmp/geoip`) that is then copied/moved into `/opt/sentinelbrief/geoip`, never the service's own
+  `:ro` mount point.
+- **The honeypot VPC resolver negative-caches `NXDOMAIN`.** If the shipper's systemd unit starts
+  (and therefore starts resolving `api.sentinelbrief.tyagiakanksha.com`) before the DNS `A` records
+  exist, the VPC's default resolver caches the negative answer and keeps returning it for a while
+  even after the records are created. Start the honeypot's shipper **after** `resolvectl query
+  api.sentinelbrief.tyagiakanksha.com` answers the Elastic IP, or expect to work around it with a
+  temporary `/etc/hosts` entry (TLS still validates correctly by SNI) until the negative cache
+  expires and the shipper is restarted.
 
 ## Secrets: SSM Parameter Store, never in the repo or chat
 
