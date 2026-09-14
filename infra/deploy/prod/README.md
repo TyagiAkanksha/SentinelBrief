@@ -52,17 +52,25 @@ in time this file names exactly what's running.
 
 The GeoLite2 `.mmdb` files are fetched deploy-time, never baked into the image or run
 automatically at container start. The MaxMind license key is read from SSM inline and passed only
-to a throwaway container — it never lands in a file on disk (the services keep their bind mount
-`:ro`; the rw override below is for this one-off only). `/opt/sentinelbrief/geoip` is created
+to a throwaway container — it never lands in a file on disk. `/opt/sentinelbrief/geoip` is created
 `chown`'d to uid:gid `1001:1001` by `user-data-app.sh` (task-05 fix-1, review I4) — that is the
-`appuser` the api image (`infra/Dockerfile.api`) runs as, and this one-off writes into the bind
-mount as that same non-root user:
+`appuser` the api image (`infra/Dockerfile.api`) runs as.
+
+**Deploy-day finding (2026-09-12):** the `api`/`worker` services already mount
+`/opt/sentinelbrief/geoip` **read-only**, so mounting the same target read-write on the same
+compose service collides with that `:ro` mount and the write fails. Use `--no-deps` (so the
+one-off does not start `api`'s dependencies) and a **separate** read-write target, then move the
+downloaded files into place. This is the form that ran on the box; `ec2-single-host.md` step 8
+carries the identical block:
 
 ```sh
+mkdir -p /tmp/geoip
 MAXMIND_LICENSE_KEY="$(aws ssm get-parameter --region us-east-1 --name \
   /sentinelbrief/MAXMIND_LICENSE_KEY --with-decryption --query Parameter.Value --output text)" \
-  docker compose run --rm -e MAXMIND_LICENSE_KEY -v /opt/sentinelbrief/geoip:/app/infra/geoip api \
+  docker compose run --rm --no-deps -e MAXMIND_LICENSE_KEY -v /tmp/geoip:/app/infra/geoip api \
   uv run python scripts/fetch_geoip.py --out-dir infra/geoip
+mv /tmp/geoip/*.mmdb /opt/sentinelbrief/geoip/
+chown 1001:1001 /opt/sentinelbrief/geoip/*.mmdb
 ```
 
 ## Backups

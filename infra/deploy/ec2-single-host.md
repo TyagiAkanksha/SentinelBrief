@@ -273,11 +273,16 @@ files to the box** (prod copies equal the box byte-for-byte after every apply).
 ```sh
 aws ssm start-session --target <app-instance-id>
 sudo -i
+cloud-init status --wait
 cd /opt/sentinelbrief
 ```
 
 `sudo -i` lands in `/root`, not `/opt/sentinelbrief` — every relative `./…` and `docker compose`
 command in steps 7, 8, and 11 below assumes this `cd` was run (task-05 fix-1, review M3).
+`cloud-init status --wait` blocks until the user-data script has finished (task-05 review N8): the
+SSM agent answers as soon as it is up, which can be before `user-data-app.sh` has installed Docker
+or created `/opt/sentinelbrief/geoip`, and a command run in that window fails for a reason that
+looks like a bug. It prints `status: done` and exits 0 when the boot is complete.
 
 In the session, for each file: create it with the right owner/mode first (`install`, not `cp` +
 `chmod` — `install` sets both in one step, which matters because the SSM session lands as
@@ -452,7 +457,12 @@ read-path proof below):
 ```sh
 aws ssm start-session --target <hp-instance-id>
 sudo -i
+cloud-init status --wait
 ```
+
+As on the app host (step 7), `cloud-init status --wait` blocks until `honeypot/user-data.sh` has
+finished — Docker, the bind-mount directories and the `shipper` account all land there (review
+N8).
 
 Now follow [`honeypot/README.md`](../../honeypot/README.md) steps 4–6 (copy the compose files —
 each a single text file, so a plain heredoc through the SSM session is enough — pin the Cowrie

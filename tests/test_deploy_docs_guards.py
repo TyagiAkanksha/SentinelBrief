@@ -147,3 +147,44 @@ def test_both_run_instances_blocks_require_imdsv2_at_one_hop() -> None:
         "ec2-single-host.md does not carry the in-place "
         "'aws ec2 modify-instance-metadata-options' form for an already-running instance"
     )
+
+
+def test_prod_readme_geoip_one_off_uses_the_form_that_works() -> None:
+    """M6 final review I2: `prod/README.md`'s geoip fence is what `ec2-single-host.md` step 8
+    calls "the exact command", and it prescribed mounting `/opt/sentinelbrief/geoip` read-write on
+    the `api` service — whose own definition already mounts that same target `:ro`. The duplicate
+    mount point failed on deploy day. The working form skips the service's dependencies
+    (`--no-deps`), writes into a separate `/tmp/geoip` target, and moves the files into place
+    afterwards. Both runbooks must agree; `ec2-single-host.md` already carries the corrected form.
+    """
+    readme = (_REPO_ROOT / "infra" / "deploy" / "prod" / "README.md").read_text()
+    fence = readme.split("## Geoip one-off", 1)
+    assert len(fence) == 2, "prod/README.md has no '## Geoip one-off' section"
+    section = fence[1].split("\n## ", 1)[0]
+
+    assert "--no-deps" in section, (
+        "prod/README.md's geoip one-off does not pass --no-deps (final review I2)"
+    )
+    assert "-v /tmp/geoip:/app/infra/geoip" in section, (
+        "prod/README.md's geoip one-off does not use the separate /tmp/geoip mount target — "
+        "mounting /opt/sentinelbrief/geoip rw collides with the api service's own :ro mount "
+        "(final review I2)"
+    )
+    assert "-v /opt/sentinelbrief/geoip:/app/infra/geoip" not in section, (
+        "prod/README.md's geoip one-off still mounts /opt/sentinelbrief/geoip read-write on the "
+        "api service — the form that failed on deploy day (final review I2)"
+    )
+
+
+def test_walkthrough_waits_for_cloud_init_after_each_sudo_i() -> None:
+    """task-05 review N8: the SSM agent answers as soon as it is up, which can be before the
+    instance's user-data has finished; a `docker compose` command run in that window fails for a
+    reason that looks like a bug. Both on-box entry points (step 7's app host, step 9's honeypot)
+    must block on `cloud-init status --wait` first.
+    """
+    text = _EC2_WALKTHROUGH.read_text()
+    count = text.count("cloud-init status --wait")
+    assert count >= 2, (
+        f"ec2-single-host.md has only {count} 'cloud-init status --wait' occurrence(s), expected "
+        ">= 2 (one after each on-box `sudo -i`: step 7's app host and step 9's honeypot)"
+    )
