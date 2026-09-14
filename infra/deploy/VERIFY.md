@@ -140,8 +140,12 @@ _(VERIFY run 1, 2026-09-12T18:38:40Z — the app answered first, confirming the 
 A SMALL chunked unsigned POST has no usable `Content-Length` — the app's guard fails closed:
 
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' -d '{}'
+curl --http1.1 -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' -d '{}'
 ```
+
+> The chunked probes force `--http1.1`: over HTTP/2 curl ignores a user `Transfer-Encoding:` header and sends a
+> `content-length`, so the request passes the app's cap and answers `401` (bad signature) instead of exercising
+> the `411` path. With HTTP/1.1 the body really is chunked and the app answers `411` deterministically.
 
 Expected: `411 length_required`.
 
@@ -161,7 +165,7 @@ answered:
 
 ```sh
 head -c 3000000 /dev/zero > /tmp/body-3mb.bin
-curl -s -i -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @/tmp/body-3mb.bin
+curl --http1.1 -s -i -X POST $API/api/v1/alerts -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @/tmp/body-3mb.bin
 ```
 
 Expected: the app's `HTTP/2 411` with the `length_required` JSON envelope (not a Caddy-native
