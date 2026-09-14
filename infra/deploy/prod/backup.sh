@@ -11,6 +11,7 @@ COMPOSE=(docker compose -f /opt/sentinelbrief/docker-compose.yml)
 LOCAL_DIR=/var/backups/sentinelbrief
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="$LOCAL_DIR/sentinelbrief-$STAMP.sql.gz"
+trap 'rm -f "$OUT.part"' EXIT                            # a failed dump leaves no .part behind (it never matches the prune glob below)
 mkdir -p "$LOCAL_DIR"; chmod 700 "$LOCAL_DIR"
 "${COMPOSE[@]}" exec -T postgres pg_dump -U sentinel -d sentinelbrief --format=plain --no-owner --no-privileges | gzip -6 > "$OUT.part"
 test -s "$OUT.part"                                      # an empty dump is a failure, not a backup

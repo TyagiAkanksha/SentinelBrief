@@ -46,13 +46,24 @@ empty dump must never be discovered only after the live database is already gone
 app, drop/recreate, restore with `ON_ERROR_STOP=1` so a partial restore aborts loudly instead of
 silently succeeding, and only then start the app back up:
 
+The dump path is named once, and every step is chained with `&&` so that a failure anywhere stops
+the sequence instead of running the next, more destructive, command anyway (task-04 review N4 —
+these lines are pasted into a root shell under stress, where a silently-failed first line and a
+successful `DROP DATABASE` is the worst outcome available):
+
 ```sh
-gunzip -t /var/backups/sentinelbrief/<the chosen dump>.sql.gz && [ "$(gunzip -c /var/backups/sentinelbrief/<the chosen dump>.sql.gz | wc -c)" -gt 0 ]
-docker compose -f /opt/sentinelbrief/docker-compose.yml stop api worker
-docker compose -f /opt/sentinelbrief/docker-compose.yml exec -T postgres psql -U sentinel -d postgres -c 'DROP DATABASE sentinelbrief WITH (FORCE)' -c 'CREATE DATABASE sentinelbrief'
-gunzip -c /var/backups/sentinelbrief/<the chosen dump>.sql.gz | docker compose -f /opt/sentinelbrief/docker-compose.yml exec -T postgres psql -U sentinel -d sentinelbrief -v ON_ERROR_STOP=1
-docker compose -f /opt/sentinelbrief/docker-compose.yml start api worker
+DUMP=/var/backups/sentinelbrief/<the chosen dump>.sql.gz
+gunzip -t "$DUMP" \
+  && [ "$(gunzip -c "$DUMP" | wc -c)" -gt 0 ] \
+  && docker compose -f /opt/sentinelbrief/docker-compose.yml stop api worker \
+  && docker compose -f /opt/sentinelbrief/docker-compose.yml exec -T postgres psql -U sentinel -d postgres -c 'DROP DATABASE sentinelbrief WITH (FORCE)' -c 'CREATE DATABASE sentinelbrief' \
+  && gunzip -c "$DUMP" | docker compose -f /opt/sentinelbrief/docker-compose.yml exec -T postgres psql -U sentinel -d sentinelbrief -v ON_ERROR_STOP=1 \
+  && docker compose -f /opt/sentinelbrief/docker-compose.yml start api worker
 ```
+
+If the restore step fails, the chain stops before the final `start` and `api`/`worker` stay down —
+deliberately. Do not start them by hand against a half-restored database; fix the dump (or pick an
+older one) and run the whole chain again.
 
 `WITH (FORCE)` (Postgres 13+; the box runs `postgres:16`) disconnects the `postgres` container's
 own `pg_isready -U sentinel -d sentinelbrief` healthcheck (`infra/deploy/prod/docker-compose.yml`,
