@@ -202,11 +202,17 @@ def test_restore_rehearsal_never_touches_the_live_db() -> None:
 
 
 def test_database_doc_sections() -> None:
-    """Interfaces row `database.md` / `::test_database_doc_sections`: the restore procedure and
-    the retention decision exist as named sections before any real attacker data lands
-    (`docs/deployment.md` "Data: backups and retention"); the doc names the rehearsal script, the
-    30-day lifecycle, the named Postgres volume, and marks the soak-time measurement row as a
-    placeholder task-06 fills in (`(recorded during deployment)`).
+    """Interfaces row `database.md` / `::test_database_doc_sections`, AMENDED at the M6 final
+    review (ruling R16 -- approved pinned edit): the restore procedure and the retention decision
+    exist as named sections (`docs/deployment.md` "Data: backups and retention"); the doc names
+    the rehearsal script, the 30-day lifecycle, and the named Postgres volume.
+
+    What changed: the original assertion required the literal `(recorded during deployment)`
+    marker, which held the doc in its template state -- it forced the M6 doc pass to keep both the
+    `alerts=<n>` placeholder block AND a caption above the real rehearsal output. Now the
+    rehearsal line must be FILLED (real integer counts and a real alembic revision), the marker
+    must be gone, and the `alerts=<n>` placeholder block must be gone with it. A future edit that
+    replaces the recorded line with a placeholder again is the mutant this catches.
     """
     text = _require(_DATABASE_MD)
 
@@ -216,7 +222,21 @@ def test_database_doc_sections() -> None:
     assert "restore-rehearsal.sh" in text, text
     assert _THIRTY_DAY_RE.search(text), "database.md has no '30-day'/'30 days' sentence"
     assert "sentinelbrief_pg" in text, text
-    assert "(recorded during deployment)" in text, text
+
+    assert re.search(
+        r"^restore ok alerts=\d+ verdicts=\d+ tool_calls=\d+ alembic=\w+$", text, re.MULTILINE
+    ), (
+        "database.md has no filled 'restore ok alerts=<int> verdicts=<int> tool_calls=<int> "
+        "alembic=<rev>' line -- the rehearsal's real output belongs here (M6 ruling R16)"
+    )
+    assert "(recorded during deployment)" not in text, (
+        "database.md still carries the '(recorded during deployment)' marker -- it is a record, "
+        "not a template (M6 ruling R16)"
+    )
+    assert "alerts=<n>" not in text, (
+        "database.md still carries the 'restore ok alerts=<n> ...' placeholder block (M6 ruling "
+        "R16)"
+    )
 
 
 def test_prd_and_deployment_doc_say_systemd_timer() -> None:

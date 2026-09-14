@@ -71,22 +71,17 @@ counts rows, and drops it): `/opt/sentinelbrief/restore-rehearsal.sh` (committed
 `infra/deploy/iam/app-host-inline.json`'s `BackupBucketReadOwnDumps` statement, task-05 fix-1),
 creates `sentinelbrief_restore_check` fresh (`DROP DATABASE IF EXISTS` +
 `CREATE DATABASE`), restores the dump into it with `-v ON_ERROR_STOP=1` (a partial restore fails
-loudly instead of silently succeeding), prints `restore ok alerts=<n> verdicts=<n>
-tool_calls=<n> alembic=<version>` from four `SELECT`s (`count(*)` on `alerts`, `verdicts`,
+loudly instead of silently succeeding), prints one `restore ok alerts=… verdicts=…
+tool_calls=… alembic=…` line from four `SELECT`s (`count(*)` on `alerts`, `verdicts`,
 `tool_calls`, and `version_num` from `alembic_version`), then drops the scratch database and
-removes the local copy. Task-05's walkthrough runs this once against the deployed host; task-06
-pastes its output here:
-
-```
-restore ok alerts=<n> verdicts=<n> tool_calls=<n> alembic=<version>
-```
+removes the local copy. Task-05's walkthrough ran it once against the deployed host:
 
 ```
 restore ok alerts=0 verdicts=0 tool_calls=0 alembic=0001
 ```
 
-(recorded during deployment) — 2026-09-12, walkthrough step 11, before any honeypot session
-existed yet, hence the zero row counts; also pasted into `infra/deploy/VERIFY.md` check 7.
+_(2026-09-12, walkthrough step 11, run before any honeypot session existed yet — hence the zero
+row counts; the same line is pasted into [`VERIFY.md`](VERIFY.md) check 7.)_
 
 ## Retention decision (owner, recorded before the 48 h soak)
 

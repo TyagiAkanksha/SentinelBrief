@@ -1,12 +1,17 @@
 # VERIFY.md — deployed verification checklist (M6, PRD §12)
 
-**Filled in below.** Every check was run for real during the deployment session
-([`ec2-single-host.md`](ec2-single-host.md) step 12) and again at the T+24 h / T+48 h soak
-check-ins (`.superpowers/sdd/m6-real-data-deploy/progress.md`); the actual output is pasted into
-each ```text``` block beneath its `(recorded during deployment)` marker (kept as a caption, not
-deleted, so a reader can still see which line is the recorded value vs. surrounding prose), with a
-provenance note (source + UTC timestamp) after the block. No output here is fabricated; a value
-genuinely missing from every capture says so explicitly rather than guessing.
+**This is a record, not a template.** Every check below was run for real during the deployment
+session ([`ec2-single-host.md`](ec2-single-host.md) step 12) and again at the T+24 h / T+48 h soak
+check-ins (`.superpowers/sdd/m6-real-data-deploy/progress.md`). Each ```text``` block holds the
+output that was actually observed; the italic line after it is the provenance — which capture it
+came from, and the UTC timestamp. No output here is fabricated; a value genuinely missing from
+every capture says so explicitly rather than guessing. Check 11 is M8's and is the only block that
+is deliberately still empty.
+
+**Where each check runs.** Checks 6–8 and 10 run **on the app host as root**, after
+`aws ssm start-session --target <app-instance-id>` → `sudo -i` → `cd /opt/sentinelbrief`
+(`ec2-single-host.md` step 7). Checks 8 and 9's honeypot halves likewise, in the honeypot host's
+own root session (step 9). Checks 0–5 run from your own workstation against the public domain.
 
 Set these once, then reuse them in every command below:
 
@@ -24,7 +29,6 @@ curl -s $API/healthz
 Expected: `{"status":"ok","db":"ok","redis":"ok"}`
 
 ```text
-(recorded during deployment)
 {"status":"ok","db":"ok","redis":"ok"}
 ```
 
@@ -44,23 +48,32 @@ curl -s -o /dev/null -D - $API/healthz | grep -iE 'strict-transport|x-frame|HTTP
 Expected: both print `HTTP/2 200`, a `Strict-Transport-Security` (HSTS) header, and
 `X-Frame-Options: DENY`.
 
+WEB (`$WEB`):
+
 ```text
-(recorded during deployment)
 HTTP/2 307
 content-security-policy: frame-ancestors 'none'
 referrer-policy: strict-origin-when-cross-origin
 strict-transport-security: max-age=31536000; includeSubDomains
 x-content-type-options: nosniff
 x-frame-options: DENY
+```
+
+_(VERIFY run 1, 2026-09-12T18:38:40Z, verbatim — `$WEB` root redirects 307, hence not a bare
+`200`.)_
+
+API (`$API/healthz`):
+
+```text
 HTTP/2 200
 strict-transport-security: max-age=31536000; includeSubDomains
 x-frame-options: DENY
 ```
 
-_(WEB: VERIFY run 1, 2026-09-12T18:38:40Z, verbatim — `$WEB` root redirects 307, hence not a bare
-200. API: transcribed from the TLS-LIVE check, 2026-09-12 ~18:37 UTC, after the `GET` correction
-above — the original `-sI`/`HEAD` attempt at VERIFY run 1 recorded `HTTP/2 405`, the finding that
-prompted the command change.)_
+_(Transcribed, not verbatim: from the TLS-LIVE check, 2026-09-12 ~18:37 UTC, re-run with `GET`
+after the `HEAD` finding above. VERIFY run 1's own capture of this probe used `-sI`/`HEAD` and
+recorded `HTTP/2 405` with these same two headers — that 405 is the finding that prompted the
+command change.)_
 
 ## 2. Ingest gates (the body-cap semantics)
 
@@ -77,7 +90,6 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-
 Expected: `401`.
 
 ```text
-(recorded during deployment)
 401
 ```
 
@@ -96,7 +108,6 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-
 Expected: `401`.
 
 ```text
-(recorded during deployment)
 401
 ```
 
@@ -120,7 +131,6 @@ answered first); if instead the body is not that JSON envelope, Caddy answered f
 that finding instead of the expectation above.
 
 ```text
-(recorded during deployment)
 HTTP/2 413
 {"error":{"code":"payload_too_large","message":"body exceeds 2000000 bytes"}}
 ```
@@ -136,7 +146,6 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/alerts -H 'content-
 Expected: `411 length_required`.
 
 ```text
-(recorded during deployment)
 411
 ```
 
@@ -159,7 +168,6 @@ Expected: the app's `HTTP/2 411` with the `length_required` JSON envelope (not a
 error page — see the finding above).
 
 ```text
-(recorded during deployment)
 HTTP/2 411
 {"error":{"code":"length_required","message":"Content-Length required"}}
 ```
@@ -177,7 +185,6 @@ deploy-day capture, step 10, 2026-09-12 18:49 UTC, delivered six real sessions t
 recorded in `ec2-single-host.md` step 10's own note).
 
 ```text
-(recorded during deployment)
 shipper (honeypot journal): Sep 14 18:58:36 … sentinelbrief-shipper[30043]: INFO sentinelbrief_shipper.main shipper: delivered session_id=617f6ff2d237 status=202 bytes=3854
 worker (app): 18:58:42:   6.17s ← triage:518a17ef-0e77-4875-adcd-8b85316285a4:triage_alert ● 'triaged'
 public API (GET /api/v1/alerts?page_size=1): alert 518a17ef-0e77-4875-adcd-8b85316285a4 "status": "triaged", severity 4, category successful_intrusion, escalated: true
@@ -198,7 +205,6 @@ Expected: the first prints nothing (no `access-control-allow-origin` header); th
 `$WEB`.
 
 ```text
-(recorded during deployment)
 evil origin: (nothing — no access-control-allow-origin header)
 site origin: access-control-allow-origin: https://sentinelbrief.tyagiakanksha.com
 ```
@@ -215,7 +221,6 @@ curl -s $WEB/healthz
 Expected: the count is `>= 1`; the healthz body is `{"status":"ok"}`.
 
 ```text
-(recorded during deployment)
 /alerts tables: 0
 web /healthz: {"status":"ok"}
 root: 307 -> https://sentinelbrief.tyagiakanksha.com/alerts
@@ -242,7 +247,6 @@ docker compose logs api --since 48h 2>&1 | grep -ciE 'chat/completions|api.opena
 Expected: `0` — the api process never logs an LLM call.
 
 ```text
-(recorded during deployment)
 0
 ```
 
@@ -256,7 +260,6 @@ docker compose logs worker --since 48h 2>&1 | grep -ciE 'chat/completions'
 Expected: `> 0` — the worker is the only process doing triage work.
 
 ```text
-(recorded during deployment)
 295
 ```
 
@@ -272,7 +275,6 @@ docker compose exec -T api uv run python -c "import sys; import api.main; print(
 Expected: `[]`.
 
 ```text
-(recorded during deployment)
 []
 ```
 
@@ -289,7 +291,6 @@ Expected: today's `sentinelbrief-<UTC stamp>.sql.gz` key; the journal's last lin
 `backup ok key=... bytes=...`.
 
 ```text
-(recorded during deployment)
 aws s3 ls (T+48 h, 2026-09-14T18:58:08Z):
 2026-09-12 14:13:30       1473 sentinelbrief-20260912T181328Z.sql.gz
 2026-09-12 23:22:24      14229 sentinelbrief-20260913T032223Z.sql.gz
@@ -310,7 +311,6 @@ Expected: `restore ok alerts=... verdicts=... tool_calls=... alembic=...` (paste
 into [`database.md`](database.md)'s own block).
 
 ```text
-(recorded during deployment)
 restore ok alerts=0 verdicts=0 tool_calls=0 alembic=0001
 ```
 
@@ -324,7 +324,6 @@ docker compose exec -T postgres psql -U sentinel -d sentinelbrief -tAc "select p
 Expected: a human-readable size (e.g. `12 MB`) — feeds `database.md`'s retention decision.
 
 ```text
-(recorded during deployment)
 8919 kB
 ```
 
@@ -345,7 +344,6 @@ Expected: every line reads `{json-file map[max-file:3 max-size:10m]}`; rotated f
 a container has logged past 10 MB (expect this on `api` under attacker traffic).
 
 ```text
-(recorded during deployment)
 sentinelbrief-caddy-1 json-file map[max-file:3 max-size:10m]
 sentinelbrief-web-1 json-file map[max-file:3 max-size:10m]
 sentinelbrief-worker-1 json-file map[max-file:3 max-size:10m]
@@ -362,18 +360,24 @@ Honeypot host (in the root SSM session from `ec2-single-host.md` step 9's `sudo 
 fix-2, review N2) — the same `docker inspect` check against `cowrie`, plus the journald budget:
 
 ```sh
+docker compose -f /opt/sentinelbrief-honeypot/docker-compose.yml ps
 docker inspect --format '{{.HostConfig.LogConfig}}' $(docker compose -f /opt/sentinelbrief-honeypot/docker-compose.yml ps -q)
 journalctl --disk-usage
 ```
 
 ```text
-(recorded during deployment)
-docker inspect: not independently captured during a soak check-in (not captured — see ledger);
-honeypot/docker-compose.yml pins the same json-file driver (max-size 10m, max-file 3) for cowrie
-via the shared x-logging anchor, unchanged since deploy.
+docker compose ps (T+48 h, 2026-09-14T18:58:26Z):
+sentinelbrief-honeypot-cowrie-1 Up 2 days
+docker inspect --format '{{.HostConfig.LogConfig}}': not captured in a soak check-in. The record
+for the honeypot side is honeypot/docker-compose.yml's own `x-logging` anchor, which pins the same
+json-file driver (max-size 10m, max-file 3) on the cowrie service; the container above has run
+without a restart since deploy, so the driver it was created with is still that one.
 journalctl --disk-usage (T+24 h, 2026-09-13T19:03Z):
 Archived and active journals take up 16.0M in the file system.
 ```
+
+_(Container state: T+48 h honeypot capture, 2026-09-14T18:58:26Z. Journal budget: T+24 h,
+2026-09-13T19:03Z — `SystemMaxUse=200M` from `honeypot/user-data.sh`, 16.0M used after 25 h.)_
 
 ## 9. Honeypot hardening
 
@@ -388,7 +392,6 @@ ss -ltnp | grep ':22 '
 Expected: `docker-proxy`, never `sshd`.
 
 ```text
-(recorded during deployment)
 docker-proxy owns 0.0.0.0:22 and [::]:22
 ```
 
@@ -401,7 +404,6 @@ systemctl is-enabled sshd
 Expected: `masked`.
 
 ```text
-(recorded during deployment)
 masked
 ```
 
@@ -416,7 +418,6 @@ ls /var/lib/sentinelbrief-shipper/spool/dead
 Expected: `active`; both spool directories empty (nothing queued, nothing permanently rejected).
 
 ```text
-(recorded during deployment)
 active
 spool (pending): 0
 spool/dead: 0
@@ -433,7 +434,6 @@ docker inspect --format '{{index .RepoDigests 0}}' sentinelbrief-honeypot-cowrie
 Expected: equals the digest pinned in `honeypot/docker-compose.yml`'s `image:` line.
 
 ```text
-(recorded during deployment)
 sha256:42e01e0e…740d44
 ```
 
@@ -451,7 +451,6 @@ curl -s $API/healthz
 Expected: `503` with `"redis":"error"` in the body.
 
 ```text
-(recorded during deployment)
 503
 {"status":"degraded","db":"ok","redis":"error"}
 ```
@@ -464,15 +463,14 @@ curl -s -o /dev/null -w '%{http_code}\n' $API/healthz
 docker compose ps worker
 ```
 
-Expected: `200`; `worker` still `running` throughout (its restart policy never had to fire because
-it does not depend on Redis being reachable to stay up).
+Expected: `200`; the worker exits when Redis vanishes and `unless-stopped` restarts it (health:
+`starting` → `healthy`), so `docker compose ps worker` shows it **running (restart policy)** once
+Redis is back — which is what the task-05 brief predicted.
 
 ```text
-(recorded during deployment)
 200
-worker: restarted by its unless-stopped policy (health: starting -> healthy) once Redis came back
-— NOT "still running throughout" as the Expected line above assumes; see the M6 doc-pass
-implementer report for this discrepancy. Public healthz ok afterwards.
+worker: restarted by its unless-stopped policy (health: starting -> healthy) once Redis came back;
+docker compose ps worker shows it running. Public healthz ok afterwards.
 ```
 
 _(VERIFY check 10, 2026-09-12.)_

@@ -279,18 +279,25 @@ def test_walkthrough_names_every_step_and_both_hosts() -> None:
         assert needle in text, f"ec2-single-host.md missing required text: {needle!r}"
 
 
-def test_verify_template_has_all_checks_and_placeholders() -> None:
-    """Interfaces -> test table row "VERIFY template" (task-05 brief line 217):
-    `::test_verify_template_has_all_checks_and_placeholders` -- `infra/deploy/VERIFY.md` has
-    headings `## 0.` through `## 11.` (task-05 brief lines 166-200, the AdvisorDesk
-    `## N. <title>` shape); the no-LLM check (check 6) greps both the `api` and `worker` container
-    logs with `grep -ciE`; at least 12 `(recorded during deployment)` output blocks (one per
-    check); and the literal strings that prove the ingest-cap and hardening checks are actually
-    written down: `payload_too_large` + `411` (check 2's declared-length vs. chunked-body gates),
-    `pg_database_size` (check 7), `docker-proxy` + `masked` (check 9, the honeypot `sshd`
-    proof). A VERIFY.md missing a check number or silently dropping the api-side (false-negative
-    on an LLM call from a public request) or worker-side (false-positive "worker never ran") grep
-    is the mutant this catches.
+def test_verify_doc_is_filled_for_checks_0_to_10() -> None:
+    """Interfaces -> test table row "VERIFY template" (task-05 brief line 217), AMENDED at the M6
+    final review (ruling R16 -- approved pinned edit): `infra/deploy/VERIFY.md` is a RECORD, not a
+    template. It still has headings `## 0.` through `## 11.` (task-05 brief lines 166-200, the
+    AdvisorDesk `## N. <title>` shape); the no-LLM check (check 6) still greps both the `api` and
+    `worker` container logs with `grep -ciE`; and the literal strings that prove the ingest-cap
+    and hardening checks are actually written down are still required: `payload_too_large` + `411`
+    (check 2's declared-length vs. chunked-body gates), `pg_database_size` (check 7),
+    `docker-proxy` + `masked` (check 9, the honeypot `sshd` proof).
+
+    What changed: the old assertion counted >= 12 literal `(recorded during deployment)` markers,
+    which forced the M6 doc pass to KEEP each marker as a caption above the real output instead of
+    replacing it -- a test holding the doc in its template state (task-06's own Verify block
+    expected 0 markers at the soak's end; the two briefs disagreed and R16 resolved it in
+    task-06's favour). Now: zero `(recorded during deployment)` markers anywhere, exactly one
+    `(recorded at M8)` block (check 11, which is genuinely M8's work), and every check 0-10 must
+    carry at least one ```text``` block whose first non-blank line is real output -- not empty,
+    not a `(recorded ...)` marker. A doc-pass that pastes a check's output but forgets another
+    check, or a future edit that re-empties a block, is the mutant this catches.
     """
     text = _require(_VERIFY_MD)
 
@@ -308,10 +315,29 @@ def test_verify_template_has_all_checks_and_placeholders() -> None:
     )
 
     recorded_count = text.count("(recorded during deployment)")
-    assert recorded_count >= 12, (
-        f"VERIFY.md has only {recorded_count} '(recorded during deployment)' block(s), need >= 12 "
-        "(one per check 0-11)"
+    assert recorded_count == 0, (
+        f"VERIFY.md still has {recorded_count} '(recorded during deployment)' marker(s) -- it is a "
+        "record of the deployment, not a template (M6 final review, ruling R16)"
     )
+    m8_count = text.count("(recorded at M8)")
+    assert m8_count == 1, (
+        f"VERIFY.md has {m8_count} '(recorded at M8)' block(s), expected exactly 1 (check 11's "
+        "rate-limit/SSE placeholders are the only work that is genuinely not M6's)"
+    )
+
+    text_block_re = re.compile(r"```text\n(.*?)```", re.DOTALL)
+    marker_re = re.compile(r"^\(recorded\b.*\)$")
+    for n in range(11):  # checks 0 through 10 -- check 11 is M8's
+        section = _section_by_heading_number(text, n)
+        filled = []
+        for block in text_block_re.findall(section):
+            first_line = next((line for line in block.splitlines() if line.strip()), "")
+            if first_line.strip() and not marker_re.match(first_line.strip()):
+                filled.append(first_line)
+        assert filled, (
+            f"VERIFY.md check {n} has no ```text``` block with real recorded output (every block "
+            "is missing, empty, or still a '(recorded ...)' marker)"
+        )
 
     for needle in ("payload_too_large", "411", "pg_database_size", "docker-proxy", "masked"):
         assert needle in text, f"VERIFY.md missing required text: {needle!r}"
