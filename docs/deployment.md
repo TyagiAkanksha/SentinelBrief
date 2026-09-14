@@ -44,8 +44,12 @@ Honeypot EC2 (separate VPC/account, SSM only, Cowrie on :22) ──HTTPS POST─
 - **AWS resources** (us-east-1): the instance, its Elastic IP, a security group allowing inbound
   80/443 only, an IAM instance role/profile granting `AmazonSSMManagedInstanceCore` (management —
   there is no SSH port), `AmazonEC2ContainerRegistryReadOnly` (image pulls), an inline policy
-  reading `/sentinelbrief/*` SSM parameters (+ `kms:Decrypt` via ssm), and `s3:PutObject` on the
-  backup bucket. Concrete resource names are recorded in the table below, filled in by the owner
+  reading `/sentinelbrief/*` SSM parameters (+ `kms:Decrypt` via ssm) and `s3:PutObject` on the
+  backup bucket, and — because `AmazonSSMManagedInstanceCore` already allows `ssm:GetParameter` on
+  `Resource: "*"` — an explicit Deny (`infra/deploy/iam/app-host-deny.json`) that narrows that
+  grant back to `/sentinelbrief/*`; the Deny, not the inline Allow, is what makes the
+  least-privilege claim true (M6 final review I1). Concrete resource names are recorded in the
+  table below, filled in by the owner
   at deploy time (`infra/deploy/ec2-single-host.md` step 12).
 
 ## Resources (recorded at deploy)
@@ -180,7 +184,12 @@ LLM client's log line, which must appear only in the `worker` container.
   is `honeypot/README.md`.
 - Cheapest instance (t3.nano / t4g.nano class) in a **separate VPC or account**. Assume it will be
   fully compromised — that is its job. It shares no credentials with the app host; its only
-  secret is `INGEST_HMAC_SECRET`, and its instance role has SSM core permissions and nothing else.
+  secret is `INGEST_HMAC_SECRET`. Its instance role is granted `AmazonSSMManagedInstanceCore` and
+  nothing else — but that managed policy allows `ssm:GetParameter` on `Resource: "*"`, so the
+  boundary is the explicit Deny attached to the role (`infra/deploy/iam/honeypot-host-deny.json`:
+  every `ssm:GetParameter*`/`DescribeParameters` action and `kms:Decrypt` denied on every
+  parameter and key in the account). An explicit Deny beats every Allow; without it the role could
+  read and decrypt every SecureString in the account (M6 final review C1).
 - **SSM-only management, no `sshd` on any port**, so Cowrie (in Docker, `cowrie/cowrie`) owns
   port 22 outright. There is nothing to move to a high port.
 - Outbound security group: 443 to the ingest hostname and to the SSM endpoints only.

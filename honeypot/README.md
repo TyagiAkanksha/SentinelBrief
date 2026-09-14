@@ -9,7 +9,10 @@ by itself — every step below is a console/CLI action the owner performs by han
 Amazon Linux 2023, `t4g.nano` (arm64) or `t3.nano` (x86_64 — both work; the Cowrie image is
 multi-arch), in a **separate VPC** (or a separate AWS account — either satisfies PRD §10.4's
 "assume it will be fully compromised, share nothing with the app host"), public subnet, Elastic
-IP. Instance role: `AmazonSSMManagedInstanceCore` only — no other permissions, no access keys.
+IP. Instance role: `AmazonSSMManagedInstanceCore` and no other grant, no access keys — plus the
+explicit Deny in `infra/deploy/iam/honeypot-host-deny.json`, which is what actually stops this
+host reading a parameter: the managed policy by itself allows `ssm:GetParameter` on
+`Resource: "*"` (M6 final review C1).
 
 ## 2. Security group
 
@@ -80,8 +83,8 @@ cfg must land at exactly that path — not loose in `/opt/sentinelbrief-honeypot
 Session Manager session (`aws ssm start-session --target <instance-id>`, then `sudo -i` — no
 `usermod -aG docker` runs on this host (step 3), so every `docker`/`mkdir` command below needs
 root, task-05 fix-2 review N2 — and a heredoc, **not** an S3 object as a courier: this host's
-instance role, `AmazonSSMManagedInstanceCore` only, cannot read any bucket, task-05 fix-1 review
-M5) — **never `scp`**, there is no `sshd` on this host to receive it.
+instance role is granted no S3 permission at all, so it cannot read any bucket, task-05 fix-1
+review M5) — **never `scp`**, there is no `sshd` on this host to receive it.
 
 Then, in the same SSM session:
 
@@ -133,6 +136,8 @@ opened, each carrying `"sensor": "hp-use-01"`.
 ## 6. What is NOT on this host
 
 No repo checkout, no `.env` file, no database URL, no LLM API key, no AWS credentials beyond the
-instance role (`AmazonSSMManagedInstanceCore`). The only secret ever placed on this host is the
+instance role (`AmazonSSMManagedInstanceCore`, with `infra/deploy/iam/honeypot-host-deny.json`
+denying every SSM parameter read and `kms:Decrypt` in the account — so the role cannot reach a
+secret it is not given). The only secret ever placed on this host is the
 shipper's `INGEST_HMAC_SECRET` (task-02, written to `/etc/sentinelbrief-shipper.env`, mode 600) —
 its value is never written into this repo, this runbook, or any other file here.

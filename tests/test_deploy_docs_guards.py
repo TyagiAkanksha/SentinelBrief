@@ -12,12 +12,21 @@ Pure text pins — no docker, no live AWS, no SSM, same style as `tests/test_dep
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EC2_WALKTHROUGH = _REPO_ROOT / "infra" / "deploy" / "ec2-single-host.md"
 _USER_DATA_APP = _REPO_ROOT / "infra" / "deploy" / "user-data-app.sh"
 _HONEYPOT_USER_DATA = _REPO_ROOT / "honeypot" / "user-data.sh"
+_IAM_DIR = _REPO_ROOT / "infra" / "deploy" / "iam"
+
+
+def _as_list(value: object) -> list[object]:
+    """IAM allows a bare string or a list anywhere a list is accepted (copied from
+    `tests/test_deploy_docs.py::_as_list`, not imported — CONVENTIONS.md §10: no
+    cross-test-file imports)."""
+    return value if isinstance(value, list) else [value]
 
 
 def test_walkthrough_uses_ip_permissions_for_ipv6() -> None:
@@ -55,3 +64,65 @@ def test_user_data_scripts_never_usermod_ssm_user() -> None:
             "re-review 1)"
         )
         assert "Storage=persistent" in text, f"{path} is missing 'Storage=persistent' (review M6)"
+
+
+def test_iam_deny_documents_bound_both_instance_roles() -> None:
+    """M6 final-review C1/I1: `AmazonSSMManagedInstanceCore` — attached to BOTH instance roles —
+    allows `ssm:GetParameter` on `Resource: "*"`, so an Allow-only policy set bounds neither role.
+    The boundary is an explicit Deny per role, and this test is what stops a future edit deleting
+    or weakening one. `tests/test_deploy_docs.py::test_iam_documents_parse_and_have_no_wildcard_
+    action_or_resource` reads `statement["Resource"]` and would `KeyError` on the app-host Deny's
+    `NotResource`, which is why the Deny documents live in their own files and are pinned here
+    (that file is pinned; this one is not).
+
+    Pure JSON/text pins — no live AWS. The live proof is the
+    `simulate-principal-policy` → `explicitDeny` block the walkthrough's step 1 now carries.
+    """
+    honeypot_deny = _IAM_DIR / "honeypot-host-deny.json"
+    app_deny = _IAM_DIR / "app-host-deny.json"
+
+    for path in (honeypot_deny, app_deny):
+        assert path.exists(), f"{path} does not exist (final review C1/I1: the Deny is the control)"
+
+    honeypot_doc = json.loads(honeypot_deny.read_text())
+    honeypot_statements = [s for s in honeypot_doc["Statement"] if s["Effect"] == "Deny"]
+    assert honeypot_statements, "honeypot-host-deny.json has no Deny statement"
+    honeypot_actions = {a for s in honeypot_statements for a in _as_list(s["Action"])}
+    for action in (
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "kms:Decrypt",
+    ):
+        assert action in honeypot_actions, (
+            f"honeypot-host-deny.json does not deny {action!r}: {sorted(honeypot_actions)}"
+        )
+
+    app_doc = json.loads(app_deny.read_text())
+    app_statements = [s for s in app_doc["Statement"] if s["Effect"] == "Deny"]
+    assert app_statements, "app-host-deny.json has no Deny statement"
+    app_actions = {a for s in app_statements for a in _as_list(s["Action"])}
+    for action in ("ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"):
+        assert action in app_actions, (
+            f"app-host-deny.json does not deny {action!r}: {sorted(app_actions)}"
+        )
+    # The app host must keep reading its OWN namespace, so the Deny is scoped by NotResource.
+    for statement in app_statements:
+        assert "NotResource" in statement, (
+            "app-host-deny.json's Deny must use NotResource so /sentinelbrief/* stays readable: "
+            f"{statement}"
+        )
+        assert any(
+            str(r).endswith("parameter/sentinelbrief/*") for r in _as_list(statement["NotResource"])
+        ), f"app-host-deny.json's NotResource does not exempt /sentinelbrief/*: {statement}"
+
+    walkthrough = _EC2_WALKTHROUGH.read_text()
+    for needle in (
+        "iam/honeypot-host-deny.json",
+        "iam/app-host-deny.json",
+        "simulate-principal-policy",
+        "explicitDeny",
+    ):
+        assert needle in walkthrough, (
+            f"ec2-single-host.md step 1 does not mention {needle!r} (final review C1/I1)"
+        )

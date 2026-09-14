@@ -5,9 +5,14 @@ the single source of truth; `.env.example` is the local-dev mirror of the same r
 which deployed service needs it. **No secret VALUE appears in this file or any other committed
 file** — secrets are named here, with a description of where their real value comes from; the real
 values live in **SSM Parameter Store under `/sentinelbrief/`** (written by the owner from their
-own terminal, read + decrypted by the EC2 instance role and rendered into the box-local
+own terminal, read + decrypted by the app host's EC2 instance role and rendered into the box-local
 `/opt/sentinelbrief/.env` / `/opt/sentinelbrief/.env.postgres` by `fetch-secrets.sh` — see
-`prod/README.md`), never in a file in this repo.
+`prod/README.md`), never in a file in this repo. That role's read scope is `/sentinelbrief/*`
+because an explicit Deny (`iam/app-host-deny.json`) narrows it there — the attached
+`AmazonSSMManagedInstanceCore` managed policy allows `ssm:GetParameter` on `Resource: "*"` on its
+own, so the inline Allow is intent and the Deny is the boundary (M6 final review I1). The honeypot
+host's role is denied every parameter read outright (`iam/honeypot-host-deny.json`): none of the
+values below is reachable from it.
 
 ## `api` / `worker`
 

@@ -54,9 +54,19 @@ runbooks: [`honeypot/README.md`](../../honeypot/README.md) (task-01), the shippe
 
 ## 1. IAM
 
-App host role, with the least-privilege inline policy that reads only `/sentinelbrief/*` and
-writes only the backup bucket ([`iam/app-host-trust.json`](iam/app-host-trust.json),
-[`iam/app-host-inline.json`](iam/app-host-inline.json) — no `"*"` Action, no `"*"` Resource):
+**An Allow-only policy set does not bound either role.** `AmazonSSMManagedInstanceCore` — which
+both roles need for Session Manager and Run Command — already allows `ssm:GetParameter` and
+`ssm:GetParameters` on `Resource: "*"`, and the AWS-managed `aws/ssm` KMS key grants `kms:Decrypt`
+to every principal in the account through SSM. So the boundary each role actually has is the
+**explicit Deny** attached below (an explicit Deny beats every Allow, managed or inline). This was
+the M6 final review's Critical C1 / Important I1; the two Deny documents are the control.
+
+App host role. The inline policy ([`iam/app-host-inline.json`](iam/app-host-inline.json) — no
+`"*"` Action, no `"*"` Resource) describes the intent (read `/sentinelbrief/*`, write only the
+backup bucket); [`iam/app-host-deny.json`](iam/app-host-deny.json) is what enforces the SSM half
+of it, denying every `ssm:GetParameter*` action outside `/sentinelbrief/*` (the public `/aws/*`
+namespace stays readable — `resolve:ssm:` AMI lookups use it). Trust document:
+[`iam/app-host-trust.json`](iam/app-host-trust.json).
 
 ```sh
 aws iam create-role --role-name sentinelbrief-app-host \
@@ -68,24 +78,59 @@ aws iam attach-role-policy --role-name sentinelbrief-app-host \
 aws iam put-role-policy --role-name sentinelbrief-app-host \
   --policy-name sentinelbrief-app-host-inline \
   --policy-document file://infra/deploy/iam/app-host-inline.json
+aws iam put-role-policy --role-name sentinelbrief-app-host \
+  --policy-name sentinelbrief-app-host-deny \
+  --policy-document file://infra/deploy/iam/app-host-deny.json
 aws iam create-instance-profile --instance-profile-name sentinelbrief-app-host
 aws iam add-role-to-instance-profile --instance-profile-name sentinelbrief-app-host \
   --role-name sentinelbrief-app-host
 ```
 
-Honeypot host role — `AmazonSSMManagedInstanceCore` **only**, no inline policy, so it cannot read
-a parameter or pull an image ([`iam/honeypot-host-trust.json`](iam/honeypot-host-trust.json) is the
-same trust document, kept as its own file so each role's files sit together):
+Honeypot host role — `AmazonSSMManagedInstanceCore` and one explicit Deny, nothing else. The
+managed policy on its own would let this host read and decrypt every SecureString in the account,
+which is unacceptable on a host whose job is to be fully compromised (PRD §10.4).
+[`iam/honeypot-host-deny.json`](iam/honeypot-host-deny.json) denies `ssm:GetParameter`,
+`ssm:GetParameters`, `ssm:GetParametersByPath`, `ssm:GetParameterHistory`,
+`ssm:DescribeParameters` and `kms:Decrypt` on every parameter and key in this account — that Deny,
+not the absence of an inline Allow, is what makes "it cannot read a parameter" true. Session
+Manager and Run Command are unaffected: they need only `ssmmessages:*`, `ec2messages:*` and
+`ssm:UpdateInstanceInformation`, none of which is denied.
+[`iam/honeypot-host-trust.json`](iam/honeypot-host-trust.json) is the same trust document as the
+app host's, kept as its own file so each role's files sit together:
 
 ```sh
 aws iam create-role --role-name sentinelbrief-honeypot-host \
   --assume-role-policy-document file://infra/deploy/iam/honeypot-host-trust.json
 aws iam attach-role-policy --role-name sentinelbrief-honeypot-host \
   --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+aws iam put-role-policy --role-name sentinelbrief-honeypot-host \
+  --policy-name sentinelbrief-honeypot-deny \
+  --policy-document file://infra/deploy/iam/honeypot-host-deny.json
 aws iam create-instance-profile --instance-profile-name sentinelbrief-honeypot-host
 aws iam add-role-to-instance-profile --instance-profile-name sentinelbrief-honeypot-host \
   --role-name sentinelbrief-honeypot-host
 ```
+
+**Verify both Denies are in force before continuing.** Simulating the ROLE (not a policy document)
+is the check that would have caught C1 — simulating only the app host's inline document, as the
+task-05 review did, cannot see the managed policy's `"*"` grant:
+
+```sh
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::181040156847:role/sentinelbrief-honeypot-host \
+  --action-names ssm:GetParameter \
+  --resource-arns arn:aws:ssm:us-east-1:181040156847:parameter/sentinelbrief/LLM_API_KEY \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]'
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::181040156847:role/sentinelbrief-app-host \
+  --action-names ssm:GetParameter \
+  --resource-arns arn:aws:ssm:us-east-1:181040156847:parameter/advisordesk/DATABASE_URL \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]'
+```
+
+Expected: `explicitDeny` on both. Re-run the second command against
+`arn:aws:ssm:us-east-1:181040156847:parameter/sentinelbrief/DATABASE_URL` — that one must still
+say `allowed`, otherwise `fetch-secrets.sh` (step 8) cannot run.
 
 ## 2. S3 backup bucket
 
@@ -402,8 +447,8 @@ Cowrie, from
 
 That README's `sudo cp -r honeypot/shipper /opt/sentinelbrief-shipper/src` step assumes a local
 repo checkout, which this host never has (`honeypot/README.md`'s "What is NOT on this host"), and
-an S3 courier is impossible too — the honeypot role has no inline policy (step 1). The one
-mechanism that works on a host with neither: a base64'd tarball, pasted through the SSM session
+an S3 courier is impossible too — the honeypot role is granted nothing but SSM management (step 1).
+The one mechanism that works on a host with neither: a base64'd tarball, pasted through the SSM session
 (task-05 fix-1, review M5), with a `sha256sum` check on both ends so a truncated paste is caught
 before extraction, not after (task-05 fix-2, review N1). On the laptop, from the repo root:
 
@@ -439,7 +484,11 @@ tar xzf /tmp/shipper.tgz -C /opt/sentinelbrief-shipper/src --strip-components=1
 ```
 
 Continue from `honeypot/shipper/README.md`'s venv-build step onward (its own `cp -r` step is
-already done by the tarball above). **Before**
+already done by the tarball above). Its `/etc/sentinelbrief-shipper.env` step needs
+`INGEST_HMAC_SECRET`, which this host **cannot** fetch from SSM — that is exactly what step 1's
+Deny enforces. Type the value into the interactive SSM session from your own clipboard, with a
+leading space so it stays out of shell history; never pass it as a `send-command`
+`--parameters` value, which AWS keeps in the command's own history. **Before**
 `systemctl enable --now sentinelbrief-shipper`, prove the unprivileged read path works:
 
 ```sh
