@@ -102,6 +102,20 @@ if wrong):
   dashboard (no API token exists locally) or by the owner on request. Cost if wrong: the
   resources are small (t3.small + t4g.nano) and every step is reversible by termination.
 
+### Gate rulings (2026-09-14, from the whole-branch review)
+
+- **R17 — the "SSM core only ⇒ cannot read a parameter" premise in this spine and in the task-01/05
+  briefs was false.** `AmazonSSMManagedInstanceCore` grants `ssm:GetParameter` on `*`; both instance
+  roles could read any SecureString in the account (confirmed with `simulate-principal-policy`).
+  Explicit Deny inline policies (`infra/deploy/iam/honeypot-host-deny.json`, `app-host-deny.json`)
+  are the control: the honeypot reads no parameter, the app host only `/sentinelbrief/*`. Applied
+  live before the docs were corrected.
+- **R18 — rotation:** `ADMIN_TOKEN` is rotated at the redeploy; `LLM_API_KEY` is the owner's call.
+- **R19 — egress:** the honeypot SG allows TCP 443 to any address in v1 (the ingest origin and the
+  SSM endpoints); VPC endpoints are deferred; the IAM deny is the compensating control (PRD v1.6).
+- **R16 — docs as records:** the two template-marker pins are amended; `VERIFY.md` and
+  `database.md` carry the recorded values without template captions.
+
 ## Tasks (briefs written at the M5 gate, 2026-09-11)
 
 | # | Task | File | Depends on |
