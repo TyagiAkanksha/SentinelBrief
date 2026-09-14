@@ -100,10 +100,17 @@ invalid.
 | M5 | [`m5-queue-routing.md`](m5-queue-routing.md) | Redis + ARQ worker container; <100 ms ingest; retry/poison; two-tier routing; idempotency; healthz Redis ping | M4 | written (5 briefs; folds the 16 M4 final-review plan-defect rules and the ledgered M5 items) | done — tag `m5` (PR #6, 2026-09-11) |
 | M6 | [`m6-real-data-deploy.md`](m6-real-data-deploy.md) | Cowrie host + shipper; ingest body cap; ECR/EC2/Caddy/SSM deploy scripts and prod copies; backups + log rotation; owner-run walkthrough + VERIFY.md; 48 h soak | M5 | written (6 briefs; folds the 16 M5 final-review plan-defect rules and the ledgered M5 → M6 items) | **soak passed 2026-09-14** — gate in progress (whole-branch review, fix wave, redeploy, PR, tag `m6`) |
 | M7 | [`m7-eval-hardening.md`](m7-eval-hardening.md) | v2 sampler (human labels); recorded tool fixtures; LLM-as-judge; full §7.3 metrics; nightly CI gate + baselines; `docs/results.md` | M6 | at M6 gate | planned |
-| M8 | [`m8-polish.md`](m8-polish.md) | SSE; `/stats`, `/about`; Redis rate limiter + retriage; token budget breaker; README final; whole-repo review | M7 | at M7 gate | planned |
+| M8a | [`m8-polish.md`](m8-polish.md) tasks 1–3 | SSE `/stream` + `useAlertStream`; `/stats` (+ `cost_by_day`); `/about` | M5 | written (3 briefs, 2026-09-12) | **gate complete 2026-09-13** at `4c2cb08` (3 tasks, whole-branch review + fix wave approved, browser pass done) — PR waits for `m6` to merge, then rebases |
+| M8b | [`m8-polish.md`](m8-polish.md) tasks 4–7 | Redis rate limiter + retriage; token budget breaker; README final; whole-repo review | M7, M8a | at M7 gate | planned — branch `feat/m8b-polish` |
 | M9 | — | Optional AWS/Terraform migration after 2+ weeks of Phase-1 uptime (PRD §12); planned only if the owner opts in | M8 | — | deferred |
 
 Statuses here and in each spine are a snapshot; **git history and the ledgers are authoritative.**
+
+**M8 is split** (owner decision, 2026-09-12): M8a — the three dashboard tasks — is built on
+`feat/m8a-dashboard-live` cut from `main` at tag `m5`, in parallel with M6's soak, because it
+touches no file M6 edits. M8b — rate limiter, retriage, token budget, README, whole-repo review —
+waits for M7 as PRD §12 orders. Both halves share one spine and one ledger
+(`.superpowers/sdd/m8-polish/progress.md`); M8a rebases onto `main` after `m6` merges.
 
 ## Standing gates (from the moment they exist)
 

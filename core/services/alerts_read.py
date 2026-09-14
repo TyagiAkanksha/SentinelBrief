@@ -20,6 +20,7 @@ from core.models import AlertRow, AlertStatus, ToolCallRow, VerdictRow
 from core.schemas.alerts_read import (
     AlertDetail,
     AlertSummary,
+    DayCost,
     DayVolume,
     ListFilters,
     StatsOut,
@@ -225,7 +226,10 @@ async def get_stats(session: AsyncSession) -> StatsOut:
     `by_severity`/`by_category`/`escalated_count` use the latest verdict per alert (the same
     `DISTINCT ON` subquery as `list_alerts`); `cost_total_usd` sums *every* verdict row —
     retriage spend already happened and counts. `latency_pNN_ms` is Postgres `percentile_disc`,
-    identical in definition to `evals/scoring.py::percentile`'s nearest rank.
+    identical in definition to `evals/scoring.py::percentile`'s nearest rank. `cost_by_day` buckets
+    every verdict's spend by the *alert's* received day (R5) and counts each alert once with
+    `count(DISTINCT alerts.id)`, since the LEFT JOIN multiplies a retriaged alert's row by its
+    verdict count.
 
     Args:
         session: The request-scoped `AsyncSession`.
@@ -291,6 +295,33 @@ async def get_stats(session: AsyncSession) -> StatsOut:
 
     last_alert_at = await session.scalar(select(func.max(AlertRow.received_at)))
 
+    # `count(DISTINCT alerts.id)` is load-bearing: the LEFT JOIN multiplies a retriaged alert's
+    # row by its verdict count, so a bare `count()` would double `alerts` and halve the mean.
+    cost_by_day_rows = (
+        await session.execute(
+            select(
+                day_expr.label("day"),
+                func.count(func.distinct(AlertRow.id)).label("alerts"),
+                func.coalesce(func.sum(VerdictRow.cost_usd), 0).label("cost_usd"),
+            )
+            .select_from(AlertRow)
+            .outerjoin(VerdictRow, VerdictRow.alert_id == AlertRow.id)
+            .group_by(day_expr)
+            .order_by(day_expr)
+        )
+    ).all()
+    cost_by_day = [
+        DayCost(
+            day=day,
+            alerts=alerts,
+            cost_usd=cost_usd,
+            # No `alerts > 0` guard (ruling R24): a row exists only because at least one alert
+            # produced its group, so `alerts` is >= 1 by construction.
+            mean_cost_usd=(cost_usd / alerts).quantize(_SIX_DP, rounding=ROUND_HALF_UP),
+        )
+        for day, alerts, cost_usd in cost_by_day_rows
+    ]
+
     return StatsOut(
         total_alerts=total_alerts,
         by_status=by_status,
@@ -303,4 +334,5 @@ async def get_stats(session: AsyncSession) -> StatsOut:
         latency_p50_ms=latency_p50 if latency_p50 is not None else 0,
         latency_p95_ms=latency_p95 if latency_p95 is not None else 0,
         last_alert_at=last_alert_at,
+        cost_by_day=cost_by_day,
     )

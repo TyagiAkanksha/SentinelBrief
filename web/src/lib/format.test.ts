@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   countryFlag,
   formatAge,
+  formatCount,
   formatDatetimeLocalUtc,
   formatLatency,
   formatPercent,
@@ -64,6 +65,15 @@ describe("formatTokens", () => {
   it("formatTokens uses thousands separators", () => {
     expect(formatTokens(1234)).toBe("1,234");
     expect(formatTokens(null)).toBe("—");
+  });
+});
+
+describe("formatCount", () => {
+  it("formatCount separates thousands and dashes missing values", () => {
+    expect(formatCount(1234)).toBe("1,234");
+    expect(formatCount(null)).toBe("—");
+    expect(formatCount(NaN)).toBe("—");
+    expect(formatCount(Infinity)).toBe("—");
   });
 });
 

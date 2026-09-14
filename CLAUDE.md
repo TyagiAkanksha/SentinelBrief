@@ -18,6 +18,11 @@ truth for scope, architecture, schemas, and build order.
 
 - Build strictly in milestone order (PRD §12). Do not start a milestone until the previous one's
   acceptance criteria pass, its whole-branch review is clean, and its tag (`m0`, `m1`, …) exists.
+- **One exception, on the owner's decision of 2026-09-12:** M8 is split. M8a (the three dashboard
+  tasks — SSE `/stream`, `/stats`, `/about`) is built on `feat/m8a-dashboard-live`, cut from `main`
+  at tag `m5`, alongside M6's soak, because it shares no *feature* code with M6 (nine files
+  overlap and merge routinely — see the spine); it rebases onto `main` after `m6` merges. M8b (rate limiter, retriage, token budget, README, whole-repo review) still
+  waits for M7. See `docs/plans/m8-polish.md` → Global Constraints.
 - **"Continue" means:** read the SessionStart hook output (last `m*` tag, current branch, ledger
   paths), open the current milestone's ledger, and resume at the first task without a
   `complete` line. Git history and the ledger are authoritative; chat memory is not.

@@ -70,6 +70,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Verdicts
+         * @description Stream `verdict.created` events as SSE, bounded by `Settings.stream_max_clients`.
+         */
+        get: operations["stream_verdicts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -213,6 +233,23 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * DayCost
+         * @description One UTC day's spend, keyed on the day the ALERTS were received.
+         */
+        DayCost: {
+            /** Alerts */
+            alerts: number;
+            /** Cost Usd */
+            cost_usd: string;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Mean Cost Usd */
+            mean_cost_usd: string;
+        };
+        /**
          * DayVolume
          * @description One day's alert count, for the stats view's `volume_by_day` series.
          */
@@ -332,6 +369,8 @@ export interface components {
             by_status: {
                 [key: string]: number;
             };
+            /** Cost By Day */
+            cost_by_day: components["schemas"]["DayCost"][];
             /** Cost Mean Usd */
             cost_mean_usd: string;
             /** Cost Total Usd */
@@ -650,6 +689,44 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    stream_verdicts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of verdict.created events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

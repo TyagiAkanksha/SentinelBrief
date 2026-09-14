@@ -6,6 +6,7 @@ export type VerdictOut = components["schemas"]["VerdictOut"];
 export type VerdictSummary = components["schemas"]["VerdictSummary"];
 export type ToolCallOut = components["schemas"]["ToolCallOut"];
 export type StatsOut = components["schemas"]["StatsOut"];
+export type DayCost = components["schemas"]["DayCost"];
 export type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 export type PaginatedAlerts = components["schemas"]["PaginatedResponse_AlertSummary_"];
 

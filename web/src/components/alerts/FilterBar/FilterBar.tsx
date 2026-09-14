@@ -60,7 +60,9 @@ export function FilterBar({ query }: FilterBarProps) {
       </label>
       <input type="hidden" name="page_size" value={query.page_size} />
       <button type="submit">Apply</button>
-      <Link href="/alerts">Clear</Link>
+      <Link href="/alerts" className="text-accent underline">
+        Clear
+      </Link>
     </form>
   );
 }

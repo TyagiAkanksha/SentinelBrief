@@ -21,6 +21,8 @@ from api.errors import register_error_handlers
 from api.routes.alerts import router as alerts_router
 from api.routes.alerts_read import router as alerts_read_router
 from api.routes.health import router as health_router
+from api.routes.stream import StreamGate
+from api.routes.stream import router as stream_router
 from core.cache import InMemoryTTLCache, TTLCache
 from core.config import Settings
 
@@ -80,11 +82,13 @@ def create_app(
         else InMemoryTTLCache(max_entries=effective_settings.alerts_cache_max_entries)
     )
     app.add_middleware(CORSMiddleware, allow_origins=effective_settings.cors_origin_list)
+    app.state.stream_gate = StreamGate(limit=effective_settings.stream_max_clients)
 
     register_error_handlers(app)
 
     app.include_router(health_router)
     app.include_router(alerts_router, prefix=API_V1_PREFIX)
     app.include_router(alerts_read_router, prefix=API_V1_PREFIX)
+    app.include_router(stream_router, prefix=API_V1_PREFIX)
 
     return app

@@ -28,6 +28,7 @@ from core.errors import (
     RateLimitedError,
     SentinelBriefError,
     SignatureError,
+    StreamUnavailableError,
     StructuredOutputError,
     VerdictValidationError,
 )
@@ -49,6 +50,7 @@ STATUS_BY_ERROR: Mapping[type[SentinelBriefError], int] = {
     VerdictValidationError: 502,
     StructuredOutputError: 502,
     QueueUnavailableError: 503,
+    StreamUnavailableError: 503,
 }
 
 

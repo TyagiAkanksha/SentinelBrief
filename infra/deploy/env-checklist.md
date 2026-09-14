@@ -47,6 +47,8 @@ unless the production compose file pins something else).
 | `CORS_ORIGINS` | N — **pinned**, `api` only | compose (pinned) | `https://sentinelbrief.tyagiakanksha.com` — no wildcard, ever, in a deployed environment. |
 | `ALERTS_LIST_CACHE_TTL_S` | N | default | `15` seconds (`.env.example` default). |
 | `STATS_CACHE_TTL_S` | N | default | `60` seconds (`.env.example` default). |
+| `STREAM_HEARTBEAT_S` | N | default | N — default 15; the SSE heartbeat interval (M8a); not set in the prod compose |
+| `STREAM_MAX_CLIENTS` | N | default | N — default 50 per api process; concurrent SSE clients cap (M8a); not set in the prod compose |
 | `ALERTS_CACHE_MAX_ENTRIES` | N | default | `1024` (`.env.example` default). |
 | `TOOL_RESULT_MAX_CHARS` | N | default | `4000` (`.env.example` default). |
 | `ASSETS_YAML_PATH` | N | compose (pinned) | `honeypot/assets.yaml` |
