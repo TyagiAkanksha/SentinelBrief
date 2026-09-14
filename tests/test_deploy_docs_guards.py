@@ -126,3 +126,24 @@ def test_iam_deny_documents_bound_both_instance_roles() -> None:
         assert needle in walkthrough, (
             f"ec2-single-host.md step 1 does not mention {needle!r} (final review C1/I1)"
         )
+
+
+def test_both_run_instances_blocks_require_imdsv2_at_one_hop() -> None:
+    """M6 final review M2: AL2023 defaults to `HttpPutResponseHopLimit=2`, which lets a process
+    inside a container on the bridge network reach IMDS and mint the instance role's credentials
+    — on the honeypot, a host the PRD tells us to assume is fully compromised. Both
+    `run-instances` blocks must pin `HttpTokens=required,HttpPutResponseHopLimit=1`, and the
+    walkthrough must carry the in-place `modify-instance-metadata-options` form for instances
+    that are already running (the two live instances were fixed that way, not relaunched).
+    """
+    text = _EC2_WALKTHROUGH.read_text()
+    count = text.count("HttpTokens=required,HttpPutResponseHopLimit=1")
+    assert count >= 2, (
+        f"ec2-single-host.md has only {count} "
+        "'HttpTokens=required,HttpPutResponseHopLimit=1' occurrence(s), expected >= 2 (the app "
+        "host's and the honeypot's run-instances blocks)"
+    )
+    assert "modify-instance-metadata-options" in text, (
+        "ec2-single-host.md does not carry the in-place "
+        "'aws ec2 modify-instance-metadata-options' form for an already-running instance"
+    )

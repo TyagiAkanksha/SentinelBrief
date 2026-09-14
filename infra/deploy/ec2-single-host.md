@@ -215,12 +215,27 @@ aws ec2 run-instances \
   --subnet-id subnet-025c3ac4df23404f5 \
   --security-group-ids <app-sg-id> \
   --user-data file://infra/deploy/user-data-app.sh \
+  --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1 \
   --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp3"}}]' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=sentinelbrief-app}]'
 # note the returned InstanceId as <app-instance-id>
 aws ec2 allocate-address --domain vpc
 # note the returned AllocationId as <app-allocation-id> and PublicIp as <app-eip>
 aws ec2 associate-address --instance-id <app-instance-id> --allocation-id <app-allocation-id>
+```
+
+`--metadata-options HttpTokens=required,HttpPutResponseHopLimit=1` (on this launch and the
+honeypot's in step 9) makes IMDSv2 mandatory and drops the response hop limit from AL2023's
+default of 2 to 1, so a process **inside a container** on the bridge network can no longer reach
+`169.254.169.254` and mint instance-role credentials — the container's packet costs one extra hop.
+Nothing on either host calls AWS from inside a container (the backup timer, the geoip one-off's
+`aws ssm get-parameter`, and the ECR login all run on the host), and the SSM agent is a host
+process at 1 hop, so this costs nothing. On an instance that is already running, apply it in place
+instead of relaunching (this is what was done on 2026-09-14 — M6 final review M2):
+
+```sh
+aws ec2 modify-instance-metadata-options --instance-id <instance-id> \
+  --http-tokens required --http-put-response-hop-limit 1
 ```
 
 ## 5. DNS
@@ -421,6 +436,7 @@ aws ec2 run-instances \
   --subnet-id <hp-subnet-id> \
   --security-group-ids <hp-sg-id> \
   --user-data file://honeypot/user-data.sh \
+  --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1 \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=sentinelbrief-honeypot}]'
 # note the returned InstanceId as <hp-instance-id>
 aws ec2 allocate-address --domain vpc
