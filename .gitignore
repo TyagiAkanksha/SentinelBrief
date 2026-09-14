@@ -42,4 +42,3 @@ evals/results/*.json
 pytest.log
 
 # Claude Code scheduled-task lock (session-local)
-.claude/scheduled_tasks.lock
