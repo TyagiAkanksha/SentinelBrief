@@ -1,0 +1,9 @@
+# infra/deploy/prod/sentinelbrief-backup.timer → /etc/systemd/system/  (systemctl enable --now sentinelbrief-backup.timer)
+[Unit]
+Description=Run sentinelbrief-backup nightly
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+[Install]
+WantedBy=timers.target

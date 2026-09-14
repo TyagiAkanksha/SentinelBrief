@@ -981,6 +981,26 @@
             },
             "description": "Missing or invalid X-Signature."
           },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No usable Content-Length header (e.g. a chunked request)."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Declared Content-Length exceeds INGEST_MAX_BODY_BYTES."
+          },
           "422": {
             "content": {
               "application/json": {

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cache import TTLCache
 from core.config import Settings
-from core.errors import SignatureError
+from core.errors import LengthRequiredError, PayloadTooLargeError, SignatureError
 from core.signing import SIGNATURE_HEADER, verify_signature
 
 # `enqueue(alert_id)` is fire-and-forget from the route's point of view — it either queues the
@@ -105,6 +105,29 @@ def get_enqueue(request: Request) -> EnqueueFn:
     if enqueue is None:
         raise RuntimeError("no enqueue wired")
     return enqueue
+
+
+def require_content_length(request: Request, settings: Settings) -> None:
+    """Raise before a signed-route request's body is ever read, when its declared length is bad.
+
+    Reads only the `Content-Length` header — never `receive`/the body itself — so this check is
+    genuinely free: a request that fails it costs the api nothing beyond the header parse (m6
+    task-02, Global Constraint "Bound the ingest request body").
+
+    Args:
+        request: The current request; only its `content-length` header is read.
+        settings: The app's `Settings`, for `ingest_max_body_bytes`.
+
+    Raises:
+        LengthRequiredError: No `Content-Length` header, or its value is not all digits (e.g. a
+            chunked request, which carries `Transfer-Encoding` instead).
+        PayloadTooLargeError: The declared length exceeds `settings.ingest_max_body_bytes`.
+    """
+    header = request.headers.get("content-length")
+    if header is None or not header.isdigit():
+        raise LengthRequiredError("Content-Length required")
+    if int(header) > settings.ingest_max_body_bytes:
+        raise PayloadTooLargeError(f"body exceeds {settings.ingest_max_body_bytes} bytes")
 
 
 async def require_signature(request: Request, settings: Settings = Depends(get_settings)) -> None:

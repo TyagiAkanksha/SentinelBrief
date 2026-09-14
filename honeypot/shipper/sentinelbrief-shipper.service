@@ -1,0 +1,23 @@
+[Unit]
+Description=SentinelBrief Cowrie log shipper
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shipper
+Group=shipper
+EnvironmentFile=/etc/sentinelbrief-shipper.env
+ExecStart=/opt/sentinelbrief-shipper/.venv/bin/sentinelbrief-shipper
+StateDirectory=sentinelbrief-shipper
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+# The `-` prefix: a missing path must not fail namespace setup (status 226) into a restart loop.
+ReadOnlyPaths=-/opt/sentinelbrief-honeypot/data/log
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

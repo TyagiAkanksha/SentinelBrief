@@ -1,0 +1,38 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SsmReadSentinelbriefParams",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:us-east-1:181040156847:parameter/sentinelbrief/*"
+    },
+    {
+      "Sid": "KmsDecryptViaSsmOnly",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:us-east-1:181040156847:key/*",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "ssm.us-east-1.amazonaws.com" }
+      }
+    },
+    {
+      "Sid": "BackupBucketWriteObjects",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847/postgres/*"
+    },
+    {
+      "Sid": "BackupBucketReadOwnDumps",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847/postgres/*"
+    },
+    {
+      "Sid": "BackupBucketList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# infra/deploy/prod/Caddyfile — production reverse proxy config (PRD §10.10, §11, m6 task-03).
+#
+# Synced copy of /opt/sentinelbrief/Caddyfile on the box (`.claude/rules/infra.md`). Two TLS
+# vhosts, auto-HTTPS via Let's Encrypt — no plaintext site anywhere.
+
+sentinelbrief.tyagiakanksha.com {
+	# Security response headers on both vhosts: HSTS, no-sniff, a conservative referrer policy,
+	# and a frame-defense pair (nothing legitimate frames a JSON API or this dashboard).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+	}
+	reverse_proxy web:3000
+}
+
+api.sentinelbrief.tyagiakanksha.com {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+	}
+	request_body {
+		max_size 2MB # outer bound of the api's INGEST_MAX_BODY_BYTES (task-02); the honeypot host is assumed compromised
+	}
+	reverse_proxy api:8000 {
+		# OVERWRITE (never append) X-Forwarded-For with the real client IP (PRD §10.10). Caddy
+		# faces the internet directly, so {remote_host} is the true end-user IP — this discards
+		# any client-forged XFF, which is what makes api's FORWARDED_ALLOW_IPS=* safe.
+		# `caddy validate` warns that the line below ("Unnecessary ...") is unnecessary — ignore
+		# it: the explicit overwrite pins the spoof-proof semantics (PRD §10.10) rather than
+		# relying on Caddy's version-dependent default.
+		header_up X-Forwarded-For {remote_host}
+		# GET /api/v1/stream (M8, SSE) must reach the browser unbuffered.
+		flush_interval -1
+	}
+}

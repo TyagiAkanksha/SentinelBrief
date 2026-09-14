@@ -415,3 +415,29 @@ async def test_complete_with_tools_empty_choices_raises_llm_call_error() -> None
             response_model=Verdict,
             model="fake-model",
         )
+
+
+# --- m6 task-03 carried M5 item: worker/llm_client.py:94's `timeout=60.0` literal -> setting ---
+
+
+def test_from_settings_uses_llm_timeout_s() -> None:
+    """`worker/llm_client.py:94`'s `timeout=60.0` literal becomes
+    `timeout=settings.llm_timeout_s` (CONVENTIONS.md §7: never hardcode a timeout). At RED,
+    `Settings` has no `llm_timeout_s` field yet — pydantic-settings' `extra="ignore"`
+    (`core/config.py`) silently drops the unknown constructor kwarg below rather than raising, so
+    `client._client.timeout` still reads the hardcoded `60.0`, not `12.5`: the assertion, not
+    construction, is what fails (mirrors `tests/test_ingest_body_cap.py`'s and
+    `tests/test_worker_job.py`'s use of the same `extra="ignore"` RED shape).
+    """
+    settings = Settings(
+        cheap_model="m",
+        model_prices_json={"m": {"input_per_mtok": "0.15", "output_per_mtok": "0.60"}},
+        llm_timeout_s=12.5,
+    )
+
+    client = OpenAICompatibleLLMClient.from_settings(settings)
+
+    # `client._client.timeout` is a plain float when the SDK is constructed with `timeout=<float>`
+    # (verified against the installed SDK at briefing — same seam
+    # `test_from_settings_happy_path_configures_client` reads above).
+    assert client._client.timeout == 12.5

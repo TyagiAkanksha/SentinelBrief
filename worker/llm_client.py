@@ -91,7 +91,7 @@ class OpenAICompatibleLLMClient:
         client = openai.AsyncOpenAI(
             api_key=settings.llm_api_key.get_secret_value() or "unset",
             base_url=settings.llm_base_url,
-            timeout=60.0,
+            timeout=settings.llm_timeout_s,
             max_retries=2,
         )
         return cls(

@@ -1,0 +1,109 @@
+# Production config — synced copies (doc of record)
+
+**Source of truth is the box**, `/opt/sentinelbrief/` on the deployed EC2 instance — not this
+directory. The files here (`docker-compose.yml`, `Caddyfile`, `fetch-secrets.sh`) are committed,
+byte-identical copies of what actually runs, so the production configuration is reviewable,
+diffable, and greppable from the repo instead of asserted-only (`.claude/rules/infra.md`), and so
+disaster recovery has something concrete to restore from. They are not applied from here
+automatically — nothing reads this directory at deploy time.
+
+## Change procedure
+
+1. Edit the file **here**, in the repo, and get the change reviewed like any other commit.
+2. Apply it to the box via SSM (`infra/deploy/ec2-single-host.md` has the session command) — copy
+   the file to `/opt/sentinelbrief/` and re-run/restart whatever the change requires
+   (`docker compose up -d` for compose changes, `docker compose restart caddy` for `Caddyfile`
+   changes).
+3. Re-run the relevant checks in `infra/deploy/VERIFY.md` against the live deployment.
+4. If applying the change on the box surfaced any drift from what's committed here (a manual fix
+   made directly on the box, a value that had to differ), commit that drift back in the same
+   sitting — docs must equal reality.
+
+`fetch-secrets.sh` runs **on the box only** (it uses the instance's IAM role to decrypt SSM
+`SecureString` parameters); it is not meant to be run from a workstation.
+
+## Migrations
+
+For a release that ships a new Alembic migration: bumping the `api`/`worker` image tag in
+`docker-compose.yml` (see "Image tags" below) is what selects the new image; `docker compose up -d`
+only recreates the container from whatever tag is already in the file. Running
+`docker compose exec api …` therefore runs INSIDE the still-running OLD container — its image has
+no new migration yet, so `alembic upgrade head` there resolves to the schema already applied and
+silently no-ops. Run the migration from the NEW image instead, in a one-off container that
+doesn't touch the running service, **before** `docker compose up -d`:
+
+```sh
+docker compose pull api && docker compose run --rm api uv run alembic upgrade head
+```
+
+Never `docker compose exec api …` for a migration — see above. A **fresh** deploy or upgrade to
+this release must run the same `pull`/`run --rm` command — there is no running `api` container to
+`exec` into yet, so this form covers both cases.
+
+## Image tags
+
+The `api`/`worker`/`web` image tags in `docker-compose.yml` are pinned to the deployed git SHA,
+not a moving tag like `latest`. Each redeploy pushes new images tagged with the new SHA
+(`../push_ecr.sh`) and updates the tag in this file (both the box's copy and this committed copy)
+to match — bump **both** `web` and `api`/`worker` to the same SHA in both copies, so at any point
+in time this file names exactly what's running.
+
+## Geoip one-off
+
+The GeoLite2 `.mmdb` files are fetched deploy-time, never baked into the image or run
+automatically at container start. The MaxMind license key is read from SSM inline and passed only
+to a throwaway container — it never lands in a file on disk. `/opt/sentinelbrief/geoip` is created
+`chown`'d to uid:gid `1001:1001` by `user-data-app.sh` (task-05 fix-1, review I4) — that is the
+`appuser` the api image (`infra/Dockerfile.api`) runs as.
+
+**Deploy-day finding (2026-09-12):** the `api`/`worker` services already mount
+`/opt/sentinelbrief/geoip` **read-only**, so mounting the same target read-write on the same
+compose service collides with that `:ro` mount and the write fails. Use `--no-deps` (so the
+one-off does not start `api`'s dependencies) and a **separate** read-write target, then move the
+downloaded files into place. This is the form that ran on the box; `ec2-single-host.md` step 8
+carries the identical block:
+
+```sh
+mkdir -p /tmp/geoip
+MAXMIND_LICENSE_KEY="$(aws ssm get-parameter --region us-east-1 --name \
+  /sentinelbrief/MAXMIND_LICENSE_KEY --with-decryption --query Parameter.Value --output text)" \
+  docker compose run --rm --no-deps -e MAXMIND_LICENSE_KEY -v /tmp/geoip:/app/infra/geoip api \
+  uv run python scripts/fetch_geoip.py --out-dir infra/geoip
+mv /tmp/geoip/*.mmdb /opt/sentinelbrief/geoip/
+chown 1001:1001 /opt/sentinelbrief/geoip/*.mmdb
+```
+
+## Backups
+
+Nightly `pg_dump | gzip` → S3 runs from a host systemd timer, not a compose service
+(`infra/deploy/database.md` is the full doc — restore procedure, rehearsal, retention decision).
+Install once, on the box:
+
+```sh
+install -o root -g root -m 700 backup.sh restore-rehearsal.sh /opt/sentinelbrief/
+install -o root -g root -m 600 backup.env /opt/sentinelbrief/
+cp sentinelbrief-backup.service sentinelbrief-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sentinelbrief-backup.timer
+```
+
+`install` (not `cp` + `chmod`) sets the owner and group in one step — both scripts `source
+/opt/sentinelbrief/backup.env` **as root** from a root systemd unit, and an SSM session lands as
+`ssm-user`, not root, so a plain `cp` would leave the files owned by the wrong account.
+
+Run one now to confirm it works end to end (before the 48 h soak starts):
+
+```sh
+systemctl start sentinelbrief-backup.service && journalctl -u sentinelbrief-backup -n 5
+```
+
+Local copies (the 3 newest) live under `/var/backups/sentinelbrief/`; older ones are pruned by the
+script and, in S3, by the 30-day lifecycle rule (`infra/deploy/s3-lifecycle.json`).
+
+## Secrets rotation
+
+1. Update the parameter value in SSM.
+2. `./fetch-secrets.sh` (re-renders `/opt/sentinelbrief/.env` and `/opt/sentinelbrief/.env.postgres`).
+3. `docker compose up -d api worker` (and `postgres` only if `POSTGRES_PASSWORD` changed — which
+   also needs `ALTER USER sentinel WITH PASSWORD '...'` run inside the database, since Postgres
+   does not re-read its own env on a container restart).

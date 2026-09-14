@@ -58,10 +58,11 @@ known-first-party = ["api", "worker", "core", "evals"]
 
 [tool.mypy]
 strict = true
-files = ["api", "worker", "core", "evals", "alembic"]
+files = ["api", "worker", "core", "evals", "alembic", "honeypot/shipper/sentinelbrief_shipper"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["honeypot/shipper"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["live: calls a real external API; excluded from CI and the default run"]

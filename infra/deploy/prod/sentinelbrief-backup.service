@@ -1,0 +1,9 @@
+# infra/deploy/prod/sentinelbrief-backup.service → /etc/systemd/system/
+[Unit]
+Description=SentinelBrief nightly Postgres backup to S3
+After=docker.service
+Requires=docker.service
+[Service]
+Type=oneshot
+TimeoutStartSec=30min
+ExecStart=/opt/sentinelbrief/backup.sh

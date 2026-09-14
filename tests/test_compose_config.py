@@ -24,6 +24,13 @@ m5 task-01 adds `redis` and `worker`: `test_compose_redis_service_shape`,
 `test_compose_worker_service_shape`, `test_compose_api_depends_on_healthy_redis`, and extends
 `test_compose_config_validates`/`test_compose_publishes_loopback_only` (the only two m2-pinned
 tests below that change) with the two new services.
+
+m6 task-03 adds `test_compose_every_service_has_restart_on_failure` (the dev-compose half of the
+carried M5 item N-W1) and changes `_render_compose_config`'s failure-message assertion to report
+`proc.stderr` ONLY, never `proc.stdout` — a `docker compose config` failure interpolates the
+throwaway `.env`, so pasting `proc.stdout` into a CI log risks leaking it (`.claude/rules/infra.md`
+task-01 review note). `tests/test_prod_compose.py`'s own helper is written that way from the
+start.
 """
 
 from __future__ import annotations
@@ -77,7 +84,7 @@ def _render_compose_config(tmp_path: Path, *, env_text: str = "") -> dict[str, A
         timeout=60,
         env={**os.environ, "COMPOSE_PROJECT_NAME": "sentinelbrief-test"},
     )
-    assert proc.returncode == 0, f"docker compose config failed:\n{proc.stdout}\n{proc.stderr}"
+    assert proc.returncode == 0, f"docker compose config failed:\n{proc.stderr}"
     config: dict[str, Any] = json.loads(proc.stdout)
     return config
 
@@ -341,3 +348,16 @@ def test_compose_api_depends_on_healthy_redis(rendered_compose_config: dict[str,
     """
     api = rendered_compose_config["services"]["api"]
     assert api["depends_on"]["redis"]["condition"] == "service_healthy"
+
+
+def test_compose_every_service_has_restart_on_failure(
+    rendered_compose_config: dict[str, Any],
+) -> None:
+    """m6 task-03 carried M5 item (walk finding N-W1): every dev service restarts `on-failure` —
+    e.g. the ARQ worker exiting 1 when Redis vanished — without auto-starting six containers at
+    every dev-machine boot the way `unless-stopped` would. Distinguishable on purpose from the
+    production compose file's `unless-stopped` (rule 7), pinned separately by
+    `tests/test_prod_compose.py::test_every_service_restarts_unless_stopped_and_rotates_logs`.
+    """
+    for name, service in rendered_compose_config["services"].items():
+        assert service.get("restart") == "on-failure", (name, service.get("restart"))

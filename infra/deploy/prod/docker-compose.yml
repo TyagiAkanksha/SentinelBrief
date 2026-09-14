@@ -1,0 +1,155 @@
+# infra/deploy/prod/docker-compose.yml — production compose file (PRD §11, m6 task-03).
+#
+# This is a SYNCED COPY of what runs on the box at /opt/sentinelbrief/docker-compose.yml
+# (`.claude/rules/infra.md`): source of truth is the box; edit here, review, apply via SSM, then
+# re-run infra/deploy/VERIFY.md and commit any drift back in the same sitting (prod/README.md).
+#
+# Six services only: caddy, web, api, worker, postgres, redis. Only caddy publishes a host port
+# (80/443) — api/worker/postgres/redis are reachable over the compose network only. api and
+# worker load secrets from /opt/sentinelbrief/.env; postgres loads its own one-variable
+# /opt/sentinelbrief/.env.postgres (POSTGRES_PASSWORD only — never the app's secrets); web gets no
+# env_file at all (it never sees a backend secret). Every image tag is the deployed git short SHA,
+# never a moving tag; infra/deploy/push_ecr.sh builds and pushes them. Every service restarts
+# `unless-stopped` and rotates json-file logs from day one.
+
+name: sentinelbrief
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-shared-env: &shared-env
+  # Non-secret pinned values (PRD §11) — identical for api and worker.
+  ENVIRONMENT: production
+  # No password on the compose network (docs/deployment.md "Secrets"); `Settings` keeps
+  # `redis_url` a `SecretStr` because a deployed URL MAY embed one elsewhere.
+  REDIS_URL: redis://redis:6379/0
+  LLM_BASE_URL: https://api.openai.com/v1
+  CHEAP_MODEL: gpt-4o-mini
+  STRONG_MODEL: gpt-5.4
+  MODEL_PRICES_JSON: '{"gpt-4o-mini":{"input_per_mtok":"0.15","output_per_mtok":"0.60"},"gpt-5.4":{"input_per_mtok":"2.50","output_per_mtok":"15.00"}}'
+  TRIAGE_PROMPT_VERSION: triage-v4
+  GEOIP_DB_PATH: infra/geoip/GeoLite2-Country.mmdb
+  GEOIP_ASN_DB_PATH: infra/geoip/GeoLite2-ASN.mmdb
+  ASSETS_YAML_PATH: honeypot/assets.yaml
+
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"                                                              # the ONLY host-published ports on the box
+    volumes:
+      - /opt/sentinelbrief/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+    restart: unless-stopped
+    logging: *default-logging
+
+  web:
+    # REAL account id (AdvisorDesk's, verified 2026-09-11 via `aws sts get-caller-identity`; not a
+    # secret); the SHA stays a placeholder until the first push (task-05 replaces both tags in the
+    # same sitting).
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:c99e6e1
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      API_URL: http://api:8000                                                 # no env_file — the web container never sees a backend secret
+    expose:
+      - "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  api:
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:c99e6e1
+    env_file:
+      - /opt/sentinelbrief/.env
+    environment:
+      <<: *shared-env
+      CORS_ORIGINS: https://sentinelbrief.tyagiakanksha.com
+      # Safe ONLY because Caddy overwrites X-Forwarded-For AND this service is never
+      # host-published (PRD §10.10).
+      FORWARDED_ALLOW_IPS: "*"
+    expose:
+      - "8000"
+    volumes:
+      - /opt/sentinelbrief/geoip:/app/infra/geoip:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  worker:
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:c99e6e1  # same image + tag as api
+    command: ["arq", "worker.main.WorkerSettings"]
+    env_file:
+      - /opt/sentinelbrief/.env
+    environment:
+      <<: *shared-env
+    volumes:
+      - /opt/sentinelbrief/geoip:/app/infra/geoip:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "arq", "--check", "worker.main.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  postgres:
+    image: postgres:16
+    env_file:
+      - /opt/sentinelbrief/.env.postgres                                       # POSTGRES_PASSWORD only — never the app's secrets
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_DB: sentinelbrief
+    volumes:
+      - sentinelbrief_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinelbrief"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    # NO maxmemory / eviction policy (M5 ruling R14: ARQ keys carry expiries; eviction would drop
+    # queued jobs).
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - sentinelbrief_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  sentinelbrief_pg:
+  sentinelbrief_redis:
+  caddy_data:
+  caddy_config:
+
+# NO build: sections. NO ports: on web/api/worker/postgres/redis. No moving image tag anywhere —
+# every image: line above is pinned to a specific git short SHA.

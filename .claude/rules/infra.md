@@ -25,7 +25,8 @@ paths: infra/**, honeypot/**, docs/deployment.md
   `X-Forwarded-For` **and** the api container is not host-published. Touching either requires
   re-running the spoof check in `VERIFY.md` before the change is considered done.
 - Every production service sets json-file log rotation (`max-size 10m`, `max-file 3`). Backups
-  (`pg_dump` → S3) run nightly; the restore procedure is written down and rehearsed once.
+  (`pg_dump` → S3) run nightly from the host `sentinelbrief-backup.timer` — never a compose
+  service; the restore procedure is written down in `infra/deploy/database.md` and rehearsed once.
 - The honeypot host shares **nothing** with the app host except `INGEST_HMAC_SECRET`: separate
   VPC/account, SSM-only management, no `sshd`, egress limited to 443. Assume it is compromised.
   Its shipper spools locally and never blocks Cowrie.

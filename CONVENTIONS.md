@@ -124,7 +124,9 @@ no contract forbids the import.
   `ConfigError`, `LLMCallError`, `StructuredOutputError` (carries `raw_text`,
   `validation_error`, token counts, cost and latency — plain values, so `core.errors` never
   imports `core.llm`), `VerdictValidationError(attempts, last_error)`, `SignatureError`,
-  `NotFoundError`, `ConflictError`, `RateLimitedError`, `BudgetExceededError` (M8).
+  `LengthRequiredError` (411: no usable `Content-Length` on a signed-route request, m6 task-02),
+  `PayloadTooLargeError` (413: declared `Content-Length` over `Settings.ingest_max_body_bytes`,
+  m6 task-02), `NotFoundError`, `ConflictError`, `RateLimitedError`, `BudgetExceededError` (M8).
   Services and the worker raise these; they never construct HTTP responses.
 - `api/errors.py::register_error_handlers(app)` maps each exception type to a status code and the
   PRD §8 envelope `{"error": {"code", "message"}}` exactly once. `RequestValidationError` is
@@ -195,7 +197,9 @@ no contract forbids the import.
   setting has a PRD or `.env.example` default; secrets (`LLM_API_KEY`, `DATABASE_URL`,
   `REDIS_URL`, `INGEST_HMAC_SECRET`, `ADMIN_TOKEN`, `ABUSEIPDB_API_KEY`, `MAXMIND_LICENSE_KEY`) are
   `SecretStr` so a `repr()` in a log line can never leak them; call sites read
-  `.get_secret_value()`.
+  `.get_secret_value()`. `REDIS_URL` is `SecretStr` because a deployed URL MAY carry a password;
+  in this deployment it carries none and is pinned, in plain text, in the production compose file
+  (`infra/deploy/prod/docker-compose.yml`).
 - `Settings()` must construct with **zero** env vars set (that is what keeps `create_app()`
   DB-less). `api/main.py` is the only place that enforces non-empty required values.
 - `MODEL_PRICES_JSON` is a JSON object `{"<model id>": {"input_per_mtok": <usd>, "output_per_mtok":
@@ -246,7 +250,7 @@ uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental
 uv run lint-imports
-uv run pytest -q
+uv run pytest -q --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 ruff's cache can mask lint errors on freshly created files (observed on m0 task-02); the gate
