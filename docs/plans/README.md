@@ -102,7 +102,6 @@ invalid.
 | M7 | [`m7-eval-hardening.md`](m7-eval-hardening.md) | v2 sampler (human labels); recorded tool fixtures; LLM-as-judge; full §7.3 metrics; nightly CI gate + baselines; `docs/results.md` | M6 | written (8 briefs, 2026-09-14; folds the M6 gate's DEFER list as task-08) | in progress — branch `feat/m7-eval-hardening` |
 | M8a | [`m8-polish.md`](m8-polish.md) tasks 1–3 | SSE `/stream` + `useAlertStream`; `/stats` (+ `cost_by_day`); `/about` | M5 | written (3 briefs, 2026-09-12) | **merged + deployed 2026-09-14** — PR #12, `main` at `dd195b5`, production on `e7fe9ad` |
 | M8b | [`m8-polish.md`](m8-polish.md) tasks 4–7 | Redis rate limiter + retriage; token budget breaker; README final; whole-repo review | M7, M8a | at M7 gate | planned — branch `feat/m8b-polish` |
-| M8 | [`m8-polish.md`](m8-polish.md) | SSE; `/stats`, `/about`; Redis rate limiter + retriage; token budget breaker; README final; whole-repo review | M7 | at M7 gate | planned |
 | M9 | — | Optional AWS/Terraform migration after 2+ weeks of Phase-1 uptime (PRD §12); planned only if the owner opts in | M8 | — | deferred |
 
 Statuses here and in each spine are a snapshot; **git history and the ledgers are authoritative.**
