@@ -118,7 +118,7 @@ async def test_sample_stratifies_by_cheap_category_and_hides_verdicts(
         )
 
     out_path = tmp_path / "candidates.jsonl"
-    written = write_candidates(out_path, candidates)
+    written = write_candidates(out_path, candidates, seed=20260914)
     assert written == len(candidates)
 
     rows = [json.loads(line) for line in out_path.read_text().splitlines() if line.strip()]

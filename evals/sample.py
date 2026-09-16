@@ -213,7 +213,7 @@ async def sample(
     return list(selected.values())
 
 
-def write_candidates(path: Path, candidates: Sequence[Candidate], *, seed: int = 0) -> int:
+def write_candidates(path: Path, candidates: Sequence[Candidate], *, seed: int) -> int:
     """Write `candidates` as one JSON object per line: no verdict field, ever (PRD §13).
 
     Ruling R10: `sampled.stratum_id` (not the plain `stratum`) is the only trace of a candidate's
@@ -221,15 +221,8 @@ def write_candidates(path: Path, candidates: Sequence[Candidate], *, seed: int =
     category by value, so writing it verbatim would anchor the labeler exactly like a verdict
     field would.
 
-    `seed` KEEPS its default (fix-2 Part B asked for "no default", ruling R16; NOT fully applied
-    here — see the fix-2 implementer report's "Concerns"): the test-author's fix-2 approved edit
-    added `seed=20260914` to `tests/test_label_tool.py`'s three calls, but a FOURTH, still-pinned
-    call survives unamended at `tests/test_sample.py:121`
-    (`write_candidates(out_path, candidates)`, no `seed=`, file hash unchanged since the original
-    `6578c29` RED commit) — outside this round's approved test-author edit scope. Removing the
-    default would make that pinned call a `TypeError` with no fix available on the implementer
-    side; the default therefore stays until a controller ruling authorizes either a pinned edit to
-    `tests/test_sample.py` or a scope change here.
+    `seed` is keyword-required, no default (ruling R16/R17): every candidate file's provenance is
+    now always explicit, at every call site.
 
     Args:
         path: The candidate JSONL file to write (overwritten).
