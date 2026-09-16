@@ -30,14 +30,14 @@ surfaced, not implemented: S3 bucket versioning against `PutObject` overwrite (n
 ## Context (read ONLY these)
 
 - The M6 final review §5 rows named above (verbatim fix shapes), `honeypot/shipper/` (all modules
-  and `sentinelbrief-shipper.service`), `honeypot/README.md`, `tests/test_shipper_*.py`,
+  and `sentinelbrief-shipper.service`), `honeypot/shipper/README.md`, `tests/test_shipper_*.py`,
   `tests/test_deploy_docs_guards.py`, `scripts/check_real_sessions.py`,
   `tests/test_check_real_sessions*.py`, `tests/test_deploy_docs.py` (the secret-scan test).
 
 ## Files
 
 - Modify: `honeypot/shipper/sentinelbrief_shipper/{main,tail,assemble,spool}.py`,
-  `honeypot/shipper/sentinelbrief-shipper.service`, `honeypot/README.md`,
+  `honeypot/shipper/sentinelbrief-shipper.service`, `honeypot/shipper/README.md`,
   `tests/test_deploy_docs_guards.py`, `scripts/check_real_sessions.py`
 - Pinned edits approved by this brief (exactly): the offset-after-spool ordering assertion in the
   pinned shipper test that pins M11's old order; the 40-plus-hex regex in
@@ -49,7 +49,7 @@ surfaced, not implemented: S3 bucket versioning against `PutObject` overwrite (n
 
 Unchanged public surface: `ShipperConfig.from_env` env names, the unit's `ExecStart`, the spool
 layout, `RunOnceResult`. New: `SHIPPER_READ_CHUNK_BYTES` (default 8 MiB) and
-`SHIPPER_MAX_BATCH_LINES` (default 2000) in `ShipperConfig` + `honeypot/README.md`'s tunables.
+`SHIPPER_MAX_BATCH_LINES` (default 2000) in `ShipperConfig` + `honeypot/shipper/README.md`'s tunables.
 `Spool.write` then `Tailer.commit_offset` is the new ordering in `run_once` (at-least-once).
 
 ## Interfaces → test table
