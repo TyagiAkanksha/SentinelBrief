@@ -19,6 +19,7 @@ code (CONVENTIONS.md §10) — so nothing in this module ever calls a real API.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -191,7 +192,7 @@ async def test_dry_run_writes_nothing(tmp_path: Path) -> None:
     assert not fixtures_dir.exists() or list(fixtures_dir.rglob("*.json")) == []
 
 
-async def test_failed_tool_reported_by_class_only(
+def test_failed_tool_reported_by_class_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fixtures_dir = tmp_path / "fixtures"
@@ -199,12 +200,14 @@ async def test_failed_tool_reported_by_class_only(
     cases = [_case("alert1.json", src_ip=ip)]
     tools: list[Any] = [_CannedExternalTool("get_ip_geo_asn"), _RaisingExternalTool()]
 
-    report = await record(
-        cases,
-        registry=_registry(fixtures_dir, tools=tools),
-        fixtures_dir=fixtures_dir,
-        only=None,
-        dry_run=False,
+    report = asyncio.run(
+        record(
+            cases,
+            registry=_registry(fixtures_dir, tools=tools),
+            fixtures_dir=fixtures_dir,
+            only=None,
+            dry_run=False,
+        )
     )
 
     key = fixture_key({"ip": ip})
