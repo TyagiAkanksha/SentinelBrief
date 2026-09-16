@@ -88,6 +88,87 @@ def test_uncommitted_batch_is_re_read_after_a_restart(tmp_path: Path) -> None:
     assert resumed.read_new_lines() == ["c", "d"]
 
 
+def test_a_line_with_no_newline_never_grows_the_buffer_past_the_bound(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """m7 task-08 fix-1 (M4/R21) — the MEMORY half of the bound, which `tests/
+    test_shipper_v02_fix1.py`'s M4 pin cannot see because its oversized line arrives complete
+    (newline included) in one drain: a line still growing with no newline in sight must never
+    hold more than `4 * read_chunk_bytes` in the buffer (the reviewer's probe measured an 83.9 MB
+    peak for one 40 MB line). Verified by mutation: dropping the in-flight partial guard while
+    keeping the split-time filter passes every other shipper test.
+
+    `_buffer` is private and has no public accessor; the memory invariant has no other observable
+    surface (same whitebox judgment as `tests/test_shipper_v02.py`'s `_sessions` and `tests/
+    test_shipper_v02_fix1.py`'s `_read_chunk_bytes` pins).
+    """
+    log_path = tmp_path / "cowrie.json"
+    state_path = tmp_path / "tail.json"
+    read_chunk_bytes = 32
+    bound = 4 * read_chunk_bytes
+    head = "z" * 500  # no newline yet: the line is still being written
+
+    log_path.write_text(head)
+    tailer = LogTailer(
+        log_path, state_path, read_chunk_bytes=read_chunk_bytes, max_batch_lines=2000
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert tailer.read_new_lines() == []
+    assert len(tailer._buffer) <= bound, (
+        f"the buffer grew to {len(tailer._buffer)} bytes for a line with no newline — "
+        f"it must never exceed 4 x read_chunk_bytes ({bound})"
+    )
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING], (
+        "nothing is reported until the over-long line actually ends"
+    )
+
+    tail_of_line = "z" * 100
+    with log_path.open("a") as handle:
+        handle.write(tail_of_line + "\ngood\n")
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert tailer.read_new_lines() == ["good"]
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"expected exactly one WARNING, got {warnings}"
+    assert f"bytes={len(head) + len(tail_of_line) + 1}" in warnings[0].getMessage(), (
+        f"the WARNING must count every byte of the dropped line: {warnings[0].getMessage()!r}"
+    )
+
+
+def test_oversize_line_with_nothing_after_it_still_advances_the_offset(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """m7 task-08 fix-1 (M4/R21): a call whose ONLY content was an over-long dropped line returns
+    no lines — but the bytes it consumed must still be committed, or the next call (and every
+    restart) re-reads and re-drops the same line forever, warning each time. `tests/
+    test_shipper_v02_fix1.py`'s M4 pin has a good line after the oversized one, so the offset
+    advances there through the normal path; this covers the drop-only batch — mutant: committing
+    the position only when lines were returned.
+    """
+    log_path = tmp_path / "cowrie.json"
+    state_path = tmp_path / "tail.json"
+    oversized = "y" * 300
+    log_path.write_text(oversized + "\n")
+
+    tailer = LogTailer(log_path, state_path, read_chunk_bytes=32, max_batch_lines=2000)
+    with caplog.at_level(logging.WARNING):
+        assert tailer.read_new_lines() == []
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+    assert json.loads(state_path.read_text())["offset"] == len(oversized) + 1
+
+    caplog.clear()
+    resumed = LogTailer(log_path, state_path, read_chunk_bytes=32, max_batch_lines=2000)
+    with caplog.at_level(logging.WARNING):
+        assert resumed.read_new_lines() == []
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING], (
+        "a restart re-read and re-dropped the oversized line — the offset never advanced past it"
+    )
+
+
 # --- t02 M5 remainder: the last two uncovered `main.py` branches --------------------------------
 
 
