@@ -14,6 +14,21 @@ behavioral RED signals documented per test below.
 
 Every test drives the tool through a fake `Console` (never real stdin/stdout); nothing here types
 a real label, and nothing here creates or reads `evals/golden/v2.jsonl`.
+
+**m7 task-01 fix-2 (ruling R16, APPROVED edit):** fix-1 Part B's own report (judgment call 2)
+disclosed that the original C1 pin here (`"persistence_attempt" not in transcript`, generalized
+to "no category name anywhere") made a static, always-identical numbered category menu
+structurally impossible to pass for ANY case whose first-pass category happened to be one of the
+seven names — forcing the implementer to drop the menu the author will use for two hundred labels.
+A menu whose text never varies by case cannot leak anything about the CURRENT case's original
+label; the actual property worth pinning is that the menu is invariant, plus that no line
+explicitly echoes the first-pass answer. `test_rereview_never_shows_the_first_label_before_the_
+second` now checks for `"first"`/`"previous"`/`"your label"` (case-insensitive, per transcript
+line) and the first-pass note text, instead of "no category name"; a new test,
+`test_rereview_category_menu_is_identical_regardless_of_first_pass_category`, pins that the
+category menu/prompt block is byte-identical across two cases with different first-pass
+categories — `FakeConsole.block_between` isolates it by read-call position, never by prompt
+wording, so it stays valid regardless of exactly how Part B restores the menu.
 """
 
 from __future__ import annotations
@@ -37,18 +52,33 @@ _FORBIDDEN_LABEL_TOOL_IMPORTS = ("sqlalchemy", "core.db", "core.models", "evals.
 
 class FakeConsole:
     """The `Console` double every test in this module injects: scripted `read()` answers, and
-    every `write()` call recorded verbatim for assertions — never printed to a real terminal."""
+    every `write()` call recorded verbatim for assertions — never printed to a real terminal.
+
+    `read_indices` (fix-2, ruling R16) records the index into `written` of each `read()` call's
+    OWN prompt entry, so `block_between` can slice out exactly what was written between two
+    successive reads — independent of the exact wording of any prompt, which lets a test isolate
+    e.g. "the category menu" without assuming its text or line count.
+    """
 
     def __init__(self, answers: list[str]) -> None:
         self._answers = iter(answers)
         self.written: list[str] = []
+        self.read_indices: list[int] = []
 
     def write(self, text: str) -> None:
         self.written.append(text)
 
     def read(self, prompt: str) -> str:
         self.written.append(prompt)
+        self.read_indices.append(len(self.written) - 1)
         return next(self._answers)
+
+    def block_between(self, *, after_read: int, through_read: int) -> list[str]:
+        """Every `written` entry strictly after the `after_read`-th read's own prompt entry,
+        through and including the `through_read`-th read's own prompt entry (0-indexed)."""
+        start = self.read_indices[after_read] + 1
+        end = self.read_indices[through_read] + 1
+        return self.written[start:end]
 
 
 def _candidate(idx: int, *, stratum: str = "scanning") -> Candidate:
@@ -93,7 +123,7 @@ def test_render_case_never_shows_stratum_category_or_sampled_fields() -> None:
     assert "severity" not in rendered.lower()
 
 
-# --- C1: rereview must never leak the first-pass category or note before the second is typed -----
+# --- C1: rereview must never leak the first-pass answer before the second is typed ----------------
 
 
 def test_rereview_never_shows_the_first_label_before_the_second(tmp_path: Path) -> None:
@@ -112,9 +142,67 @@ def test_rereview_never_shows_the_first_label_before_the_second(tmp_path: Path) 
 
     rereview(console, golden_path, out_path, fraction=1.0, seed=1)
 
-    transcript = "\n".join(console.written)
-    assert "persistence_attempt" not in transcript
-    assert "distinctive-first-pass-note-marker-for-the-c1-pin" not in transcript
+    # R16 (fix-2): a static, always-identical menu (e.g. listing all seven category NAMES) is
+    # not itself a leak — a menu whose text never varies by case cannot tell the human anything
+    # about THIS case's original label. Only an explicit echo of THIS case's own first-pass
+    # answer would be a leak, so the pin now checks for that specifically, per transcript line.
+    transcript_lines = [line for entry in console.written for line in entry.split("\n")]
+    for marker in ("first", "previous", "your label"):
+        offenders = [line for line in transcript_lines if marker in line.lower()]
+        assert not offenders, (
+            f"transcript line(s) name the first-pass answer via {marker!r}: {offenders}"
+        )
+    assert not any(
+        "distinctive-first-pass-note-marker-for-the-c1-pin" in line for line in transcript_lines
+    )
+
+
+def test_rereview_category_menu_is_identical_regardless_of_first_pass_category(
+    tmp_path: Path,
+) -> None:
+    """R16 (fix-2): the category menu/prompt block shown during `rereview` is byte-identical no
+    matter what the case's first-pass category was, proving it never depends on the first label —
+    the property that makes a static, always-identical numbered menu safe to restore (fix-1 Part
+    B judgment call 2 dropped it entirely because the ORIGINAL, over-broad "no category name
+    anywhere" pin made that structurally impossible for any first-pass category)."""
+
+    def _category_block(*, session_id: str, first_pass_category: str) -> list[str]:
+        original = GoldenCase(
+            alert=load_alert("alert1", session_id=session_id),
+            label=GoldenLabel(severity=2, category=first_pass_category, escalate=False),
+            labeler_note=f"§6.6 sev 2: first-pass note for {session_id}.",
+            tags=[],
+            labeled_by="human",
+            labeled_at=datetime(2026, 9, 6, tzinfo=UTC),
+        )
+        golden_path = tmp_path / f"r16-{session_id}.jsonl"
+        golden_path.write_text(original.model_dump_json() + "\n")
+        out_path = tmp_path / f"r16-out-{session_id}.jsonl"
+        console = FakeConsole(["3", "2", "§6.6 sev 3: reviewer's own independent note text.", ""])
+
+        rereview(console, golden_path, out_path, fraction=1.0, seed=1)
+
+        # read #0 = severity, read #1 = category: everything written strictly after severity's
+        # own read-prompt entry, through and including category's own read-prompt entry — the
+        # category menu/prompt, whatever its exact wording or line count turns out to be.
+        return console.block_between(after_read=0, through_read=1)
+
+    menu_for_persistence_attempt = _category_block(
+        session_id="r16-menu-a", first_pass_category="persistence_attempt"
+    )
+    menu_for_scanning = _category_block(session_id="r16-menu-b", first_pass_category="scanning")
+
+    combined = "\n".join(menu_for_persistence_attempt)
+    for name in STRATA_CATEGORIES:
+        assert name in combined, (
+            f"the category menu/prompt block must list {name!r} (ruling R16 restores the "
+            f"numbered menu of all seven STRATA_CATEGORIES); got: {menu_for_persistence_attempt!r}"
+        )
+    assert menu_for_persistence_attempt == menu_for_scanning, (
+        "the category menu/prompt shown during rereview must be byte-identical regardless of "
+        f"the case's first-pass category (ruling R16): {menu_for_persistence_attempt!r} != "
+        f"{menu_for_scanning!r}"
+    )
 
 
 # --- R10: opaque stratum_id + seed, recoverable only by the (stratum, seed) pair ------------------

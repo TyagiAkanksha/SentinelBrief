@@ -147,7 +147,7 @@ def test_label_skips_cases_already_in_out_file(tmp_path: Path) -> None:
     candidate_a = _candidate(1)
     candidate_b = _candidate(2)
     candidates_path = tmp_path / "candidates.jsonl"
-    write_candidates(candidates_path, [candidate_a, candidate_b])
+    write_candidates(candidates_path, [candidate_a, candidate_b], seed=20260914)
     out_path = tmp_path / "v2-out.jsonl"
 
     console_1 = FakeConsole(
@@ -171,7 +171,7 @@ def test_label_skips_cases_already_in_out_file(tmp_path: Path) -> None:
 def test_skip_and_quit(tmp_path: Path) -> None:
     candidates = [_candidate(1), _candidate(2), _candidate(3)]
     candidates_path = tmp_path / "candidates.jsonl"
-    write_candidates(candidates_path, candidates)
+    write_candidates(candidates_path, candidates, seed=20260914)
     out_path = tmp_path / "out.jsonl"
 
     console = FakeConsole(
@@ -269,7 +269,7 @@ def test_label_tool_never_logs_case_content(
 ) -> None:
     candidate = _candidate_with_attacker_text(1)
     candidates_path = tmp_path / "candidates.jsonl"
-    write_candidates(candidates_path, [candidate])
+    write_candidates(candidates_path, [candidate], seed=20260914)
     out_path = tmp_path / "out.jsonl"
     console = FakeConsole(["2", "1", "§6.6 sev 2: generic automation, no success observed.", ""])
 
