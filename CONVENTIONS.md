@@ -126,8 +126,12 @@ no contract forbids the import.
   imports `core.llm`), `VerdictValidationError(attempts, last_error)`, `SignatureError`,
   `LengthRequiredError` (411: no usable `Content-Length` on a signed-route request, m6 task-02),
   `PayloadTooLargeError` (413: declared `Content-Length` over `Settings.ingest_max_body_bytes`,
-  m6 task-02), `NotFoundError`, `ConflictError`, `RateLimitedError`, `BudgetExceededError` (M8).
-  Services and the worker raise these; they never construct HTTP responses.
+  m6 task-02), `NotFoundError`, `ConflictError`, `RateLimitedError`,
+  `FixtureMissingError(ConfigError)` (m7 task-02: `ReplayToolRecorder(strict=True)` found no
+  fixture for a v2 case's tool call — subclasses `ConfigError` so `status_for`'s MRO walk resolves
+  it to 500 without a new `STATUS_BY_ERROR` row; a worker/evals-only error no route under `api/`
+  ever raises or names), `BudgetExceededError` (M8). Services and the worker raise these; they
+  never construct HTTP responses.
 - `api/errors.py::register_error_handlers(app)` maps each exception type to a status code and the
   PRD §8 envelope `{"error": {"code", "message"}}` exactly once. `RequestValidationError` is
   enveloped as `422` with location + message only — never the echoed input. Unhandled exceptions
@@ -143,7 +147,11 @@ no contract forbids the import.
   truncating its result), logs the tool name and argument keys only, and returns
   `{"unavailable": true, "reason": "<ExceptionClass>: tool raised"}` or
   `{"unavailable": true, "reason": "<ExceptionClass>: result not serializable"}` respectively, so
-  a tool failure can never fail the triage job. The third carve-out is `worker/jobs.py
+  a tool failure can never fail the triage job. `core.errors.FixtureMissingError` is the one
+  exception let through that backstop un-swallowed (an `except FixtureMissingError: raise` sits
+  above the `except Exception` catch-all, m7 task-02): it is not a tool failure, it is
+  `ReplayToolRecorder(strict=True)` reporting a v2 case's missing fixture, which `evals.run` must
+  fail the case over, never silently degrade. The third carve-out is `worker/jobs.py
   ::triage_alert_job` (M5): it catches `Exception` — never `BaseException` — around the whole
   attempt so a poison alert can never wedge the queue (PRD §6.2); the decision is delegated to the
   pure `worker/retry.py`, the terminal write is `failed`, and the log carries

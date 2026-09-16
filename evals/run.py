@@ -20,6 +20,15 @@ printed table's `escalation_rate` column reports the fraction of cases each run 
 (`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
 (`.claude/rules/evals.md`) — local tools (`get_session_commands`, `get_asset_info`) still run.
 
+`--replay-strict`/`--no-replay-strict` (default: strict iff `is_v2_golden(args.golden)`, PRD §13
+— "a v2 case whose fixture is missing fails the eval loudly rather than going live") makes a
+missing fixture raise `core.errors.FixtureMissingError` instead of degrading to
+`unavailable("fixture_missing")`; a case whose pipeline run raises it is captured as
+`CaseResult(error="fixture_missing:<tool>:<key>", verdict=None)`, exactly like any other per-case
+failure, but the run itself also exits `1` — after the usual table is printed, a
+`"MISSING FIXTURES (n): <tool> <key> ..."` line names every distinct missing fixture across every
+prompt version run, so a new v2 golden row without its fixtures fails CI loudly (m7 task-02).
+
 Every failure path prints exactly one `error: <code>: <message>` line to stderr, leaves stdout
 empty, and never raises a traceback:
 
@@ -61,7 +70,7 @@ from pydantic import ValidationError
 
 from core.cli import Parser, UsageError, fail
 from core.config import Settings
-from core.errors import ConfigError, LLMCallError, VerdictValidationError
+from core.errors import ConfigError, FixtureMissingError, LLMCallError, VerdictValidationError
 from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
 from evals.scoring import CaseResult, ResultRow, RunMetrics, format_table, score
@@ -112,10 +121,13 @@ async def run_golden(
 ) -> list[CaseResult]:
     """Run every golden-set case through `pipeline`, bounded by a concurrency semaphore.
 
-    A per-case `VerdictValidationError`/`LLMCallError` is captured as `CaseResult.error` rather
-    than left to abort the run — a run-stopping exception here would throw away every other
-    case's already-incurred spend (`.claude/rules/evals.md`: failed cases still count in every
-    scoring denominator).
+    A per-case `VerdictValidationError`/`LLMCallError`/`FixtureMissingError` is captured as
+    `CaseResult.error` rather than left to abort the run — a run-stopping exception here would
+    throw away every other case's already-incurred spend (`.claude/rules/evals.md`: failed cases
+    still count in every scoring denominator). `FixtureMissingError` (m7 task-02, strict replay)
+    gets its own `error` shape, `f"{e.code}:{e}"` == `"fixture_missing:<tool>:<key>"` — no space
+    after the first colon, unlike the other two — so `main` can parse the tool/key back out to
+    build the "MISSING FIXTURES" list without re-deriving them.
 
     Args:
         cases: The golden-set cases to run, in the order results should be returned in.
@@ -131,6 +143,18 @@ async def run_golden(
         async with semaphore:
             try:
                 outcome = await pipeline.run(case.alert)
+            except FixtureMissingError as e:
+                return CaseResult(
+                    case_id=case.case_id,
+                    label=case.label,
+                    verdict=None,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=Decimal("0"),
+                    latency_ms=0,
+                    error=f"{e.code}:{e}",
+                    tool_calls=0,
+                )
             except (VerdictValidationError, LLMCallError) as e:
                 # M0: a failed case's tokens/cost/latency are not threaded back out of
                 # TriagePipeline.run on failure, so they are unknown here and recorded as 0.
@@ -263,15 +287,25 @@ async def _run_all(
         except ConfigError as e:
             return fail(e.code, str(e))
 
+        # Ruling default (m7 task-02): strict iff not overridden AND the golden file is v2-named
+        # (PRD §13) — a missing fixture on a v2 case must fail loudly; v1 keeps the M4-era
+        # degrade unless the flag says otherwise.
+        replay_strict = (
+            args.replay_strict if args.replay_strict is not None else is_v2_golden(args.golden)
+        )
+
         # One registry per run (N-M5), over the shared `http` client — never one per prompt
         # version.
         registry = build_registry(
-            settings, recorder=ReplayToolRecorder(args.tool_fixtures), http=http
+            settings,
+            recorder=ReplayToolRecorder(args.tool_fixtures, strict=replay_strict),
+            http=http,
         )
 
         git_sha = _git_sha()
         rows: list[ResultRow] = []
         any_case_succeeded = False
+        missing_fixtures: set[tuple[str, str]] = set()
         for prompt_version in args.prompt:
             try:
                 pipeline = TriagePipeline(
@@ -305,6 +339,10 @@ async def _run_all(
             rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
             if any(r.error is None for r in results):
                 any_case_succeeded = True
+            for result in results:
+                if result.error is not None and result.error.startswith("fixture_missing:"):
+                    _, tool_name, key = result.error.split(":", 2)
+                    missing_fixtures.add((tool_name, key))
 
             payload = {
                 "prompt_version": prompt_version,
@@ -325,6 +363,10 @@ async def _run_all(
             return fail("all_cases_failed", "every case failed in every prompt run")
 
         print(format_table(rows))
+        if missing_fixtures:
+            pairs = " ".join(f"{tool_name} {key}" for tool_name, key in sorted(missing_fixtures))
+            print(f"MISSING FIXTURES ({len(missing_fixtures)}): {pairs}")
+            return 1
         return 0
     finally:
         await http.aclose()
@@ -348,12 +390,14 @@ def main(
             version or per tool call.
 
     Returns:
-        `0` on success (the table was printed and every prompt's result JSON was written); `1`
-        on a usage error, a `Settings()` validation failure, an invalid/missing golden file, a
-        `ConfigError` raised before any case ran, an unwritable output directory, or when every
-        case failed across every prompt run (`all_cases_failed`) — see the module docstring's
-        failure-path table. Every `1` path prints exactly one `error: <code>: <message>` line to
-        stderr and leaves stdout empty.
+        `0` on success (the table was printed and every prompt's result JSON was written) with
+        no missing fixture under `--replay-strict`; `1` on a usage error, a `Settings()`
+        validation failure, an invalid/missing golden file, a `ConfigError` raised before any
+        case ran, an unwritable output directory, every case failing across every prompt run
+        (`all_cases_failed`), or (m7 task-02) any case hitting a missing fixture under strict
+        replay — the table is still printed, followed by one `"MISSING FIXTURES (n): ..."` line —
+        see the module docstring's failure-path table. Every OTHER `1` path prints exactly one
+        `error: <code>: <message>` line to stderr and leaves stdout empty.
     """
     parser = Parser(prog="python -m evals.run")
     parser.add_argument("--golden", required=True, type=Path)
@@ -361,6 +405,7 @@ def main(
     parser.add_argument("--model", default=None)
     parser.add_argument("--strong-model", default=None)
     parser.add_argument("--concurrency", type=_positive_int, default=4)
+    parser.add_argument("--replay-strict", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
     try:

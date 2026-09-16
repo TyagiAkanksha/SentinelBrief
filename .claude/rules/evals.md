@@ -15,6 +15,9 @@ paths: evals/**, fixtures/**, docs/results.md
 - Evaluation runs the **real pipeline** (`worker.triage.TriagePipeline`), never a re-implementation
   of it. Tool calls (M4+) replay recorded fixtures from `tests/fixtures/tools/` for determinism;
   the LLM is the only live component in an eval run.
+- Replay is **strict by default for a `v2*` golden file** (m7 task-02, PRD §13): a case whose
+  fixture is missing fails that case (and the run) loudly instead of silently scoring degraded
+  tool evidence — mint every fixture a v2 case can request with `evals/record.py` before scoring.
 - Metrics are pure functions in `evals/scoring.py` with unit tests; failed cases count in every
   denominator and as wrong. `critical_recall` is recall over labeled severity ≥ 4 — the number
   that matters most (PRD §7.3).

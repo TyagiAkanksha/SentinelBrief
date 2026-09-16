@@ -9,6 +9,12 @@ truncating its result — are the deliberate `except Exception` backstops in thi
 request, so an exception escaping here would 500 the request and strand the alert `pending`. The
 exception's message is logged; the attacker-influenced argument *values* never are — only the
 argument keys (PRD §10.6).
+
+One carved-out exception is let through the first backstop unswallowed:
+`core.errors.FixtureMissingError` (m7 task-02, PRD §13) is not a tool failure — it is
+`ReplayToolRecorder(strict=True)` reporting that a v2 case has no recorded fixture, which
+`evals.run` must fail the case (and the run) over, not silently degrade — so it is re-raised
+before the general `except Exception` below ever sees it (CONVENTIONS.md §4's carve-out sentence).
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from core.errors import FixtureMissingError
 from core.llm import ToolSpec
 from worker.tools.base import Tool, ToolContext, spec_for, unavailable
 from worker.tools.recorder import ToolRecorder
@@ -120,6 +127,11 @@ class ToolRegistry:
             `unavailable("<ExceptionClass>: result not serializable")` (same log shape) if the
             result can't be JSON-serialized. `asyncio.CancelledError` is a `BaseException`, not
             caught by either guard, and propagates.
+
+        Raises:
+            FixtureMissingError: The recorder is a strict `ReplayToolRecorder` with no fixture
+                for this call (m7 task-02) — the one carved-out exception this method never
+                swallows into `unavailable(...)`.
         """
         tool = self._by_name.get(name)
         if tool is None:
@@ -128,6 +140,8 @@ class ToolRegistry:
         start = self._clock()
         try:
             result = await self._recorder.execute(tool, arguments, ctx)
+        except FixtureMissingError:
+            raise  # the carve-out: not a tool failure, never swallowed (CONVENTIONS.md §4)
         except Exception as exc:  # first of the two deliberate backstops (ruling Q6, spine M4-a)
             logger.exception("tool raised tool=%s arg_keys=%s", name, sorted(arguments))
             result = unavailable(f"{type(exc).__name__}: tool raised")

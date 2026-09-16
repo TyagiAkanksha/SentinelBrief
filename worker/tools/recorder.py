@@ -6,7 +6,11 @@ result. `ReplayToolRecorder` serves an *external* tool's result from
 a live API (CLAUDE.md, CONVENTIONS.md §10); a local (non-external) tool always runs live under
 either recorder since its result is deterministic from `ctx.alert` + repo files. A missing,
 mismatched or unreadable fixture is reported via `unavailable(...)`, never raised — the "tools
-never raise" contract holds even at the recorder layer.
+never raise" contract holds even at the recorder layer, UNLESS `ReplayToolRecorder` was built with
+`strict=True` (m7 task-02, PRD §13): a v2 eval run defaults to strict so a case with no fixture
+fails the eval loudly (`FixtureMissingError`) instead of silently scoring degraded tool evidence;
+a mismatched/unreadable fixture is still never raised even in strict mode — only a genuinely
+*missing* file is.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from core.errors import FixtureMissingError
 from worker.tools.base import Tool, ToolContext, unavailable
 
 logger = logging.getLogger(__name__)
@@ -109,13 +114,17 @@ class LiveToolRecorder:
 class ReplayToolRecorder:
     """Serves an external tool's result from a recorded fixture; runs local tools live."""
 
-    def __init__(self, fixtures_dir: Path) -> None:
+    def __init__(self, fixtures_dir: Path, *, strict: bool = False) -> None:
         """Build a recorder that replays fixtures from `fixtures_dir`.
 
         Args:
             fixtures_dir: The fixtures directory root (e.g. `tests/fixtures/tools`).
+            strict: When `True`, a missing fixture raises `FixtureMissingError` instead of
+                degrading to `unavailable("fixture_missing")` (m7 task-02); default `False`
+                preserves the M4-era degrade for every pre-task-02 call site.
         """
         self._fixtures_dir = fixtures_dir
+        self._strict = strict
         self._warned: set[Path] = set()  # per-path missing-fixture warning guard (I5)
 
     async def execute(
@@ -124,14 +133,23 @@ class ReplayToolRecorder:
         """Replay `tool`'s fixture if `tool.external`, else run it live.
 
         Never calls `tool.run` for an external tool — that is the whole point (PRD §7.2,
-        CLAUDE.md "never live APIs"). A missing/mismatched/unreadable/wrong-shaped fixture is
-        reported via `unavailable(...)`, never raised.
+        CLAUDE.md "never live APIs"). A mismatched/unreadable/wrong-shaped fixture is always
+        reported via `unavailable(...)`, never raised. A *missing* fixture is reported the same
+        way UNLESS this recorder is `strict`, in which case it raises `FixtureMissingError(f"
+        {tool.name}:{key}")` instead (m7 task-02) — `ToolRegistry.execute`'s one carved-out
+        `except FixtureMissingError: raise` lets it propagate rather than being swallowed into
+        the registry's own `unavailable(...)` backstop.
+
+        Raises:
+            FixtureMissingError: `strict` is `True` and no fixture exists for `tool`/`arguments`.
         """
         if not tool.external:
             return await tool.run(arguments, ctx)
 
         path = fixture_path(self._fixtures_dir, tool.name, arguments)
         if not path.exists():
+            if self._strict:
+                raise FixtureMissingError(f"{tool.name}:{path.stem}")
             if path not in self._warned:
                 logger.warning("tool fixture missing tool=%s path=%s", tool.name, path)
                 self._warned.add(path)
