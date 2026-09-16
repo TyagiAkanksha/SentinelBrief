@@ -877,3 +877,69 @@ def test_run_requires_human_labels_for_v2_files(
     assert lines[0].startswith("error: config_error:")
     assert "Traceback" not in captured.err
     assert list(output_dir.glob("*.json")) == []
+
+
+# --- m7 task-01 fix-1 (review I5/ruling R13): invalid_golden must stay reachable on v2 ------------
+
+
+def test_run_v2_malformed_row_reports_invalid_golden(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ruling R13: only the loader's "row N is not human-labeled" `ValueError` maps to
+    `config_error` for a v2 golden file; any OTHER `ValueError` (a malformed row, a failed
+    `GoldenCase` validation, a duplicate `case_id`) must keep the existing `invalid_golden` code.
+    Today `evals.run`'s `except ValueError: fail("config_error" if require_human else
+    "invalid_golden", ...)` maps EVERY `ValueError` on a v2 path to `config_error`, making
+    `invalid_golden` unreachable for v2 files (review finding I5) — this test pins the malformed-
+    row half of I5; the pinned `test_run_requires_human_labels_for_v2_files` above already pins
+    the non-human-row half (`config_error`).
+    """
+    bad_row = {
+        "alert": {
+            "source": "cowrie",
+            "session_id": "i5-malformed",
+            "src_ip": "203.0.113.6",
+            "sensor": "hp-i5",
+            "events": [
+                {
+                    "eventid": "cowrie.command.input",
+                    "timestamp": "2026-09-06T00:00:00Z",
+                    "session": "i5-malformed",
+                    "src_ip": "203.0.113.6",
+                    "sensor": "hp-i5",
+                    "input": "echo not-a-connect-event",
+                }
+            ],
+        },
+        "label": {"severity": 2, "category": "scanning", "escalate": False},
+        "labeler_note": "deliberately malformed alert for the v2 invalid_golden regression test.",
+        "tags": [],
+        "labeled_by": "human",
+        "labeled_at": "2026-09-20T00:00:00Z",
+    }
+    golden_path = tmp_path / "v2-malformed.jsonl"
+    golden_path.write_text(json.dumps(bad_row) + "\n")
+    output_dir = tmp_path / "results"
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=FakeLLMClient([]),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: invalid_golden:")
+    assert "Traceback" not in captured.err
+    assert list(output_dir.glob("*.json")) == []

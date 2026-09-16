@@ -10,11 +10,25 @@ The AST scan below (m7 task-01 Ruling R1) is additional to, and narrower than, t
 `tests/test_label_tool.py::test_only_label_tool_writes_labeled_by_human` (which also greps
 `scripts/**/*.py` and checks `evals/sample.py` never imports `GoldenLabel`): this one walks every
 `.py` under `evals/` with the `ast` module and asserts the string literal `"human"` is assigned to
-a name/keyword/attribute called `labeled_by` in exactly one function, `prompt_label` in
-`evals/label_tool.py` — belt and suspenders on PRD §13 ("golden set v2 labels — must be human
-work"). Driving `prompt_label` with a fake `Console` returning scripted answers (see
-`tests/test_label_tool.py`) is test input, not a golden label; neither this file nor any other
-file authored for this task creates or touches `evals/golden/v2.jsonl`.
+a name/keyword/attribute called `labeled_by` in exactly one function, `prompt_label` — belt and
+suspenders on PRD §13 ("golden set v2 labels — must be human work"). Driving `prompt_label` with
+a fake `Console` returning scripted answers (see `tests/test_label_tool.py`) is test input, not a
+golden label; neither this file nor any other file authored for this task creates or touches
+`evals/golden/v2.jsonl`.
+
+**m7 task-01 fix-1 (review I4, APPROVED edit A(a)):** the review's MUT-1a mutant (a v2 row minted
+via a dict literal `{"labeled_by": "human", ...}`) survived the original scan, which only matched
+an `ast.Assign`/`ast.keyword` whose *value* was literally the string `"human"`.
+`_labeled_by_human_functions` now also flags any `ast.Dict` literal carrying a `"labeled_by"` key
+paired with the literal string `"human"` as its value, wherever it appears under `evals/` — this
+is the approved edit's exact scope ("any dict literal with a `labeled_by` key whose value is the
+string `human`"). MUT-1b (a subscript assignment via a separately-defined, constant-folded name,
+e.g. `row["labeled_by"] = "hu" + "man"`) is a known remaining gap outside this edit's scope; the
+review's own fix-shape flags it as a further "stronger still" step for the controller to rule on,
+not something approved here. The final assertion no longer hardcodes `evals/label_tool.py`: ruling
+R14 may move `prompt_label`'s definition into a new `evals/label_render.py`, and this guard must
+keep working either way — it asserts there is exactly one occurrence, and that its enclosing
+function is named `prompt_label`, never a specific file path.
 """
 
 from __future__ import annotations
@@ -140,8 +154,33 @@ def _labeled_by_human_functions(tree: ast.AST) -> list[str]:
                 hits.append(self._stack[-1] if self._stack else "<module>")
             self.generic_visit(node)
 
+        def visit_Dict(self, node: ast.Dict) -> None:
+            # fix-1 review I4 (MUT-1a): a dict literal `{"labeled_by": "human", ...}` mints a row
+            # exactly as effectively as an `ast.Assign`/`ast.keyword` does, and the original scan
+            # missed it entirely.
+            for key, value in zip(node.keys, node.values, strict=False):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "labeled_by"
+                    and _is_human_literal(value)
+                ):
+                    hits.append(self._stack[-1] if self._stack else "<module>")
+            self.generic_visit(node)
+
     _Visitor().visit(tree)
     return hits
+
+
+def test_labeled_by_human_functions_detects_dict_literal_mints() -> None:
+    """Unit-level proof the fix-1 I4 strengthening actually works, independent of scanning the
+    real tree (MUT-1a's shape: a dict literal, not a keyword argument or a plain assignment)."""
+    tree = ast.parse(
+        "def mint_a_label():\n"
+        "    row = {'labeled_by': 'human', 'labeler_note': 'auto-generated; nobody typed this'}\n"
+        "    return row\n"
+    )
+
+    assert _labeled_by_human_functions(tree) == ["mint_a_label"]
 
 
 def test_labeled_by_human_assignment_appears_only_in_prompt_label() -> None:
@@ -151,7 +190,10 @@ def test_labeled_by_human_assignment_appears_only_in_prompt_label() -> None:
         for func_name in _labeled_by_human_functions(tree):
             occurrences.append((path.as_posix(), func_name))
 
-    assert occurrences == [("evals/label_tool.py", "prompt_label")], (
-        "labeled_by='human' must be minted in exactly one place, evals/label_tool.py::"
-        f"prompt_label (PRD §13); found: {occurrences}"
+    assert len(occurrences) == 1, (
+        f"labeled_by='human' must be minted in exactly one place (PRD §13); found: {occurrences}"
+    )
+    assert occurrences[0][1] == "prompt_label", (
+        "the sole labeled_by='human' assignment must live inside a function named prompt_label "
+        f"(m7 task-01 ruling R14: it may move to evals/label_render.py); found: {occurrences}"
     )
