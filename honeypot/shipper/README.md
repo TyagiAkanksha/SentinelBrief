@@ -62,6 +62,8 @@ The env file above holds only the two required variables. Every other `SHIPPER_*
 | `SHIPPER_BACKOFF_MAX_S` | `300` | Cap on the retry delay. |
 | `SHIPPER_SPOOL_MAX_FILES` | `10000` | Disk-protection cap; the OLDEST spooled payload is dropped once exceeded. |
 | `SHIPPER_POLL_INTERVAL_S` | `1` | Sleep between polls when the log has no new complete line. |
+| `SHIPPER_READ_CHUNK_BYTES` | `8388608` | Max bytes per read from the log (8 MiB) — a cold start over a large backlog is read in chunks, never in one unbounded read. |
+| `SHIPPER_MAX_BATCH_LINES` | `2000` | Max complete lines one poll returns; the rest wait for the next poll, so a back-ship burst is paced. |
 
 Install and start the unit:
 

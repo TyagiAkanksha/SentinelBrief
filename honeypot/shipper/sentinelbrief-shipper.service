@@ -18,6 +18,9 @@ ProtectHome=true
 # The `-` prefix: a missing path must not fail namespace setup (status 226) into a restart loop.
 ReadOnlyPaths=-/opt/sentinelbrief-honeypot/data/log
 PrivateTmp=true
+# The shipper tails a file and makes one outbound HTTPS call — it needs no capability at all
+# (M6 final review M8). An empty set drops every one from the bounding set.
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

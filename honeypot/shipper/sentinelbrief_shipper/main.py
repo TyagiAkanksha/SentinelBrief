@@ -1,7 +1,11 @@
 """The shipper's entry point (m6 task-02): wires `LogTailer` -> `SessionAssembler` -> `Spool` ->
 `Poster` into a poll loop, with exponential backoff on a retryable delivery failure and a clean
 stop on SIGTERM/SIGINT (or an injected `stop_event`, for tests) that always finishes the current
-iteration first — a spool file is never half-written (tmp + `os.replace`).
+iteration first — a spool file is never half-written (tmp + `os.replace`) — and then flushes the
+in-flight batch (every still-open session) to the spool before returning 0.
+
+The signal handler itself only sets a `threading.Event`; everything else happens back in the
+loop, so nothing that is unsafe to run in a signal context ever does (m7 task-08).
 """
 
 from __future__ import annotations
@@ -142,11 +146,17 @@ def run_once(
     `main`'s loop calls this — never inlines the same sequence (review I3: a duplicated loop body
     is dead code no mutation of `run_once` could ever fail a test on).
 
+    The tail offset is committed AFTER the spool write, never before (M6 final review M11): a
+    crash in between re-reads those lines on restart and re-ships the session, which the api
+    dedups by fingerprint into a 200 (never a re-triage). The old order lost such a session
+    outright.
+
     Returns:
         `RunOnceResult(lines_read, delivered)`.
     """
-    lines = tailer.read_new_lines()
+    lines = tailer.read_new_lines(persist=False)
     _spool_new_payloads(assembler, spool, lines)
+    tailer.commit_offset()
     delivered = drain(spool, poster, backoff)
     return RunOnceResult(lines_read=len(lines), delivered=delivered)
 
@@ -157,6 +167,12 @@ def _spool_new_payloads(assembler: SessionAssembler, spool: Spool, lines: list[s
         for payload in assembler.feed(line):
             spool.put(payload)
     for payload in assembler.flush_idle():
+        spool.put(payload)
+
+
+def _spool_open_sessions(assembler: SessionAssembler, spool: Spool) -> None:
+    """Force every still-open session into the spool — the SIGTERM/SIGINT shutdown flush."""
+    for payload in assembler.flush_all():
         spool.put(payload)
 
 
@@ -182,7 +198,8 @@ def main(
             recording fake).
         stop_event: When given, checked once per loop iteration in addition to the real
             SIGTERM/SIGINT handlers this installs — the current iteration always finishes first,
-            so a payload is never half-written (the spool writes tmp + `os.replace`).
+            so a payload is never half-written (the spool writes tmp + `os.replace`), and every
+            still-open session is flushed to the spool before returning.
 
     Returns:
         `0` on a clean stop (`--once`, `max_iterations` exhausted, `stop_event` set, or
@@ -208,7 +225,12 @@ def main(
 
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-        tailer = LogTailer(log_path, state_dir / "tail.json")
+        tailer = LogTailer(
+            log_path,
+            state_dir / "tail.json",
+            read_chunk_bytes=config.read_chunk_bytes,
+            max_batch_lines=config.max_batch_lines,
+        )
         assembler = SessionAssembler(
             idle_flush_s=config.idle_flush_s,
             max_events=config.max_events,
@@ -250,9 +272,14 @@ def main(
                 break
             if max_iterations is not None and iterations >= max_iterations:
                 break
-            if stop_event is not None and stop_event.is_set():
-                break
-            if stop_requested.is_set():
+            if stop_requested.is_set() or (stop_event is not None and stop_event.is_set()):
+                # A stop was requested (a real SIGTERM/SIGINT, or the injected `stop_event`) and
+                # the current iteration has finished: force every session the assembler is still
+                # accumulating into the spool before exiting (M6 final review row t02, M5
+                # remainder). Without this, a session open at shutdown dies with the process —
+                # `Restart=always` starts a fresh, empty assembler. The spool is drained on the
+                # next start; draining here would only stall the stop behind a failing POST.
+                _spool_open_sessions(assembler, spool)
                 break
             if result.lines_read == 0:
                 sleep(config.poll_interval_s)

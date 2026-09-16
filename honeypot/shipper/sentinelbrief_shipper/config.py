@@ -31,6 +31,8 @@ class ShipperConfig:
     backoff_max_s: float = 300.0
     spool_max_files: int = 10_000
     poll_interval_s: float = 1.0
+    read_chunk_bytes: int = 8 * 1024 * 1024
+    max_batch_lines: int = 2000
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> ShipperConfig:
@@ -67,6 +69,8 @@ class ShipperConfig:
             backoff_max_s=_positive_float(env, "SHIPPER_BACKOFF_MAX_S", 300.0),
             spool_max_files=_positive_int(env, "SHIPPER_SPOOL_MAX_FILES", 10_000),
             poll_interval_s=_positive_float(env, "SHIPPER_POLL_INTERVAL_S", 1.0),
+            read_chunk_bytes=_positive_int(env, "SHIPPER_READ_CHUNK_BYTES", 8 * 1024 * 1024),
+            max_batch_lines=_positive_int(env, "SHIPPER_MAX_BATCH_LINES", 2000),
         )
 
 
