@@ -16,10 +16,13 @@ query is read-only diagnostics and is never reused as a sampling frame. This mod
 the golden-set label type and never assigns `labeled_by` — nothing here can mint a v2 label; that
 is the label tool's job alone (`evals/label_tool.py::prompt_label`, PRD §13).
 
-`Candidate`/`STRATA_CATEGORIES`/`stratum_id` are re-exported here from the DB-free
-`evals.candidates` (m7 task-01 fix-1 ruling R14) so every existing importer of
-`evals.sample.Candidate` etc. keeps working; the label tool imports them from `evals.candidates`
-directly instead, so it never needs this module's `sqlalchemy`/`core.db`/`core.models` imports.
+`Candidate`/`STRATA_CATEGORIES`/`stratum_id`/`INJECTION_HINT`/`matches_injection_hint` are
+re-exported here from the DB-free `evals.candidates` (m7 task-01 fix-1 ruling R14; `INJECTION_HINT`
+moved here at fix-3 ruling N2, since the label tool needs it too, to decide the `injection` tag
+offer from a candidate's own alert rather than a stored stratum or a first-pass label) so every
+existing importer of `evals.sample.INJECTION_HINT` etc. keeps working; the label tool imports them
+from `evals.candidates` directly instead, so it never needs this module's
+`sqlalchemy`/`core.db`/`core.models` imports.
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,33 +45,29 @@ from core.config import Settings
 from core.db import make_engine, make_session_factory
 from core.models import AlertRow, VerdictRow
 from core.schemas.alert import SessionAlert
-from evals.candidates import STRATA_CATEGORIES, Candidate, stratum_id
-
-INJECTION_HINT = re.compile(
-    r"ignore (all |previous |prior )?instructions|system prompt|as an ai"
-    r"|severity ?[:=] ?[1-5]|rate (this|it) (as )?(low|benign|1)",
-    re.I,
+from evals.candidates import (
+    INJECTION_HINT,
+    STRATA_CATEGORIES,
+    Candidate,
+    matches_injection_hint,
+    stratum_id,
 )
-"""Ruling R11: no bare `assistant` (matched too much innocuous text, e.g. `assistant_manager`);
-`severity` now requires a literal `:` or `=` before the digit (`severity 3` alone no longer
-matches) — a hint for the sampling stratum only, never a label; the human decides the `injection`
-tag (`docs/labeling-guide.md`)."""
 
-
-def _matches_injection_hint(alert: SessionAlert) -> bool:
-    """Whether any event's `username`/`input` carries instruction-like text (PRD §10.6)."""
-    for event in alert.events:
-        if event.username is not None and INJECTION_HINT.search(event.username):
-            return True
-        if event.input is not None and INJECTION_HINT.search(event.input):
-            return True
-    return False
+__all__ = [
+    "INJECTION_HINT",
+    "STRATA_CATEGORIES",
+    "Candidate",
+    "main",
+    "sample",
+    "stratum_id",
+    "write_candidates",
+]
 
 
 def _stratum_for(alert: SessionAlert, category: str | None) -> str:
     """The sampling stratum for one alert: injection-candidate first, else category, else
     unverdicted."""
-    if _matches_injection_hint(alert):
+    if matches_injection_hint(alert):
         return "injection-candidate"
     if category is not None:
         return category

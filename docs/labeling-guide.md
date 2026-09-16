@@ -82,8 +82,14 @@ yourself guessed a week ago.
 
 ## Workflow
 
-1. **Sample.** `python -m evals.sample --n 240 --seed <fixed> --out evals/golden/v2-candidates.jsonl`
-   (stratified across categories and sensor/day, injection cases oversampled).
+1. **Receive the candidate file.** The controller runs the sampler against production from the
+   box and copies the result back to you at `evals/golden/v2-candidates.jsonl` (stratified across
+   categories and sensor/day, injection cases oversampled) — this is Step 7 of the task brief, not
+   something you run yourself. To reproduce or extend it against a database you can reach
+   directly, `Settings` never reads `.env` (`env_file=None`), so the URL must come from the
+   environment or `--database-url`: `DATABASE_URL=<url> python -m evals.sample --n 240 --seed
+   <fixed> --out evals/golden/v2-candidates.jsonl` (or pass `--database-url <url>` instead of the
+   `DATABASE_URL=` prefix).
 2. **Label in sittings.** `python -m evals.label_tool label --candidates evals/golden/v2-candidates.jsonl --out evals/golden/v2.jsonl`.
    Type `q` at any point to pause — the file so far is left intact and the tool resumes where you
    left off next time (`s` skips a case you don't want to label).

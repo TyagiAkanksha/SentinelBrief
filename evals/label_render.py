@@ -14,12 +14,16 @@ call).
 
 Ruling R10 (review C1/C2, one root cause): `render_case` renders the alert only — nothing from a
 candidate's sampling stratum, the cheap model's category, or any `sampled` field ever reaches the
-human's screen. `_prompt_category`'s menu no longer lists the seven category NAMES per case
-either (review C1's own reproduction: that static, always-identical list necessarily contains
-whatever category a re-reviewed case now happens to also be labeled — e.g. `persistence_attempt`
-— which the C1 test correctly treats as a leak of the first pass, since it is the SAME menu text
-every single time `prompt_label` runs); the numbered category legend lives once in
-`docs/labeling-guide.md` instead.
+human's screen. `prompt_category`'s numbered menu of all seven `STRATA_CATEGORIES` names IS
+restored (ruling R16): the review found the ORIGINAL fix's removal of the menu over-corrected a
+different bug — a menu whose text never varies by case cannot leak anything about the CURRENT
+case's own label, so a static, always-identical menu is safe and is what the guide
+(`docs/labeling-guide.md`) documents.
+
+Ruling N2 (fix-3 re-review): `prompt_tags` offers the `injection` tag by re-scanning the
+candidate's OWN alert (`evals.candidates.matches_injection_hint`), never from `candidate.stratum`
+or a case's first-pass tags — so a re-reviewed case's tag offer never depends on what the author
+typed last time.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from core.schemas.verdict import VerdictCategory
-from evals.candidates import STRATA_CATEGORIES, Candidate
+from evals.candidates import STRATA_CATEGORIES, Candidate, matches_injection_hint
 from worker.summarize import summarize_session
 
 _COMMAND_EVENTS = {"cowrie.command.input", "cowrie.command.failed"}
@@ -148,7 +152,11 @@ def prompt_note(console: Console) -> str:
 
 
 def prompt_tags(console: Console, candidate: Candidate) -> list[str]:
-    """Reads the comma-separated tags prompt; offers `injection` for an injection-candidate."""
-    hint = " ('injection' offered)" if candidate.stratum == "injection-candidate" else ""
+    """Reads the comma-separated tags prompt; offers `injection` when the candidate's OWN alert
+    carries instruction-like text (ruling N2, review re-review): re-runs `matches_injection_hint`
+    against `candidate.alert` directly, never `candidate.stratum` or a first-pass label — so a
+    re-reviewed case's tag offer can never depend on whether it happened to be tagged `injection`
+    last time (the sampler makes exactly this same check, PRD §10.6)."""
+    hint = " ('injection' offered)" if matches_injection_hint(candidate.alert) else ""
     answer = console.read(f"tags (comma-separated{hint}): ").strip()
     return [tag.strip() for tag in answer.split(",") if tag.strip()]

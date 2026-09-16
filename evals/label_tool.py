@@ -120,24 +120,48 @@ def _load_candidates(path: Path) -> list[Candidate]:
     `sampled.stratum_id` is opaque on disk (ruling R10); `stratum` is reconstructed in memory
     only, by recomputing `stratum_id(name, seed)` for the finite set of known stratum names and
     matching against each row's own `sampled.seed` — never rendered (`render_case` never touches
-    `candidate.stratum`), used only so `_prompt_tags` can still offer the `injection` tag.
+    `candidate.stratum`), and, since ruling N2, no longer read by `prompt_tags` either (its
+    `injection` offer comes from the alert directly); kept here purely as accurate provenance on
+    the `Candidate` object.
+
+    Every field this function reads is guarded (review N1): a row that is not a JSON object, or
+    is missing `case_id`/`alert`/`sampled`/`sampled.seed`/`sampled.stratum_id`/
+    `sampled.alert_id`/`sampled.received_at` — a truncated or pre-R10 candidates file, e.g. from a
+    partial copy-back over SSM — raises `ValueError` naming the row number and the missing key
+    only, never the row's own (possibly attacker-derived) content, so it surfaces through `main`'s
+    existing `io_error` path instead of an unguarded `KeyError`/`TypeError` traceback.
+
+    Raises:
+        ValueError: A row isn't a JSON object, or is missing a required key.
     """
     candidates: list[Candidate] = []
-    for line in path.read_text().splitlines():
+    for row_number, line in enumerate(path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
         row = json.loads(line)
-        sampled = row["sampled"]
-        seed = sampled["seed"]
+        if not isinstance(row, dict):
+            raise ValueError(f"candidate row {row_number}: not a JSON object")
+        try:
+            case_id = row["case_id"]
+            alert_data = row["alert"]
+            sampled = row["sampled"]
+            if not isinstance(sampled, dict):
+                raise ValueError(f"candidate row {row_number}: sampled is not a JSON object")
+            seed = sampled["seed"]
+            stratum_id_value = sampled["stratum_id"]
+            alert_id = sampled["alert_id"]
+            received_at = sampled["received_at"]
+        except KeyError as e:
+            raise ValueError(f"candidate row {row_number}: missing {e.args[0]!r}") from e
         id_to_name = {stratum_id(name, seed): name for name in _KNOWN_STRATA}
-        stratum = id_to_name.get(sampled["stratum_id"], "unknown")
+        stratum = id_to_name.get(stratum_id_value, "unknown")
         candidates.append(
             Candidate(
-                case_id=row["case_id"],
-                alert_id=sampled["alert_id"],
-                received_at=datetime.fromisoformat(sampled["received_at"]),
+                case_id=case_id,
+                alert_id=alert_id,
+                received_at=datetime.fromisoformat(received_at),
                 stratum=stratum,
-                alert=SessionAlert.model_validate(row["alert"]),
+                alert=SessionAlert.model_validate(alert_data),
             )
         )
     return candidates
@@ -191,17 +215,18 @@ def _candidate_from_case(case: GoldenCase) -> Candidate:
     """A `Candidate` view of an already-labeled `GoldenCase`, for `rereview`'s re-prompt.
 
     Ruling R10 (review C1): `stratum` is NEVER derived from `case.label.category` — that would
-    leak the first pass's category into `_prompt_tags`'s internal state even though `render_case`
-    itself never prints it. Only the `injection` tag (a human-typed signal, not a model category)
-    maps to the `"injection-candidate"` stratum, so the tag-offer hint still works; every other
-    case gets a neutral placeholder.
+    leak the first pass's category even though `render_case` itself never prints it. Ruling N2
+    (fix-3 re-review): `stratum` is ALSO never derived from `case.tags` any more — `prompt_tags`
+    now decides the `injection` offer by re-scanning `candidate.alert` directly
+    (`evals.candidates.matches_injection_hint`), so a fixed placeholder here is enough; a
+    re-reviewed case's tag offer can no longer depend on whether it was tagged `injection` last
+    time.
     """
-    stratum = "injection-candidate" if "injection" in case.tags else "rereview"
     return Candidate(
         case_id=case.case_id,
         alert_id=case.case_id,
         received_at=case.labeled_at or datetime.now(UTC),
-        stratum=stratum,
+        stratum="rereview",
         alert=case.alert,
     )
 
