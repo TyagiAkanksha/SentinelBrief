@@ -262,3 +262,29 @@ def test_deployment_doc_states_the_honeypot_egress_truthfully() -> None:
         "docs/deployment.md does not record that narrowing the honeypot's egress to VPC endpoints "
         "is deferred (PRD v1.6 / ruling R19)"
     )
+
+
+def test_honeypot_put_role_policy_present_in_a_fence() -> None:
+    """M6 re-review N1 (m7 task-08): `test_iam_deny_documents_bound_both_instance_roles` (pinned,
+    above) checks the whole walkthrough text for the deny-attaching commands, so deleting ONLY
+    the fenced `put-role-policy` step (the surviving mutant R3a) still leaves that check green —
+    the prose link to the same JSON file remains in the surrounding text. A per-fence assertion
+    closes the gap: the command that actually ATTACHES the control (role name + deny document,
+    together) must appear inside one fenced block, for both roles, not merely somewhere in the
+    prose around it.
+    """
+    fenced = _fenced_blocks(_EC2_WALKTHROUGH.read_text())
+
+    assert any(
+        "put-role-policy" in f
+        and "--role-name sentinelbrief-honeypot-host" in f
+        and "file://infra/deploy/iam/honeypot-host-deny.json" in f
+        for f in fenced
+    ), "no fenced command attaches honeypot-host-deny.json to sentinelbrief-honeypot-host (N1)"
+
+    assert any(
+        "put-role-policy" in f
+        and "--role-name sentinelbrief-app-host" in f
+        and "file://infra/deploy/iam/app-host-deny.json" in f
+        for f in fenced
+    ), "no fenced command attaches app-host-deny.json to sentinelbrief-app-host (N1)"

@@ -35,13 +35,19 @@ def test_position_survives_restart(tmp_path: Path) -> None:
     """Interfaces `LogTailer`/`TailState`: a fresh `LogTailer` over the same state file resumes at
     the persisted offset — mutant: dropping the `TailState` persist so a restart re-delivers
     `a`/`b`.
+
+    m7 task-08 (M6 final review M11, pinned-edit approved): `run_once`'s new at-least-once
+    ordering is `Spool.write` THEN `Tailer.commit_offset`, so the read itself no longer persists
+    implicitly — this pin now exercises the SAME explicit read-then-commit call shape `run_once`
+    makes, not the old persist-on-read default.
     """
     log_path = tmp_path / "cowrie.json"
     state_path = tmp_path / "tail.json"
     log_path.write_text("a\nb\n")
 
     first = LogTailer(log_path, state_path)
-    assert first.read_new_lines() == ["a", "b"]
+    assert first.read_new_lines(persist=False) == ["a", "b"]
+    first.commit_offset()
 
     with log_path.open("a") as f:
         f.write("c\n")

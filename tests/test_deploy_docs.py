@@ -58,7 +58,12 @@ _SECRET_PATTERNS = {
     "openai-key-shaped": re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     "postgres-dsn-with-real-password": re.compile(r"postgresql://[^<\s]+:[^<\s'\"]+@"),
     "aws-access-key-id-shaped": re.compile(r"AKIA[0-9A-Z]{16}"),
-    "40-plus-char-hex-run": re.compile(r"\b[0-9a-f]{40,}\b"),
+    # m7 task-08 (M6 final review M6, pinned-edit approved): a `sha256:<64 hex>` image digest
+    # (e.g. `honeypot/docker-compose.yml`'s `image: cowrie/cowrie@sha256:...` line) is a public,
+    # documented artifact reference, not a secret -- exempted so `infra/deploy/VERIFY.md` can
+    # record the digest in full instead of the truncated `sha256:42e01e0e...740d44` form the
+    # review flagged. A bare 40+-hex run with no `sha256:` prefix elsewhere still trips it.
+    "40-plus-char-hex-run": re.compile(r"(?<!sha256:)\b[0-9a-f]{40,}\b"),
 }
 
 # Steps 0-12 of the walkthrough: a numeric prefix present either as a markdown heading
@@ -234,6 +239,19 @@ def test_deploy_docs_carry_no_value_shaped_secret() -> None:
                 hits.append(f"{path}: {name}")
     assert not hits, (
         "value-shaped secret pattern(s) found (file: pattern name only):\n" + "\n".join(hits)
+    )
+
+    # The exemption itself, pinned directly against the pattern (the scanned set above never
+    # reads honeypot/docker-compose.yml -- see this test's own docstring -- so a fixture line is
+    # the only way to pin the exemption today; m7 task-08).
+    digest_line = "    image: cowrie/cowrie@sha256:" + "ab" * 32
+    assert not _SECRET_PATTERNS["40-plus-char-hex-run"].search(digest_line), (
+        "the 40-plus-char-hex-run pattern must exempt a sha256:<64 hex> image digest"
+    )
+    bare_hex_line = "token=" + "a" * 40
+    assert _SECRET_PATTERNS["40-plus-char-hex-run"].search(bare_hex_line), (
+        "the 40-plus-char-hex-run pattern must still catch a bare 40+ hex run with no sha256: "
+        "prefix"
     )
 
 
