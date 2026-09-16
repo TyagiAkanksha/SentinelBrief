@@ -827,3 +827,53 @@ def test_strong_model_equal_to_model_exit_1_config_error(
     assert len(captured.err.splitlines()) == 1
     assert captured.err.startswith("error: config_error:")
     assert "Traceback" not in captured.err
+
+
+# --- m7 task-01: `is_v2_golden` + `require_human=True` enforcement for v2 files (PRD §13) --------
+
+
+def test_run_requires_human_labels_for_v2_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Pins `evals.run.is_v2_golden` (m7 task-01 Ruling R1: "basename starts with v2", shared
+    with task-02) and `main`'s use of it: a golden path `is_v2_golden` flags must be loaded via
+    `evals.golden.load_golden(path, require_human=True)`, so a v2 file carrying even one row that
+    is not `labeled_by: "human"` fails the whole run as `config_error` (Interfaces → test table
+    row "run.py") rather than silently scoring a machine-authored label as ground truth (PRD §13,
+    `.claude/rules/evals.md`). `evals.run` does not define `is_v2_golden` yet, so this test is RED
+    at collection with `ImportError: cannot import name 'is_v2_golden' from 'evals.run'`.
+    """
+    from evals.run import is_v2_golden
+
+    assert is_v2_golden(Path("evals/golden/v2.jsonl")) is True
+    assert is_v2_golden(Path("/some/dir/v2-candidates.jsonl")) is True
+    assert is_v2_golden(Path("evals/golden/v20-not-really-v2.jsonl")) is True  # starts with "v2"
+    assert is_v2_golden(Path("evals/golden/v1.jsonl")) is False
+
+    case = _golden_case("alert1.json")  # labeled_by defaults to None: not human-labeled
+    golden_path = tmp_path / "v2-unlabeled.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=FakeLLMClient([]),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
+    assert list(output_dir.glob("*.json")) == []
