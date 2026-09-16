@@ -262,9 +262,6 @@ def test_cold_start_reads_in_bounded_chunks_and_batches(
 # --- unreadable state dir: a clean startup error, distinct root cause from the pinned file ----
 
 
-@pytest.mark.skipif(
-    os.geteuid() == 0, reason="root ignores directory permissions; chmod 000 would not deny writes"
-)
 def test_unreadable_state_dir_is_a_clean_startup_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -273,6 +270,11 @@ def test_unreadable_state_dir_is_a_clean_startup_error(
     fails the SAME collaborator-construction guard for a DIFFERENT reason: `Spool`'s own `mkdir`
     for its `spool/` subdirectory needs write+search permission on the parent it cannot get.
     `main` must still exit 1 with one stderr line, never a traceback.
+
+    Runs unconditionally (fix-1 ruling, review M6: the prior `skipif(os.geteuid() == 0, ...)`
+    made the "0 skipped" gate vacuous for this assertion on a root CI runner) — this repo's own
+    runs are never root, so behavior here is unchanged; a future root runner now gets a real
+    result (pass or a loud failure) instead of a silent skip.
     """
     state_dir = tmp_path / "state"
     state_dir.mkdir()
