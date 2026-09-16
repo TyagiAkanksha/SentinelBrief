@@ -116,11 +116,16 @@ def prompt_severity(console: Console) -> int | None:
 
 
 def prompt_category(console: Console) -> VerdictCategory:
-    """Reads the category prompt: a number 1-`len(STRATA_CATEGORIES)`, mapped in the fixed
-    `STRATA_CATEGORIES` order documented once in `docs/labeling-guide.md` — never re-listed by
-    name per case (review C1: a per-case listing is the same static text every time and would
-    always include whichever category the CURRENT case happens to need, leaking it during
-    `rereview` before the second label is typed)."""
+    """Reads the category prompt: a numbered menu of `STRATA_CATEGORIES`, same order and text
+    for every case (ruling R16). A menu whose text never varies by case cannot leak anything
+    about the CURRENT case's original label — the actual C1 defect was fix-1 Part B's
+    over-generalized pin, not the menu itself (review, fix-1 Part B judgment call 2); dropping the
+    menu entirely would force the author to memorize seven category numbers by heart for two
+    hundred labels, so it is restored here, documented identically in
+    `docs/labeling-guide.md`."""
+    console.write("category:")
+    for i, name in enumerate(STRATA_CATEGORIES, start=1):
+        console.write(f"  {i}. {name}")
     while True:
         answer = console.read(f"category (1-{len(STRATA_CATEGORIES)}): ").strip()
         try:

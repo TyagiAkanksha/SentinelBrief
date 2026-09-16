@@ -221,11 +221,15 @@ def write_candidates(path: Path, candidates: Sequence[Candidate], *, seed: int =
     category by value, so writing it verbatim would anchor the labeler exactly like a verdict
     field would.
 
-    `seed` defaults to `0` (not required, despite the amended Interfaces block showing no
-    default): the still-pinned `tests/test_label_tool.py` calls this function three times without
-    a `seed=` argument at all, and that file cannot be edited for this round (fix-1 Part B
-    judgment call) — a required-with-no-default `seed` would make those pinned calls a `TypeError`
-    with no fix available. `main` below always passes `seed=args.seed` explicitly.
+    `seed` KEEPS its default (fix-2 Part B asked for "no default", ruling R16; NOT fully applied
+    here — see the fix-2 implementer report's "Concerns"): the test-author's fix-2 approved edit
+    added `seed=20260914` to `tests/test_label_tool.py`'s three calls, but a FOURTH, still-pinned
+    call survives unamended at `tests/test_sample.py:121`
+    (`write_candidates(out_path, candidates)`, no `seed=`, file hash unchanged since the original
+    `6578c29` RED commit) — outside this round's approved test-author edit scope. Removing the
+    default would make that pinned call a `TypeError` with no fix available on the implementer
+    side; the default therefore stays until a controller ruling authorizes either a pinned edit to
+    `tests/test_sample.py` or a scope change here.
 
     Args:
         path: The candidate JSONL file to write (overwritten).

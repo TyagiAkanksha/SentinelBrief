@@ -28,7 +28,10 @@ behavior-keyed, because on a honeypot nearly all traffic is "malicious" — seve
 
 ## The seven categories
 
-Choose exactly one `category`, using the same definitions the active prompt uses:
+Choose exactly one `category`, using the same definitions the active prompt uses. `label` and
+`rereview` both show this exact list, in this exact order, as a numbered menu (`1`-`7`) every
+single time they ask for a category — the same static menu for every case, so it never depends
+on (and can never leak) any case's own answer:
 
 - `scanning` — untargeted probes/mass-scanner fingerprints, no credential attempts.
 - `brute_force` — repeated credential attempts, generic or targeted, no success.
