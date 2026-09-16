@@ -61,6 +61,33 @@ class ReplayToolRecorder:
 # evals/run.py: --replay-strict default = golden.name.startswith("v2"); per-case FixtureMissingError → CaseResult(error="fixture_missing:<tool>:<key>", verdict=None); after the table: "MISSING FIXTURES (n): tool key …" and return 1
 ```
 
+## Rulings from the task-02 review (2026-09-16)
+
+- **R25 — an environment failure is never a fixture.** `evals.record` treats an `unavailable` result
+  whose `reason` is in `TRANSIENT_REASONS = {"no_api_key", "no_database", "database_error",
+  "geoip_db_not_configured", "geoip_db_error", "quota_exceeded", "network_error",
+  "malformed_response", "unauthorized", "assets_file_missing", "assets_file_invalid",
+  "fixture_missing", "fixture_unreadable", "fixture_mismatch", "unknown_tool"}` as a FAILURE: the
+  file `LiveToolRecorder` wrote is removed, the call is listed under `failed` with tool, key and
+  reason, and `main` exits 1. Every other result (a real answer, or a deterministic `unavailable`
+  such as `invalid_arguments` / `unknown_session` / `unknown_asset`) is persisted. Strict replay
+  additionally refuses to SERVE a fixture whose reason is transient (`FixtureMissingError` with
+  `":poisoned"` appended to the key) so a poisoned file committed by hand cannot become evidence.
+- **R26 — strictness is scoped to the tools the sampler can enumerate.** `ReplayToolRecorder(…,
+  strict=True, strict_tools=frozenset({"get_ip_geo_asn", "lookup_ip_reputation"}))`; the strict
+  raise applies to those tools only. `get_alert_history` (external, but its `window_hours` is the
+  model's free choice and cannot be pre-recorded) keeps the lenient replay: a missing fixture
+  answers `unavailable("fixture_missing")` deterministically. The Acceptance sentence below reads
+  "every external-API tool result the sampler can enumerate"; the docstring tool lists in
+  `evals/record.py`, `evals/run.py` and `tests/fixtures/tools/README.md` say the same.
+- **R27 — no production machinery for a test's shape.** The `_run_async` thread bridge in
+  `evals/record.py::main` is removed; `main` calls `asyncio.run` once. The pinned
+  `tests/test_record.py::test_failed_tool_reported_by_class_only` becomes a synchronous test
+  (approved edit), wrapping its async half in `asyncio.run(...)`.
+- **R28 — the determinism proof compares tool evidence.** `_case_payload` carries
+  `tool_trace_sha256` (sha256 over the canonical JSON of every tool call's name, arguments and
+  result, in order); two strict-replay runs are byte-identical including it.
+
 ## Interfaces → test table
 
 | Interfaces line | test file::test name | failure branch covered |
@@ -91,4 +118,4 @@ uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --
 
 ## Acceptance
 
-- Every external tool result a v2 case can request is recorded once and committed; a v2 eval run with any missing fixture exits non-zero naming it; two replayed runs are byte-identical in their tool evidence.
+- Every external-API tool result the sampler can enumerate (the two `{"ip"}` tools) is recorded once and committed; `get_alert_history` replays leniently (R26); a v2 eval run with any missing fixture exits non-zero naming it; two replayed runs are byte-identical in their tool evidence.
