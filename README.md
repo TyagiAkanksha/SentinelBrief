@@ -183,6 +183,16 @@ traffic and is the only source of the numbers in [`docs/results.md`](docs/result
 `STRONG_MODEL`; the printed table's `escalation_rate` column reports the fraction of cases each
 run escalated to the strong model.
 
+### Evals — labeling v2
+
+Golden set v2 labels are human work (PRD §13): `python -m evals.sample` draws a stratified,
+verdict-blind candidate file from the live database, and `python -m evals.label_tool label`
+walks it one case at a time, appending `labeled_by: "human"` rows to `evals/golden/v2.jsonl` from
+typed input only — nothing under `evals/` can mint a label programmatically. The rubric, the
+seven categories (including the `brute_force`-vs-`reconnaissance` tie-break) and the full
+labeling workflow, including the 10 % re-review a week later, are in
+[`docs/labeling-guide.md`](docs/labeling-guide.md).
+
 ## Deployment
 
 Target topology, secrets handling, backups and the verification checklist:

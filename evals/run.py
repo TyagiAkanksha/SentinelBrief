@@ -27,6 +27,8 @@ empty, and never raises a traceback:
         --tool-fixtures not a directory)                                     usage
     `Settings()` fails validation (e.g. malformed MODEL_PRICES_JSON)          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
+    a v2 golden file (`is_v2_golden`) carrying a non-human-labeled row
+        (PRD §13; `load_golden(..., require_human=True)` raises)              config_error
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model or
         --strong-model, unknown --prompt), raised before any case runs
         ("price before spend")                                                config_error
@@ -68,6 +70,22 @@ from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
 
 DEFAULT_TOOL_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "tools"
+
+
+def is_v2_golden(path: Path) -> bool:
+    """Whether `path` is a v2 golden file (m7 task-01 Ruling R1: basename starts with `v2`).
+
+    A v2 golden path is loaded with `require_human=True` (PRD §13): a machine-authored row must
+    never be scored as ground truth. Shared with task-02's fixture-recording tooling.
+
+    Args:
+        path: The golden file path to classify.
+
+    Returns:
+        `True` when `path.name` starts with `"v2"` (e.g. `v2.jsonl`, `v2-candidates.jsonl`,
+        `v20-not-really-v2.jsonl`); `False` otherwise (e.g. `v1.jsonl`).
+    """
+    return path.name.startswith("v2")
 
 
 def _positive_int(value: str) -> int:
@@ -225,10 +243,13 @@ async def _run_all(
         ):
             return fail("config_error", f"model {strong_model!r} has no entry in MODEL_PRICES_JSON")
 
+        require_human = is_v2_golden(args.golden)
         try:
-            cases = load_golden(args.golden)
-        except (ValueError, OSError) as e:
+            cases = load_golden(args.golden, require_human=require_human)
+        except OSError as e:
             return fail("invalid_golden", str(e))
+        except ValueError as e:
+            return fail("config_error" if require_human else "invalid_golden", str(e))
 
         try:
             client: LLMClient = (

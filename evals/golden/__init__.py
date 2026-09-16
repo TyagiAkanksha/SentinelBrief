@@ -12,8 +12,9 @@ validates (`v1.jsonl`, `README.md`) live side by side.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -41,12 +42,19 @@ class GoldenLabel(BaseModel):
 
 
 class GoldenCase(BaseModel):
-    """One labeled golden-set row: a session alert plus its ground-truth label (PRD §7.1)."""
+    """One labeled golden-set row: a session alert plus its ground-truth label (PRD §7.1).
+
+    `labeled_by`/`labeled_at` are v2-only provenance (PRD §13): every v2 row is written by
+    `evals.label_tool.prompt_label` with `labeled_by` set to the literal string `human`; v1 rows
+    (synthetic, authored via `/cowrie-fixture`) carry neither field, so both default to `None`.
+    """
 
     alert: SessionAlert
     label: GoldenLabel
     labeler_note: Annotated[str, Field(min_length=10)]
     tags: list[str] = []
+    labeled_by: Literal["human"] | None = None
+    labeled_at: datetime | None = None
 
     @property
     def case_id(self) -> str:
@@ -54,20 +62,25 @@ class GoldenCase(BaseModel):
         return self.alert.fingerprint()
 
 
-def load_golden(path: Path) -> list[GoldenCase]:
+def load_golden(path: Path, *, require_human: bool = False) -> list[GoldenCase]:
     """Load and validate every golden-set case from a JSONL file (PRD §7.1).
 
     Args:
         path: Path to a golden-set file (e.g. `evals/golden/v1.jsonl`), one JSON object per
             non-empty line.
+        require_human: When `True`, every row must carry `labeled_by == "human"` (PRD §13); a v2
+            golden file with even one machine-authored row is rejected rather than silently
+            scored as ground truth.
 
     Returns:
         One `GoldenCase` per non-empty line, in file order.
 
     Raises:
         ValueError: A row is not valid JSON or fails `GoldenCase` validation
-            (`"row {n}: {error}"`, 1-indexed over non-empty lines), or a row's `case_id`
-            duplicates an earlier row's (PRD §13: v1 rows must have unique ids for scoring).
+            (`"row {n}: {error}"`, 1-indexed over non-empty lines), a row's `case_id`
+            duplicates an earlier row's (PRD §13: v1 rows must have unique ids for scoring), or
+            (`require_human=True`) a row is not `labeled_by == "human"` (`"row {n} is not
+            human-labeled"`).
     """
     cases: list[GoldenCase] = []
     row_of_case_id: dict[str, int] = {}
@@ -81,6 +94,8 @@ def load_golden(path: Path) -> list[GoldenCase]:
             case = GoldenCase.model_validate(payload)
         except (json.JSONDecodeError, ValidationError) as err:
             raise ValueError(f"row {row_number}: {err}") from err
+        if require_human and case.labeled_by != "human":
+            raise ValueError(f"row {row_number} is not human-labeled (PRD §13)")
         if case.case_id in row_of_case_id:
             raise ValueError(
                 f"row {row_number}: duplicate case_id {case.case_id!r} "

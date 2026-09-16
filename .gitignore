@@ -39,6 +39,10 @@ honeypot/data/
 *.mmdb
 # per-run eval outputs stay local; docs/results.md is the published table (PRD §7.5)
 evals/results/*.json
+# v2 sampler/label-tool working files (m7 task-01): v2.jsonl itself is tracked (the author's
+# human-labeled dataset, PRD §7.5); these two are regenerable intermediates, never committed.
+evals/golden/v2-candidates.jsonl
+evals/golden/v2-rereview.jsonl
 pytest.log
 
 # Claude Code scheduled-task lock (session-local)

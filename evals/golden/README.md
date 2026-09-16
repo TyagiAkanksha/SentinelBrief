@@ -64,11 +64,30 @@ the standard above (v1/v2 are immutable and stay as shipped). Because of this mi
 golden-v1 category-accuracy numbers measured under `triage-v1`/`triage-v2` carry this definition
 confound and should not be read as pure model signal.
 
-## v2 (future, M7)
+## v2 (M7)
 
-`v2.jsonl` will hold >=200 real alerts sampled from live honeypot traffic, stratified across
-categories, **hand-labeled by the author** using the §6.6 rubric (PRD §7.1, §13). Claude Code may
-write the stratified sampler, the export format, the loader, the scorer, the judge, and the CI
+`v2.jsonl` holds >=200 real alerts sampled from live honeypot traffic, stratified across
+categories, **hand-labeled by the author** using the §6.6 rubric (PRD §7.1, §13). It does not
+exist in this checkout until the author labels it — this repo ships the tooling, never the
+labels:
+
+- `python -m evals.sample` (`evals/sample.py`) reads the live database, stratifies by the cheap
+  verdict's category and by sensor/day, oversamples injection-candidate sessions, and writes a
+  verdict-blind candidate file (no `label`, `severity`, `category` or `reasoning` field anywhere
+  in it) — the author is never anchored by the model's own guess.
+- `python -m evals.label_tool label` (`evals/label_tool.py`) is the ONLY place in the repo that
+  writes `labeled_by: "human"`; it renders each session for the author, records exactly what they
+  type, and is resumable. `rereview` draws a seeded 10 % re-review a week later and reports the
+  self-disagreement rate (PRD §7.1: >10 % means the rubric is ambiguous, not the labels).
+- `evals.golden.load_golden(path, require_human=True)` — applied automatically to any golden path
+  whose basename starts with `v2` (`evals.run.is_v2_golden`) — refuses to score a v2 file that
+  carries even one non-human row.
+- The rubric, the seven categories and the `brute_force`-vs-`reconnaissance` tie-break are fixed
+  once, before the first label, in [`../../docs/labeling-guide.md`](../../docs/labeling-guide.md)
+  — the same taxonomy the `/cowrie-fixture` skill and the active prompt use
+  (`tests/test_taxonomy_agreement.py` pins the agreement).
+
+Claude Code writes the sampler, the export format, the loader, the scorer, the judge and the CI
 gate for v2 — it must never write, edit, "correct", or infer a v2 label or `labeler_note`.
 
 ## Adding a row
