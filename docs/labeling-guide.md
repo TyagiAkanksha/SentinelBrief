@@ -67,11 +67,15 @@ persistence."` The label tool re-prompts until the note contains `"6.6"`.
 
 ## What the tool never shows you
 
-`evals/label_tool.py` never shows the model's own verdict — not its severity, not its category,
-not its reasoning. `evals/sample.py`'s candidate file is verdict-blind by construction (no
-`label`, `severity`, `category` or `reasoning` key anywhere in it); you are labeling from the raw
-session evidence only, exactly as a human analyst would, never anchored by what the pipeline
-already guessed.
+`evals/label_tool.py` never shows you anything the model, or a PREVIOUS pass of your own, already
+produced — not the model's severity, category or reasoning, and not your own first-pass label
+during `rereview`. `evals/sample.py`'s candidate file is verdict-blind by construction (no
+`label`, `severity`, `category` or `reasoning` key anywhere in it, and the sampling stratum itself
+travels only as an opaque token, never the plain category name — a plain stratum name IS the
+cheap model's category by value); `rereview` re-prompts from the alert alone, never your earlier
+note or category. You are labeling from the raw session evidence only, exactly as a human analyst
+would, every single time — never anchored by what the pipeline already guessed, or by what you
+yourself guessed a week ago.
 
 ## Workflow
 

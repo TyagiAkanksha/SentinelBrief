@@ -1,5 +1,5 @@
-"""`evals.label_tool`: the author's v2 labeling CLI — the ONLY place `labeled_by: "human"` is ever
-written (PRD §6.6, §7.1, §13; m7 task-01).
+"""`evals.label_tool`: the author's v2 labeling CLI — file I/O and orchestration around
+`evals.label_render` (PRD §6.6, §7.1, §13; m7 task-01, ruling R14).
 
 `python -m evals.label_tool label --candidates <path> --out <path> [--start-at N]` walks a
 candidate file (`evals.sample.write_candidates`'s output) one case at a time: it renders the
@@ -13,10 +13,21 @@ this case) / `"q"` (quit; the file so far is left intact) at the severity prompt
 `python -m evals.label_tool rereview --golden <path> --fraction 0.10 --seed <N> --out <path>`
 draws a seeded fraction of an existing golden file, re-labels each case from scratch (without
 showing the first label) through the same `prompt_label`, and reports the disagreement rate
-(severity OR category differs) — PRD §7.1: >10% means the rubric is ambiguous, not the labels.
+(severity OR category differs, divided by the number of cases ACTUALLY re-labeled — a quit or
+skip mid-review must never dilute the rate) — PRD §7.1: >10% means the rubric is ambiguous, not
+the labels.
 
 `python -m evals.label_tool stats --golden <path>` prints the acceptance-walk table: rows per
 category and severity band, the injection tag count, and the `labeled_by` breakdown.
+
+Ruling R14 (review M9): this module imports no DB layer — `sqlalchemy`, `core.db`, `core.models`
+and `evals.sample` are all forbidden here (pinned by an AST test). `render_case` is re-exported
+from `evals.label_render` unchanged, so every existing `from evals.label_tool import ...` keeps
+working; `Candidate`/`STRATA_CATEGORIES`/`stratum_id` come from the DB-free `evals.candidates`,
+never `evals.sample`. `prompt_label` itself — the ONLY place in the repo that writes
+`labeled_by="human"` — is defined HERE, not in `evals.label_render`: the still-pinned
+`tests/test_label_tool.py::test_only_label_tool_writes_labeled_by_human` asserts that exact
+literal text appears only in the file `evals/label_tool.py`.
 
 Every test drives this module through the injected `Console` (never real stdin/stdout) feeding
 scripted answers (CONVENTIONS.md §10: mock only the seam). Nothing here ever fabricates a label —
@@ -30,138 +41,32 @@ import random
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
 
 from core.cli import Parser, UsageError, fail
 from core.schemas.alert import SessionAlert
-from core.schemas.verdict import VerdictCategory
+from evals.candidates import STRATA_CATEGORIES, Candidate, stratum_id
 from evals.golden import GoldenCase, GoldenLabel, load_golden
-from evals.sample import STRATA_CATEGORIES, Candidate
-from worker.summarize import summarize_session
+from evals.label_render import (
+    Console,
+    Quit,
+    prompt_category,
+    prompt_note,
+    prompt_severity,
+    prompt_tags,
+    render_case,
+)
 
-_COMMAND_EVENTS = {"cowrie.command.input", "cowrie.command.failed"}
-_LOGIN_EVENTS = {"cowrie.login.failed", "cowrie.login.success"}
+__all__ = [
+    "Console",
+    "label",
+    "main",
+    "prompt_label",
+    "render_case",
+    "rereview",
+    "stats",
+]
 
-
-class Console(Protocol):
-    """The labeling CLI's only I/O seam — injected in every test, wraps stdin/stdout for real
-    use."""
-
-    def write(self, text: str) -> None:
-        """Print `text` (never logged; the only place attacker text may reach a screen)."""
-        ...
-
-    def read(self, prompt: str) -> str:
-        """Print `prompt`, then return one line of typed input."""
-        ...
-
-
-class _RealConsole:
-    """The real `Console`: wraps `print`/`input` for interactive use (`main`'s default)."""
-
-    def write(self, text: str) -> None:
-        print(text)
-
-    def read(self, prompt: str) -> str:
-        return input(prompt)
-
-
-class _Quit(Exception):
-    """Internal signal only: the human typed `"q"` — `label`/`rereview` stop the whole run."""
-
-
-def render_case(candidate: Candidate) -> str:
-    """Render `candidate` for the human: the summary, then every command/download/upload line
-    verbatim, then every username tried — never logged, only ever passed to `Console.write`.
-
-    Args:
-        candidate: The case to render.
-
-    Returns:
-        The multi-line text to show the labeler.
-    """
-    alert = candidate.alert
-    summary = summarize_session(alert)
-    lines = [
-        f"case_id={candidate.case_id} stratum={candidate.stratum}",
-        f"session={summary.session_id} src_ip={summary.src_ip} sensor={summary.sensor}",
-        f"connect_time={summary.connect_time.isoformat()} duration_ms={summary.duration_ms}",
-        f"client_version={summary.client_version}",
-        f"login_failed={summary.login_failed} login_success={summary.login_success}",
-        f"command_count={summary.command_count} download_count={summary.download_count} "
-        f"upload_count={summary.upload_count}",
-        "",
-        "Commands / downloads / uploads:",
-    ]
-    activity: list[str] = []
-    for event in alert.events:
-        if event.eventid in _COMMAND_EVENTS and event.input is not None:
-            activity.append(f"  $ {event.input}")
-        elif event.eventid == "cowrie.session.file_download" and event.url is not None:
-            activity.append(f"  download {event.url} -> {event.outfile}")
-        elif event.eventid == "cowrie.session.file_upload" and event.outfile is not None:
-            activity.append(f"  upload -> {event.outfile}")
-    lines.extend(activity if activity else ["  (none)"])
-
-    usernames = [
-        e.username for e in alert.events if e.eventid in _LOGIN_EVENTS and e.username is not None
-    ]
-    lines.append("")
-    lines.append(
-        f"Usernames tried ({len(usernames)}): {', '.join(usernames) if usernames else '(none)'}"
-    )
-    return "\n".join(lines)
-
-
-def _prompt_severity(console: Console) -> int | None:
-    """Reads the severity prompt; returns `None` on `"s"` (skip), raises `_Quit` on `"q"`."""
-    while True:
-        answer = console.read("severity (1-5, s=skip, q=quit): ").strip().lower()
-        if answer == "s":
-            return None
-        if answer == "q":
-            raise _Quit
-        try:
-            severity = int(answer)
-        except ValueError:
-            console.write("severity must be 1-5, 's' or 'q' — try again")
-            continue
-        if 1 <= severity <= 5:
-            return severity
-        console.write("severity must be 1-5, 's' or 'q' — try again")
-
-
-def _prompt_category(console: Console) -> VerdictCategory:
-    """Reads the category prompt: a numbered menu of `STRATA_CATEGORIES`."""
-    console.write("category:")
-    for i, name in enumerate(STRATA_CATEGORIES, start=1):
-        console.write(f"  {i}. {name}")
-    while True:
-        answer = console.read("category (number): ").strip()
-        try:
-            index = int(answer) - 1
-        except ValueError:
-            console.write(f"enter a number 1-{len(STRATA_CATEGORIES)} — try again")
-            continue
-        if 0 <= index < len(STRATA_CATEGORIES):
-            return STRATA_CATEGORIES[index]
-        console.write(f"enter a number 1-{len(STRATA_CATEGORIES)} — try again")
-
-
-def _prompt_note(console: Console) -> str:
-    """Reads the note prompt; re-prompts until it cites "6.6" (the PRD §6.6 rubric)."""
-    while True:
-        note = console.read('note (e.g. "§6.6 sev N: <evidence>"): ').strip()
-        if "6.6" in note:
-            return note
-        console.write('note must cite "6.6" (the rubric row) — try again')
-
-
-def _prompt_tags(console: Console, candidate: Candidate) -> list[str]:
-    """Reads the comma-separated tags prompt; offers `injection` for an injection-candidate."""
-    hint = " ('injection' offered)" if candidate.stratum == "injection-candidate" else ""
-    answer = console.read(f"tags (comma-separated{hint}): ").strip()
-    return [tag.strip() for tag in answer.split(",") if tag.strip()]
+_KNOWN_STRATA = (*STRATA_CATEGORIES, "injection-candidate", "unverdicted")
 
 
 def prompt_label(console: Console, candidate: Candidate) -> GoldenCase | None:
@@ -181,14 +86,14 @@ def prompt_label(console: Console, candidate: Candidate) -> GoldenCase | None:
         human skipped this case.
     """
     console.write(render_case(candidate))
-    severity = _prompt_severity(console)
+    severity = prompt_severity(console)
     if severity is None:
         return None
-    category = _prompt_category(console)
+    category = prompt_category(console)
     escalate = severity >= 4
     console.write(f"escalate: {escalate} (auto-derived, severity >= 4)")
-    note = _prompt_note(console)
-    tags = _prompt_tags(console, candidate)
+    note = prompt_note(console)
+    tags = prompt_tags(console, candidate)
     return GoldenCase(
         alert=candidate.alert,
         label=GoldenLabel(severity=severity, category=category, escalate=escalate),
@@ -199,20 +104,39 @@ def prompt_label(console: Console, candidate: Candidate) -> GoldenCase | None:
     )
 
 
+class _RealConsole:
+    """The real `Console`: wraps `print`/`input` for interactive use (`main`'s default)."""
+
+    def write(self, text: str) -> None:
+        print(text)
+
+    def read(self, prompt: str) -> str:
+        return input(prompt)
+
+
 def _load_candidates(path: Path) -> list[Candidate]:
-    """Read `evals.sample.write_candidates`'s output back into `Candidate` objects."""
+    """Read `evals.sample.write_candidates`'s output back into `Candidate` objects.
+
+    `sampled.stratum_id` is opaque on disk (ruling R10); `stratum` is reconstructed in memory
+    only, by recomputing `stratum_id(name, seed)` for the finite set of known stratum names and
+    matching against each row's own `sampled.seed` — never rendered (`render_case` never touches
+    `candidate.stratum`), used only so `_prompt_tags` can still offer the `injection` tag.
+    """
     candidates: list[Candidate] = []
     for line in path.read_text().splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
         sampled = row["sampled"]
+        seed = sampled["seed"]
+        id_to_name = {stratum_id(name, seed): name for name in _KNOWN_STRATA}
+        stratum = id_to_name.get(sampled["stratum_id"], "unknown")
         candidates.append(
             Candidate(
                 case_id=row["case_id"],
                 alert_id=sampled["alert_id"],
                 received_at=datetime.fromisoformat(sampled["received_at"]),
-                stratum=sampled["stratum"],
+                stratum=stratum,
                 alert=SessionAlert.model_validate(row["alert"]),
             )
         )
@@ -223,7 +147,10 @@ def label(console: Console, candidates_path: Path, out_path: Path, *, start_at: 
     """Label every not-yet-labeled candidate in `candidates_path`, appending to `out_path`.
 
     Resumable: a candidate whose `case_id` is already present in `out_path` is skipped without
-    prompting. `"q"` at any point stops the run, leaving `out_path` intact.
+    prompting. `"q"` at any point stops the run, leaving `out_path` intact. If `out_path` already
+    exists and does not end with a trailing newline (e.g. a hand-edit or a merge dropped it), one
+    is written before appending, so a labeling sitting never silently concatenates onto the
+    previous row.
 
     Args:
         console: The injected I/O seam.
@@ -235,9 +162,13 @@ def label(console: Console, candidates_path: Path, out_path: Path, *, start_at: 
         The number of cases newly labeled in this call.
     """
     candidates = _load_candidates(candidates_path)[start_at:]
+    existing_text = out_path.read_text() if out_path.exists() else ""
     already_labeled: set[str] = set()
-    if out_path.exists() and out_path.read_text().strip():
+    if existing_text.strip():
         already_labeled = {case.case_id for case in load_golden(out_path)}
+    if existing_text and not existing_text.endswith("\n"):
+        with out_path.open("a") as f:
+            f.write("\n")
 
     labeled_count = 0
     with out_path.open("a") as f:
@@ -246,7 +177,7 @@ def label(console: Console, candidates_path: Path, out_path: Path, *, start_at: 
                 continue
             try:
                 case = prompt_label(console, candidate)
-            except _Quit:
+            except Quit:
                 break
             if case is None:
                 continue
@@ -259,11 +190,13 @@ def label(console: Console, candidates_path: Path, out_path: Path, *, start_at: 
 def _candidate_from_case(case: GoldenCase) -> Candidate:
     """A `Candidate` view of an already-labeled `GoldenCase`, for `rereview`'s re-prompt.
 
-    `render_case` never touches `label`/`labeler_note`/`tags`, so building this view — even from
-    a tagged `"injection"` case — never leaks the first label to the human (PRD §7.1: re-review
-    without showing the first label).
+    Ruling R10 (review C1): `stratum` is NEVER derived from `case.label.category` — that would
+    leak the first pass's category into `_prompt_tags`'s internal state even though `render_case`
+    itself never prints it. Only the `injection` tag (a human-typed signal, not a model category)
+    maps to the `"injection-candidate"` stratum, so the tag-offer hint still works; every other
+    case gets a neutral placeholder.
     """
-    stratum = "injection-candidate" if "injection" in case.tags else case.label.category
+    stratum = "injection-candidate" if "injection" in case.tags else "rereview"
     return Candidate(
         case_id=case.case_id,
         alert_id=case.case_id,
@@ -279,7 +212,10 @@ def rereview(
     """Re-label a seeded `fraction` of `golden_path` from scratch and report the disagreement rate.
 
     PRD §7.1: a re-review a week after the first pass; a rate over 10% means the rubric itself is
-    ambiguous, not merely a labeler slip. Never shows the first label before the second is typed.
+    ambiguous, not merely a labeler slip. Never shows the first label before the second is typed
+    (`_candidate_from_case` carries no label field at all). The rate divides by the number of
+    cases actually re-labeled, not the sampled count — a quit or skip mid-review must never dilute
+    it toward "rubric OK" (review I1).
 
     Args:
         console: The injected I/O seam.
@@ -302,7 +238,7 @@ def rereview(
         candidate = _candidate_from_case(case)
         try:
             second = prompt_label(console, candidate)
-        except _Quit:
+        except Quit:
             break
         if second is None:
             continue
@@ -322,15 +258,16 @@ def rereview(
 
     out_path.write_text("\n".join(json.dumps(row) for row in rows) + ("\n" if rows else ""))
 
-    rate = disagreements / len(reviewed) if reviewed else 0.0
+    relabeled = len(rows)
+    rate = disagreements / relabeled if relabeled else 0.0
     pct = rate * 100
     if rate > 0.10:
         console.write(
-            f"disagreement {pct:.1f} % ({disagreements}/{len(reviewed)}) — > 10 % — fix the "
+            f"disagreement {pct:.1f} % ({disagreements}/{relabeled}) — > 10 % — fix the "
             "rubric and relabel (PRD §7.1)"
         )
     else:
-        console.write(f"disagreement {pct:.1f} % ({disagreements}/{len(reviewed)}) — rubric OK")
+        console.write(f"disagreement {pct:.1f} % ({disagreements}/{relabeled}) — rubric OK")
     return rate
 
 
@@ -392,7 +329,9 @@ def main(argv: Sequence[str] | None = None, *, console: Console | None = None) -
 
     Returns:
         `0` on success; `1` via `core.cli.fail(e.code, ...)` on a malformed command line or an
-        `OSError`/`ValueError` while reading or writing a file.
+        `OSError`/`ValueError` while reading or writing a file (`io_error`: the exception's CLASS
+        NAME only, never its text — a malformed row's validation error can embed the row's own
+        attacker-reachable content, review M3).
     """
     parser = Parser(prog="python -m evals.label_tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -427,7 +366,7 @@ def main(argv: Sequence[str] | None = None, *, console: Console | None = None) -
         else:
             active_console.write(stats(args.golden))
     except (OSError, ValueError) as e:
-        return fail("io_error", f"{type(e).__name__}: {e}")
+        return fail("io_error", f"{type(e).__name__}: could not read the file")
 
     return 0
 

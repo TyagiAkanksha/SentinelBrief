@@ -74,11 +74,17 @@ labels:
 - `python -m evals.sample` (`evals/sample.py`) reads the live database, stratifies by the cheap
   verdict's category and by sensor/day, oversamples injection-candidate sessions, and writes a
   verdict-blind candidate file (no `label`, `severity`, `category` or `reasoning` field anywhere
-  in it) — the author is never anchored by the model's own guess.
+  in it) — the author is never anchored by the model's own guess. The plain stratum name IS the
+  cheap model's category by value, so the file carries only `sampled.stratum_id` — an opaque
+  `sha256(f"{seed}:{stratum}")[:8]` token (`evals.candidates.stratum_id`) plus the `seed` itself —
+  never the category name in the clear (m7 task-01 fix-1 ruling R10).
 - `python -m evals.label_tool label` (`evals/label_tool.py`) is the ONLY place in the repo that
   writes `labeled_by: "human"`; it renders each session for the author, records exactly what they
-  type, and is resumable. `rereview` draws a seeded 10 % re-review a week later and reports the
-  self-disagreement rate (PRD §7.1: >10 % means the rubric is ambiguous, not the labels).
+  type, and is resumable. Nothing the tool shows the author is ever derived from `stratum_id` by
+  name — `render_case` never prints it. `rereview` draws a seeded 10 % re-review a week later,
+  re-prompting from the alert alone (never the first pass's category or note), and reports the
+  self-disagreement rate over the cases actually re-labeled (PRD §7.1: >10 % means the rubric is
+  ambiguous, not the labels).
 - `evals.golden.load_golden(path, require_human=True)` — applied automatically to any golden path
   whose basename starts with `v2` (`evals.run.is_v2_golden`) — refuses to score a v2 file that
   carries even one non-human row.

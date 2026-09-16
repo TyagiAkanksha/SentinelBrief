@@ -15,61 +15,45 @@ This module's query is its own (M6 task-06 review PC4): `scripts/check_real_sess
 query is read-only diagnostics and is never reused as a sampling frame. This module never imports
 the golden-set label type and never assigns `labeled_by` — nothing here can mint a v2 label; that
 is the label tool's job alone (`evals/label_tool.py::prompt_label`, PRD §13).
+
+`Candidate`/`STRATA_CATEGORIES`/`stratum_id` are re-exported here from the DB-free
+`evals.candidates` (m7 task-01 fix-1 ruling R14) so every existing importer of
+`evals.sample.Candidate` etc. keeps working; the label tool imports them from `evals.candidates`
+directly instead, so it never needs this module's `sqlalchemy`/`core.db`/`core.models` imports.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import random
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from core.cli import Parser, UsageError, fail
+from core.config import Settings
 from core.db import make_engine, make_session_factory
 from core.models import AlertRow, VerdictRow
 from core.schemas.alert import SessionAlert
-from core.schemas.verdict import VerdictCategory
-
-STRATA_CATEGORIES: tuple[VerdictCategory, ...] = (
-    "scanning",
-    "brute_force",
-    "reconnaissance",
-    "successful_intrusion",
-    "malware_delivery",
-    "persistence_attempt",
-    "other",
-)
+from evals.candidates import STRATA_CATEGORIES, Candidate, stratum_id
 
 INJECTION_HINT = re.compile(
-    r"ignore (all |previous |prior )?instructions|system prompt|assistant|as an ai"
-    r"|severity ?[:=]? ?[1-5]|rate (this|it) (as )?(low|benign|1)",
+    r"ignore (all |previous |prior )?instructions|system prompt|as an ai"
+    r"|severity ?[:=] ?[1-5]|rate (this|it) (as )?(low|benign|1)",
     re.I,
 )
-
-
-@dataclass(frozen=True)
-class Candidate:
-    """One session sampled for v2 labeling: identity, provenance, and the raw alert only.
-
-    `stratum` is `"<cheap category>"` (one of `STRATA_CATEGORIES`), `"injection-candidate"`, or
-    `"unverdicted"` — never a verdict field itself.
-    """
-
-    case_id: str
-    alert_id: str
-    received_at: datetime
-    stratum: str
-    alert: SessionAlert
+"""Ruling R11: no bare `assistant` (matched too much innocuous text, e.g. `assistant_manager`);
+`severity` now requires a literal `:` or `=` before the digit (`severity 3` alone no longer
+matches) — a hint for the sampling stratum only, never a label; the human decides the `injection`
+tag (`docs/labeling-guide.md`)."""
 
 
 def _matches_injection_hint(alert: SessionAlert) -> bool:
@@ -200,6 +184,13 @@ async def sample(
         for candidate in _draw(rng, injection_members, min(cap, len(injection_members))):
             selected[candidate.case_id] = candidate
 
+    # M1: the per-category floors and the injection cap are each independent minimums and can
+    # together already exceed n (e.g. 7 populated categories x floor 5 = 35 > n = 20); clamp with
+    # the same seeded rng before the remainder step so `len(result) <= n` always holds.
+    if len(selected) > n:
+        trimmed = _draw(rng, list(selected.values()), n)
+        selected = {c.case_id: c for c in trimmed}
+
     remaining_budget = max(0, n - len(selected))
     remainder_pool = [c for c in eligible if c.case_id not in selected]
     if remaining_budget and remainder_pool:
@@ -222,12 +213,24 @@ async def sample(
     return list(selected.values())
 
 
-def write_candidates(path: Path, candidates: Sequence[Candidate]) -> int:
+def write_candidates(path: Path, candidates: Sequence[Candidate], *, seed: int = 0) -> int:
     """Write `candidates` as one JSON object per line: no verdict field, ever (PRD §13).
+
+    Ruling R10: `sampled.stratum_id` (not the plain `stratum`) is the only trace of a candidate's
+    sampling stratum this file ever carries — the plain stratum name IS the cheap model's
+    category by value, so writing it verbatim would anchor the labeler exactly like a verdict
+    field would.
+
+    `seed` defaults to `0` (not required, despite the amended Interfaces block showing no
+    default): the still-pinned `tests/test_label_tool.py` calls this function three times without
+    a `seed=` argument at all, and that file cannot be edited for this round (fix-1 Part B
+    judgment call) — a required-with-no-default `seed` would make those pinned calls a `TypeError`
+    with no fix available. `main` below always passes `seed=args.seed` explicitly.
 
     Args:
         path: The candidate JSONL file to write (overwritten).
         candidates: The candidates to write, in order.
+        seed: The sampling run's seed, recorded per row and folded into `stratum_id`.
 
     Returns:
         The number of lines written.
@@ -240,7 +243,8 @@ def write_candidates(path: Path, candidates: Sequence[Candidate]) -> int:
             "sampled": {
                 "alert_id": candidate.alert_id,
                 "received_at": candidate.received_at.isoformat(),
-                "stratum": candidate.stratum,
+                "stratum_id": stratum_id(candidate.stratum, seed),
+                "seed": seed,
             },
         }
         lines.append(json.dumps(row))
@@ -286,9 +290,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         `0` on success (the candidate file was written); `1` via `core.cli.fail(e.code, ...)` on
-        a malformed command line, `fail("config_error", ...)` on a missing database URL, or
-        `fail("database_error", ...)` (exception class name only) on a DB failure — never prints
-        a URL or a raw exception message/traceback.
+        a malformed command line, `fail("config_error", ...)` on a missing database URL or a
+        `Settings()` validation failure, or `fail("database_error", ...)` (exception class name
+        only) on a DB failure — never prints a URL or a raw exception message/traceback.
     """
     parser = Parser(prog="python -m evals.sample")
     parser.add_argument("--database-url", default=None)
@@ -305,7 +309,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     database_url = args.database_url
     if database_url is None:
-        database_url = os.environ.get("DATABASE_URL") or os.environ.get("TEST_DATABASE_URL") or ""
+        # Ruling R14/M8: the DB URL seam is `--database-url` or `Settings().database_url` only —
+        # never a direct `os.environ` read (the prior `DATABASE_URL`-or-`TEST_DATABASE_URL`
+        # fallback could silently pick up an unrelated test database on the author's machine).
+        try:
+            settings = Settings()
+        except ValidationError as e:
+            return fail("config_error", str(e))
+        database_url = settings.database_url.get_secret_value()
     if not database_url:
         return fail("config_error", "no database URL (pass --database-url or set DATABASE_URL)")
 
@@ -327,7 +338,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, SQLAlchemyError) as e:
         return fail("database_error", f"{type(e).__name__}: could not sample alerts")
 
-    write_candidates(args.out, candidates)
+    write_candidates(args.out, candidates, seed=args.seed)
     return 0
 
 

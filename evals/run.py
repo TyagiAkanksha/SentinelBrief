@@ -28,7 +28,8 @@ empty, and never raises a traceback:
     `Settings()` fails validation (e.g. malformed MODEL_PRICES_JSON)          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
     a v2 golden file (`is_v2_golden`) carrying a non-human-labeled row
-        (PRD §13; `load_golden(..., require_human=True)` raises)              config_error
+        (PRD §13; ruling R13 — checked separately, AFTER a clean load, so a
+        malformed row on a v2 path still reports invalid_golden, not this)     config_error
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model or
         --strong-model, unknown --prompt), raised before any case runs
         ("price before spend")                                                config_error
@@ -243,13 +244,17 @@ async def _run_all(
         ):
             return fail("config_error", f"model {strong_model!r} has no entry in MODEL_PRICES_JSON")
 
-        require_human = is_v2_golden(args.golden)
         try:
-            cases = load_golden(args.golden, require_human=require_human)
-        except OSError as e:
+            cases = load_golden(args.golden)
+        except (OSError, ValueError) as e:
             return fail("invalid_golden", str(e))
-        except ValueError as e:
-            return fail("config_error" if require_human else "invalid_golden", str(e))
+
+        # Ruling R13 (review I5): only the "not human-labeled" condition is a config_error for a
+        # v2 golden file — a malformed row is caught above and stays invalid_golden either way.
+        if is_v2_golden(args.golden):
+            for row_number, case in enumerate(cases, start=1):
+                if case.labeled_by != "human":
+                    return fail("config_error", f"row {row_number} is not human-labeled (PRD §13)")
 
         try:
             client: LLMClient = (
