@@ -69,15 +69,17 @@ constructs a v2 label from anything but typed input.
   ```python
   # evals/sample.py — python -m evals.sample --database-url … [--schema …] --n 240 --seed 20260914 --out evals/golden/v2-candidates.jsonl [--since 2026-09-12] [--exclude evals/golden/v2.jsonl]
   STRATA_CATEGORIES = ("scanning", "brute_force", "reconnaissance", "successful_intrusion", "malware_delivery", "persistence_attempt", "other")
-  INJECTION_HINT = re.compile(r"ignore (all |previous |prior )?instructions|system prompt|assistant|as an ai|severity ?[:=]? ?[1-5]|rate (this|it) (as )?(low|benign|1)", re.I)
+  INJECTION_HINT = re.compile(r"ignore (all |previous |prior )?instructions|system prompt|as an ai|severity ?[:=] ?[1-5]|rate (this|it) (as )?(low|benign|1)", re.I)   # ruling R11: no bare `assistant`; `severity` needs `:` or `=` — a hint for the stratum only, never a label
   @dataclass(frozen=True)
   class Candidate: case_id: str; alert_id: str; received_at: datetime; stratum: str; alert: SessionAlert     # stratum = "<cheap category>" | "injection-candidate" | "unverdicted"
   async def sample(session_factory, *, n: int, seed: int, since: datetime | None, exclude_case_ids: frozenset[str]) -> list[Candidate]
       # newest-first query: alerts LEFT JOIN the latest verdict per alert (a subquery on max(created_at)); status in ("triaged", "failed")
       # stratum = "injection-candidate" if INJECTION_HINT matches any event's username/input; else the cheap verdict's category; else "unverdicted"
       # target per stratum = max(5, n // 8) for every category stratum that has members, ALL injection-candidates up to n // 4, the remainder filled round-robin by (sensor, day) so no single day dominates; random.Random(seed) draws within a stratum; deterministic for (seed, DB state)
-  def write_candidates(path: Path, candidates: Sequence[Candidate]) -> int
-      # one JSON object per line: {"case_id", "alert": alert.model_dump(mode="json"), "sampled": {"alert_id", "received_at", "stratum", "seed"}} — NO "label", NO verdict fields, NO model output (hidden by design)
+  def write_candidates(path: Path, candidates: Sequence[Candidate], *, seed: int) -> int   # (ruling R10: the seed is recorded)
+      # one JSON object per line: {"case_id", "alert": alert.model_dump(mode="json"), "sampled": {"alert_id", "received_at", "stratum_id", "seed"}} — NO "label", NO verdict fields, NO model output (hidden by design)
+      # ruling R10: `stratum_id` is OPAQUE — `hashlib.sha256(f"{seed}:{stratum}".encode()).hexdigest()[:8]` — because the plain stratum IS the cheap model's category by value.
+      # `stratum_id(stratum: str, seed: int) -> str` is a pure function in `evals/sample.py`; the `stats` command recovers the mapping by recomputing it for the known strata names. `render_case` renders NOTHING from `sampled`, ever.
   def main(argv: Sequence[str] | None = None) -> int   # exit 0; 1 via core.cli.fail on no URL / DB error (class name only)
 
   # evals/golden/__init__.py
@@ -117,6 +119,24 @@ constructs a v2 label from anything but typed input.
   category names from all three and asserts set-equality, and greps the tie-break sentence's key
   phrase "derived from this host" in the guide and the skill; the prompt's `reconnaissance` line
   already says "host-derived usernames").
+
+## Rulings from the task-01 review (2026-09-16)
+
+- **R10 — verdict blindness is a property of the FILE and the rendering, not only of key names.**
+  `sampled.stratum_id` is the opaque token above; `write_candidates` takes `seed`; `render_case`
+  never prints anything from `sampled`, and `rereview` re-prompts from the alert alone — the
+  first-pass label is never shown or hinted (review C1/C2: the shipped tool printed
+  `stratum=<category>`).
+- **R11 — `INJECTION_HINT` tightened** (bare `assistant` dropped; `severity` needs `:`/`=`); it only
+  shapes the sample, the human decides the tag.
+- **R12 — the Verify block's `grep -c labeled_by … → 0` was unsatisfiable** (annotations, docstrings
+  and the loader's comparison all contain the word); the human-only guarantee is the AST test in
+  `tests/test_golden_v2.py`, strengthened to catch dict literals as well as keyword arguments.
+- **R13 — `evals.run` on a v2 golden:** only the loader's "row N is not human-labeled" `ValueError`
+  maps to `config_error`; any other `ValueError` keeps the existing `invalid_golden` code.
+- **R14 — the label tool imports no DB layer** (it reads files); the `Candidate` dataclass moves to
+  a DB-free `evals/candidates.py` imported by both modules; the sampler's DB URL comes from
+  `--database-url` or `Settings().database_url`, never `os.environ` directly.
 
 ## Interfaces → test table
 
