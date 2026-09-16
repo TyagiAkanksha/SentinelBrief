@@ -40,7 +40,7 @@ replayed runs over v2 with a `FakeLLMClient` are byte-identical in their per-cas
   the OWNER's run against the real APIs — Step 7; the agent records nothing live in CI)
 - Create (test-author): `tests/test_record.py`, `tests/test_replay_strict.py`, `tests/test_eval_determinism.py`
 - Modify: `worker/tools/recorder.py` (`ReplayToolRecorder(fixtures_dir, *, strict: bool = False)`;
-  `class FixtureMissingError(SentinelBriefError)` in `core/errors.py` with `code = "fixture_missing"`
+  `class FixtureMissingError(ConfigError)` in `core/errors.py` with `code = "fixture_missing"` (ruling R24: subclassing `ConfigError` lets `api/errors.py`'s MRO walk resolve it to 500 without any file under `api/` naming it — the M2 invariant "every concrete error has a status" and the task-02 pin "never referenced under api/" both hold)
   — raised only when `strict`), `evals/run.py` (`--replay-strict/--no-replay-strict`, default
   strict when the golden basename starts with `v2`; missing-fixture cases become
   `CaseResult.error = "fixture_missing:<tool>:<key>"` and the run exits 1 after printing the
