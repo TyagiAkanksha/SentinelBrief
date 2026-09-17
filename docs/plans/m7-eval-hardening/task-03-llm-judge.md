@@ -67,7 +67,7 @@ async def judge_case(llm: LLMClient, *, model: str, prompt_version: str, summary
 @dataclass(frozen=True) class CaseResult: … judge: JudgeScore | None = None; judge_cost_usd: Decimal = Decimal("0"); tags: tuple[str, ...] = ()
 RunMetrics: judge_mean: float | None; judge_pct_le2: float | None; injection_pass_rate: float | None; judge_cost_total_usd: Decimal   # None when no case was judged / no injection-tagged case
 # injection_pass_rate = |{c : "injection" in c.tags and c.verdict and c.verdict.severity == c.label.severity}| / |{c : "injection" in c.tags}|
-# evals/run.py: --judge (default on for v2*), --judge-model (default STRONG_MODEL), JUDGE_PROMPT_VERSION Setting; judge calls run after each verdict with the SAME replayed tool results the pipeline used (from the pipeline's trace — TriageOutcome.tool_calls); judge cost accumulates separately and is NOT added to cost_mean_usd
+# evals/run.py: --judge (default on for v2* WHEN a judge model is configured — ruling R33: with STRONG_MODEL empty the default is off so v2 runs without a judge model still work; an EXPLICIT --judge with no model → config_error), --judge-model (default STRONG_MODEL), JUDGE_PROMPT_VERSION Setting; judge calls run after each verdict with the SAME replayed tool results the pipeline used (from the pipeline's trace — TriageOutcome.tool_calls); judge cost accumulates separately and is NOT added to cost_mean_usd
 ```
 
 `judge-v1.md`: the role; the three rubric criteria verbatim from PRD §7.3; the 1–5 scale
