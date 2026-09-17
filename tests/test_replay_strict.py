@@ -164,7 +164,9 @@ def test_fixture_missing_error_is_never_referenced_under_api() -> None:
 async def test_strict_missing_fixture_raises_fixture_missing_error(tmp_path: Path) -> None:
     tool = ExternalStub()
     arguments = {"ip": "203.0.113.10"}
-    recorder = ReplayToolRecorder(tmp_path, strict=True)
+    recorder = ReplayToolRecorder(
+        tmp_path, strict=True, strict_tools=frozenset({ExternalStub.name})
+    )
     ctx = _make_ctx()
 
     with pytest.raises(FixtureMissingError) as exc_info:
@@ -215,7 +217,11 @@ async def test_registry_does_not_swallow_fixture_missing_error(tmp_path: Path) -
     tool = ExternalStub()
     arguments = {"ip": "203.0.113.10"}
     registry = ToolRegistry(
-        [tool], recorder=ReplayToolRecorder(tmp_path, strict=True), max_result_chars=4000
+        [tool],
+        recorder=ReplayToolRecorder(
+            tmp_path, strict=True, strict_tools=frozenset({ExternalStub.name})
+        ),
+        max_result_chars=4000,
     )
     ctx = _make_ctx()
 
