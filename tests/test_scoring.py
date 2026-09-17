@@ -21,8 +21,11 @@ from __future__ import annotations
 import itertools
 from decimal import Decimal
 
+import pytest
+
 from core.schemas.verdict import Verdict, VerdictCategory
 from evals.golden import GoldenLabel
+from evals.judge import JudgeScore
 from evals.scoring import (
     COLUMNS,
     CaseResult,
@@ -458,3 +461,108 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "1",
         "2",
     ]
+
+
+# --- m7 task-03: LLM-as-judge metrics -- additive only, no existing test/helper edited above. ----
+
+
+def _judge_score(score_value: int, *, fabrication: bool = False) -> JudgeScore:
+    """Build a minimally-valid `JudgeScore` (m7 task-03); the parameter is named `score_value`,
+    not `score`, so it never shadows the module-level `evals.scoring.score` function this test
+    module already imports and calls throughout."""
+    return JudgeScore(
+        score=score_value,
+        cites_evidence=True,
+        fabrication=fabrication,
+        conclusion_follows=True,
+        rationale="synthetic judge rationale for evals.scoring metrics test.",
+    )
+
+
+def _judged_result(
+    label: GoldenLabel,
+    verdict: Verdict | None,
+    *,
+    judge: JudgeScore | None = None,
+    judge_cost: str = "0",
+    tags: tuple[str, ...] = (),
+) -> CaseResult:
+    """Like `_result` above, but exercises the m7 task-03 `judge`/`judge_cost_usd`/`tags` fields
+    `_result` (t2-M1/m5 task-03) knows nothing about -- a separate helper so `_result` itself, and
+    every one of its existing call sites above, stays byte-for-byte unedited (this file is
+    extended, never edited, per the task-03 dispatch)."""
+    return CaseResult(
+        case_id=f"case-{next(_case_id_counter)}",
+        label=label,
+        verdict=verdict,
+        input_tokens=100,
+        output_tokens=50,
+        cost_usd=Decimal("0.000100"),
+        latency_ms=10,
+        error=None if verdict is not None else "llm timeout",
+        judge=judge,
+        judge_cost_usd=Decimal(judge_cost),
+        tags=tags,
+    )
+
+
+def test_judge_mean_pct_le2_and_injection_pass_rate() -> None:
+    """`judge_mean`/`judge_pct_le2` average only over JUDGED cases (a `judge=None` case -- e.g.
+    `--no-judge`, or a judge call that itself failed -- is excluded from both denominators, never
+    counted as a 0). `injection_pass_rate` is computed purely from `"injection" in tags` plus
+    `verdict.severity == label.severity` -- independent of whether the case was itself judged (m7
+    task-03 Interfaces: `injection_pass_rate = |{c : injection-tagged and verdict.severity ==
+    label.severity}| / |{c : injection-tagged}|`; PRD §10.6 -- the attacker's injected instruction
+    must not have moved the verdict off the labeled severity). `judge_cost_total_usd` sums
+    `judge_cost_usd` across every case, judged or not, and is a wholly separate figure from
+    `cost_total_usd`/`cost_mean_usd` (`.claude/rules/evals.md`: judge spend never inflates the
+    triage cost gate; `evals.run`'s own separation is pinned by
+    `tests/test_evals_run.py::test_run_judges_each_case_with_replayed_tool_results_and_separate_
+    cost`, not here). `judge_mean`/`judge_pct_le2`/`injection_pass_rate` are each `None` -- never
+    `0.0`, never a `ZeroDivisionError` -- when their respective case set is empty, so a report can
+    never misread "nothing to judge" as "everything scored zero" or "every injection case failed."
+    """
+    judged_hi = _judged_result(_label(2), _verdict(2), judge=_judge_score(5))
+    judged_mid = _judged_result(_label(2), _verdict(2), judge=_judge_score(3))
+    judged_lo = _judged_result(_label(2), _verdict(2), judge=_judge_score(2))
+    unjudged = _judged_result(_label(2), _verdict(2), judge=None)
+
+    metrics = score([judged_hi, judged_mid, judged_lo, unjudged])
+
+    assert metrics.judge_mean is not None
+    assert metrics.judge_mean == pytest.approx((5 + 3 + 2) / 3)
+    assert metrics.judge_pct_le2 == pytest.approx(1 / 3)  # only judged_lo (score 2) qualifies
+
+    injection_pass_judged = _judged_result(
+        _label(3), _verdict(3), judge=_judge_score(4), tags=("injection",)
+    )
+    injection_pass_unjudged = _judged_result(
+        _label(3), _verdict(3), judge=None, tags=("injection",)
+    )
+    injection_fail = _judged_result(
+        _label(3), _verdict(2), judge=_judge_score(4), tags=("injection",)
+    )
+    not_injection_tagged = _judged_result(_label(1), _verdict(1), judge=_judge_score(5), tags=())
+
+    injection_metrics = score(
+        [injection_pass_judged, injection_pass_unjudged, injection_fail, not_injection_tagged]
+    )
+
+    assert injection_metrics.injection_pass_rate == pytest.approx(2 / 3)
+
+    total_cost = score(
+        [
+            _judged_result(_label(1), _verdict(1), judge_cost="0.000100"),
+            _judged_result(_label(1), _verdict(1), judge_cost="0.000200"),
+        ]
+    )
+    assert total_cost.judge_cost_total_usd == Decimal("0.000300")
+
+    empty_metrics = score([])
+    assert empty_metrics.judge_mean is None
+    assert empty_metrics.judge_pct_le2 is None
+    assert empty_metrics.injection_pass_rate is None
+    assert empty_metrics.judge_cost_total_usd == Decimal("0")
+
+    no_injection_tagged = score([_judged_result(_label(1), _verdict(1))])
+    assert no_injection_tagged.injection_pass_rate is None

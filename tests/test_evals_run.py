@@ -943,3 +943,174 @@ def test_run_v2_malformed_row_reports_invalid_golden(
     assert lines[0].startswith("error: invalid_golden:")
     assert "Traceback" not in captured.err
     assert list(output_dir.glob("*.json")) == []
+
+
+# --- m7 task-03: --judge/--no-judge, per-case payload, judge cost separate from triage cost -------
+
+
+def test_run_judges_each_case_with_replayed_tool_results_and_separate_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--judge` calls `evals.judge.judge_case` once per case, after that case's own verdict, over
+    the SAME tool results the pipeline's own trace recorded (`TriageOutcome.tool_calls`) -- never
+    a fresh/live tool call. Proven here by scripting case A's pipeline call to use the real
+    `get_session_commands` tool over `alert4.json` (whose commands include `"cat /etc/passwd"`, a
+    string that can only reach the judge's own LLM call if THAT case's recorded tool result was
+    threaded through, not re-derived or shared across cases): it must appear in a judge call's own
+    messages (found by `response_model is JudgeScore`, not by call index, so this test does not
+    assume whether judging runs interleaved per case or in a second pass over the whole run).
+
+    Judge cost accumulates separately (`RunMetrics.judge_cost_total_usd`) and must never move
+    `cost_mean_usd`/`cost_total_usd` (PRD §7.3 / `.claude/rules/evals.md`: judge spend never
+    inflates the triage cost gate) -- proven with exact `Decimal` equality: case A's own triage
+    cost is two `FakeLLMClient` calls (the tool turn + the final verdict) and case B's is one, so
+    `cost_total_usd` is exactly `0.000300` (never `0.000500`, which is what it would be if either
+    case's judge call were folded in) and `cost_mean_usd` is exactly `0.000150`.
+
+    `--no-judge` must call the judge for NO case at all -- `fake_no_judge` below queues no judge
+    reply, so `FakeLLMClient` raises `AssertionError: no responses left` if the judge is still
+    called despite the flag -- and every case's `judge`/`judge_cost_usd` in the written JSON, and
+    `RunMetrics.judge_mean`/`judge_pct_le2`/`injection_pass_rate`, must read back `None`.
+
+    `STRONG_MODEL`/its `MODEL_PRICES_JSON` entry are set only because `--judge-model` defaults to
+    `STRONG_MODEL` (Interfaces); the two cases' verdicts stay at severity 2 / confidence 0.8 --
+    below both `ESCALATE_SEVERITY_GTE` (default 4) and above `ESCALATE_CONFIDENCE_LT` (default
+    0.6) -- so two-tier routing itself never fires and never adds a third LLM call per case.
+    """
+    from tests.fakes import ScriptedToolCall
+
+    monkeypatch.setenv("STRONG_MODEL", "strong-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}, '
+        '"strong-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+
+    golden_path = _write_golden(
+        tmp_path / "golden.jsonl", [_golden_case("alert4.json"), _golden_case("alert1.json")]
+    )
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+
+    judge_score_a = json.dumps(
+        {
+            "score": 4,
+            "cites_evidence": True,
+            "fabrication": False,
+            "conclusion_follows": True,
+            "rationale": "cites the observed commands from the tool result.",
+        }
+    )
+    judge_score_b = json.dumps(
+        {
+            "score": 2,
+            "cites_evidence": False,
+            "fabrication": False,
+            "conclusion_follows": False,
+            "rationale": "conclusion is thin, only restates the summary.",
+        }
+    )
+    fake = FakeLLMClient(
+        [
+            [
+                ScriptedToolCall(
+                    name="get_session_commands", arguments={"session_id": "4d5e6f708192"}
+                )
+            ],
+            VALID_VERDICT_JSON,  # case A's cheap verdict, after the tool result is fed back
+            judge_score_a,  # case A's judge score
+            VALID_VERDICT_JSON,  # case B's cheap verdict (no tool call)
+            judge_score_b,  # case B's judge score
+        ]
+    )
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    assert rc == 0
+    assert len(fake.calls) == 5
+
+    judge_calls = [c for c in fake.calls if c.response_model.__name__ == "JudgeScore"]
+    assert len(judge_calls) == 2
+    assert any(
+        "cat /etc/passwd" in str(message.get("content", ""))
+        for call in judge_calls
+        for message in call.messages
+    )
+
+    written = list(output_dir.glob("*-triage-v1.json"))
+    assert len(written) == 1
+    payload = json.loads(written[0].read_text())
+    cases = payload["cases"]
+    assert len(cases) == 2
+    for case_payload in cases:
+        assert case_payload["judge"] is not None
+        assert case_payload["judge"]["score"] in (2, 4)
+        assert Decimal(case_payload["judge_cost_usd"]) > Decimal("0")
+
+    metrics = payload["metrics"]
+    assert metrics["judge_mean"] == pytest.approx(3.0)  # (4 + 2) / 2
+    assert metrics["judge_pct_le2"] == pytest.approx(0.5)  # only the score-2 case qualifies
+    assert metrics["injection_pass_rate"] is None  # neither case is tagged "injection"
+    assert Decimal(metrics["cost_mean_usd"]) == Decimal("0.000150")  # triage cost only
+    assert Decimal(metrics["cost_total_usd"]) == Decimal("0.000300")  # triage cost only
+    assert Decimal(metrics["judge_cost_total_usd"]) == Decimal("0.000200")  # 2 judge calls
+
+    # --- --no-judge: the judge is never called; every judge field reads back None/zero -----------
+
+    output_dir_no_judge = tmp_path / "results-no-judge"
+    output_dir_no_judge.mkdir()
+    fake_no_judge = FakeLLMClient(
+        [
+            [
+                ScriptedToolCall(
+                    name="get_session_commands", arguments={"session_id": "4d5e6f708192"}
+                )
+            ],
+            VALID_VERDICT_JSON,
+            VALID_VERDICT_JSON,
+        ]
+    )
+
+    rc_no_judge = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--no-judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir_no_judge),
+        ],
+        llm=fake_no_judge,
+    )
+
+    assert rc_no_judge == 0
+    assert len(fake_no_judge.calls) == 3  # the tool turn + one verdict call per case, no judging
+
+    written_no_judge = list(output_dir_no_judge.glob("*-triage-v1.json"))
+    assert len(written_no_judge) == 1
+    payload_no_judge = json.loads(written_no_judge[0].read_text())
+    for case_payload in payload_no_judge["cases"]:
+        assert case_payload["judge"] is None
+        assert Decimal(case_payload["judge_cost_usd"]) == Decimal("0")
+
+    metrics_no_judge = payload_no_judge["metrics"]
+    assert metrics_no_judge["judge_mean"] is None
+    assert metrics_no_judge["judge_pct_le2"] is None
+    assert metrics_no_judge["injection_pass_rate"] is None
+    assert Decimal(metrics_no_judge["judge_cost_total_usd"]) == Decimal("0")
