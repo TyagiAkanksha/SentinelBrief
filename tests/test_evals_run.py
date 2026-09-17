@@ -22,6 +22,13 @@ clean `config_error`, not escape `TriagePipeline.__init__`'s bare `ValueError` a
 m7 task-04 (ruling R35) adds `--database-url`/`--schema` (the `eval_runs` row writer) and ruling
 R42's judge-`LLMCallError` regression pin, appended at the end -- additive only, no existing test/
 helper above is touched.
+
+m7 task-05 (ruling R44) adds `--gate`/`--baseline`/`--write-baseline`, appended at the end, and
+makes the ONE pre-approved edit to a pre-existing (task-04) pin:
+`test_main_writes_eval_runs_row_when_database_url_given`'s `model_config` exact-equality
+assertion gains the two new keys `run_model_config` (ruling R43) adds -- `strong_model` and
+`prompt_version` -- with the values that run produces (`""` and `"triage-v1"`); no other
+pre-existing test/helper in this file is touched.
 """
 
 from __future__ import annotations
@@ -42,8 +49,9 @@ from sqlalchemy import select
 from core.errors import LLMCallError
 from core.schemas.alert import SessionAlert
 from evals.golden import GoldenCase, GoldenLabel
+from evals.publish import metrics_payload
 from evals.run import main, run_golden
-from evals.scoring import COLUMNS, CaseResult, RunMetrics
+from evals.scoring import COLUMNS, PR, CaseResult, RunMetrics
 from tests.fakes import FakeLLMClient
 from tests.helpers import VALID4, VALID4_STRONG
 from worker.triage import TriagePipeline
@@ -1571,6 +1579,8 @@ def test_main_writes_eval_runs_row_when_database_url_given(
         "judge_model": "",
         "replay_strict": False,
         "judge": False,
+        "strong_model": "",
+        "prompt_version": "triage-v1",
     }
     assert rows[0].metrics is not None
     assert rows[0].metrics["cost_total_usd"] == "0.000100"
@@ -1612,3 +1622,282 @@ def test_main_without_database_url_touches_no_db(
     )
 
     assert rc == 0
+
+
+# --- m7 task-05: --gate / --baseline / --write-baseline ------------------------------------------
+# (ruling R44's edit is above, in the task-04 pinned test) ----------------------------------------
+
+
+_GATE_PLACEHOLDER_PR = PR(precision=0.0, recall=0.0, support=0)
+
+
+def _gate_baseline_metrics(
+    *, severity_exact: float, critical_recall: float, cost_mean_usd: Decimal
+) -> RunMetrics:
+    """A minimal `RunMetrics` for a hand-written baseline file -- only the three PRD §7.4
+    gate-relevant fields are meaningful; everything else is a fixed placeholder
+    `evals.gate.evaluate_gate` never reads."""
+    return RunMetrics(
+        n_cases=2,
+        n_failed=0,
+        severity_exact=severity_exact,
+        severity_within_one=severity_exact,
+        category_accuracy=1.0,
+        escalate_precision=1.0,
+        escalate_recall=1.0,
+        critical_recall=critical_recall,
+        escalation_rate=0.0,
+        cost_mean_usd=cost_mean_usd,
+        cost_p95_usd=cost_mean_usd,
+        cost_total_usd=cost_mean_usd * 2,
+        latency_p50_ms=10,
+        latency_p95_ms=10,
+        per_severity=dict.fromkeys(range(1, 6), _GATE_PLACEHOLDER_PR),
+        confusion=tuple(tuple(0 for _ in range(6)) for _ in range(5)),
+        category_confusion={},
+        sev_macro_f1=1.0,
+    )
+
+
+def _write_baseline_file(
+    path: Path,
+    *,
+    metrics: RunMetrics,
+    model_config: dict[str, Any],
+    prompt_version: str = "triage-v1",
+) -> None:
+    """Hand-writes a baseline JSON in the shape ruling R43 pins (`Baseline` serialized as
+    `{"recorded_at", "git_sha", "prompt_version", "model_config", "metrics":
+    metrics_payload(...)}`) directly -- never through `evals.gate.write_baseline` (which does not
+    exist yet) -- so these tests only exercise `evals.run --gate`'s own wiring."""
+    path.write_text(
+        json.dumps(
+            {
+                "recorded_at": "2026-09-01T00:00:00+00:00",
+                "git_sha": "baseline0",
+                "prompt_version": prompt_version,
+                "model_config": model_config,
+                "metrics": metrics_payload(metrics),
+            }
+        )
+    )
+
+
+def test_gate_flag_without_baseline_exits_1_config_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ruling (Step 6 blocked on the owner's v2 labels): `evals/baseline.json` ships ABSENT until
+    a real v2 run writes one -- the default nightly-day state until then. `evals.run --gate`
+    against a missing baseline must exit 1 with a `config_error` naming the missing path and
+    pointing at `--write-baseline`, never a crash, a silent pass, or an invented baseline.
+
+    `evals.run` has no `--gate`/`--baseline` flags yet, so this fails RED today with a `usage`
+    error from argparse's "unrecognized arguments", not the `config_error` asserted here.
+    """
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    baseline_path = tmp_path / "no-such-baseline.json"
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--gate",
+            "--baseline",
+            str(baseline_path),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert str(baseline_path) in lines[0]
+    assert "--write-baseline" in lines[0]
+
+
+def test_gate_flag_exits_1_and_prints_conditions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`evals.run --gate` evaluates the active prompt's row against a committed baseline
+    (`evals.gate.evaluate_gate`) and exits 1 naming every tripped condition when one trips
+    (Interfaces: prints "GATE: PASS" or "GATE: FAIL <cond>=<details>" after the table).
+
+    The baseline's `model_config["prompt_version"]` is deliberately `"other-prompt-version"`,
+    never equal to this run's own `"triage-v1"` -- the cost condition only applies "while the
+    run's model_config equals the baseline's" (PRD §7.4), so it can never trip here regardless of
+    cost values, isolating this test to `severity_exact_drop` alone: case A's verdict matches its
+    critical (severity 4) label exactly, so `critical_recall` is 1.0 (at/above the 0.90 default,
+    never gated against the baseline at all), while case B's verdict (severity 5) mismatches its
+    severity-2 label, so the run's `severity_exact` is 0.5 against a baseline of 1.0 -- a 50-point
+    drop, far past the default 3-point allowance.
+
+    `evals.run` has no `--gate`/`--baseline` flags yet, so this fails RED today with a `usage`
+    error from argparse's "unrecognized arguments".
+    """
+    case_a = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=4, category="brute_force", escalate=True),
+        labeler_note="critical-severity case for the --gate CLI conditions test.",
+    )
+    case_b = GoldenCase(
+        alert=_alert("alert2.json"),
+        label=GoldenLabel(severity=2, category="brute_force", escalate=False),
+        labeler_note="non-critical case, deliberately mismatched by the scripted verdict below.",
+    )
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [case_a, case_b])
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    baseline_path = tmp_path / "baseline.json"
+
+    verdict_a = json.dumps(
+        {
+            "severity": 4,
+            "category": "brute_force",
+            "confidence": 0.8,
+            "reasoning": "matches the golden label exactly for the --gate CLI conditions test.",
+            "recommended_action": "escalate and rotate credentials.",
+            "escalate": True,
+        }
+    )
+    verdict_b = json.dumps(
+        {
+            "severity": 5,
+            "category": "brute_force",
+            "confidence": 0.8,
+            "reasoning": "deliberately mismatched severity for the --gate CLI conditions test.",
+            "recommended_action": "escalate immediately.",
+            "escalate": True,
+        }
+    )
+    fake = FakeLLMClient([verdict_a, verdict_b])
+
+    _write_baseline_file(
+        baseline_path,
+        metrics=_gate_baseline_metrics(
+            severity_exact=1.0, critical_recall=1.0, cost_mean_usd=Decimal("0")
+        ),
+        model_config={
+            "model": "fake-model",
+            "judge_model": "",
+            "replay_strict": False,
+            "judge": False,
+            "strong_model": "",
+            "prompt_version": "other-prompt-version",  # deliberately != this run's own
+        },
+        prompt_version="triage-v1",
+    )
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--gate",
+            "--baseline",
+            str(baseline_path),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.err == ""
+    assert "| " + " | ".join(COLUMNS) + " |" in captured.out  # the table still prints
+    assert "GATE: FAIL" in captured.out
+    assert "severity_exact_drop" in captured.out
+
+
+def test_write_baseline_refuses_existing_and_non_v2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`evals.run --write-baseline` refuses in two situations (Interfaces), both `config_error`,
+    neither ever writing/modifying the target file: a NON-v2 golden file (a baseline may only be
+    recorded from a real v2 run, PRD §7.4/§13), and an EXISTING baseline file without
+    `--force-baseline` (a baseline is committed by the controller once, never silently clobbered
+    by a routine run).
+
+    `evals.run` has no `--write-baseline`/`--baseline` flags yet, so this fails RED today with a
+    `usage` error from argparse's "unrecognized arguments".
+    """
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+
+    # --- refusal 1: a v1 (non-v2) golden file --------------------------------------------------
+    v1_golden = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    v1_baseline_path = tmp_path / "baseline-v1-attempt.json"
+    fake_v1 = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc_v1 = main(
+        [
+            "--golden",
+            str(v1_golden),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--write-baseline",
+            "--baseline",
+            str(v1_baseline_path),
+        ],
+        llm=fake_v1,
+    )
+
+    captured_v1 = capsys.readouterr()
+    assert rc_v1 == 1
+    assert captured_v1.err.startswith("error: config_error:")
+    assert not v1_baseline_path.exists()
+
+    # --- refusal 2: an existing baseline file, no --force-baseline -----------------------------
+    v2_case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=2, category="brute_force", escalate=False),
+        labeler_note="human-labeled v2 case for the --write-baseline refusal test.",
+        labeled_by="human",
+        labeled_at=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+    v2_golden = _write_golden(tmp_path / "v2.jsonl", [v2_case])
+    existing_baseline_path = tmp_path / "baseline-exists.json"
+    existing_baseline_marker = '{"marker": "pre-existing baseline, must not change"}'
+    existing_baseline_path.write_text(existing_baseline_marker)
+    fake_v2 = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc_v2 = main(
+        [
+            "--golden",
+            str(v2_golden),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--write-baseline",
+            "--baseline",
+            str(existing_baseline_path),
+        ],
+        llm=fake_v2,
+    )
+
+    captured_v2 = capsys.readouterr()
+    assert rc_v2 == 1
+    assert captured_v2.err.startswith("error: config_error:")
+    assert existing_baseline_path.read_text() == existing_baseline_marker

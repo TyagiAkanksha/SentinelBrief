@@ -125,3 +125,25 @@ def test_llm_timeout_s_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # R17: the .env.example default, literal on purpose
     assert Settings().llm_timeout_s == 60.0
+
+
+# --- m7 task-05: the PRD §7.4 eval gate's three thresholds, parameterized (ruling R17) ------------
+
+
+def test_eval_gate_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD §7.4's three gate thresholds are `Settings` fields with the PRD-literal defaults
+    (`EVAL_GATE_SEVERITY_DROP_POINTS=3`, `EVAL_GATE_CRITICAL_RECALL_MIN=0.90`,
+    `EVAL_GATE_COST_RISE_FRACTION=0.50`) -- never hardcoded in `evals/gate.py`
+    (CONVENTIONS.md §7). At RED, `Settings` has none of these three fields yet -- every attribute
+    access below fails with `AttributeError`.
+    """
+    monkeypatch.delenv("EVAL_GATE_SEVERITY_DROP_POINTS", raising=False)
+    monkeypatch.delenv("EVAL_GATE_CRITICAL_RECALL_MIN", raising=False)
+    monkeypatch.delenv("EVAL_GATE_COST_RISE_FRACTION", raising=False)
+
+    settings = Settings()
+
+    # R17: the .env.example defaults, literal on purpose
+    assert settings.eval_gate_severity_drop_points == 3
+    assert settings.eval_gate_critical_recall_min == pytest.approx(0.90)
+    assert settings.eval_gate_cost_rise_fraction == pytest.approx(0.50)
