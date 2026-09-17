@@ -64,16 +64,21 @@ miss, never a raise), strict or not, so a v2 run's exit code can never depend on
 model happened to pick. `evals.record` skips any fixture that already exists, so it is safe to
 re-run after adding rows. `--dry-run` prints the plan (`<tool> <ip>` per line) and calls nothing.
 
-An `unavailable(reason)` result whose `reason` means "the OWNER's environment couldn't answer"
-(`worker.tools.TRANSIENT_REASONS` — no API key, no `.mmdb`, a quota hit, a network blip, ...) is
-never persisted as a fixture: `evals.record` removes the file and reports the call as failed
-instead, so a partial run against an unconfigured environment can never poison a committed
-fixture (ruling R25). A DETERMINISTIC `unavailable(reason)` (e.g. `invalid_arguments`, produced by
-the tool's own logic rather than the environment) is persisted like a real answer, because it
-reproduces identically forever. `ReplayToolRecorder(strict=True)` additionally refuses to SERVE a
-fixture recorded with a transient reason, even one hand-written to disk — never assume good faith
-of a `tests/fixtures/tools/*.json` file that reads `{"unavailable": true, "reason": "no_api_key"}`
-et al.
+Persistence is a fail-closed ALLOW-list (ruling R30, re-review N2): an `unavailable(reason)`
+result is persisted as a fixture ONLY when `reason` is in
+`worker.tools.DETERMINISTIC_REASONS = {"invalid_arguments", "unknown_session", "unknown_asset"}`
+— the tokens a tool's own argument/lookup logic can produce, which reproduce identically forever.
+Every OTHER reason is transient and is never persisted: a fixed environment-failure token (no API
+key, no `.mmdb`, a quota hit, a network blip, ...), a DYNAMICALLY formatted one
+(`IpReputationTool`'s `f"http_{status}"` for an HTTP error it doesn't special-case — no fixed
+deny-list could ever enumerate every vendor status code), or anything nobody has named yet.
+`evals.record` removes the file for a transient result and reports the call as failed instead, so
+a partial run against an unconfigured environment, or one that hits a vendor 5xx partway through,
+can never poison a committed fixture. `ReplayToolRecorder(strict=True)` additionally refuses to
+SERVE a fixture whose recorded reason is outside the allow-list, even one hand-written to disk —
+never assume good faith of a `tests/fixtures/tools/*.json` file that reads
+`{"unavailable": true, "reason": "no_api_key"}`, `"http_503"`, or any reason other than the three
+allow-listed ones.
 
 For a real v2 run against the live APIs (the OWNER's step, never CI's): count the calls first with
 `--dry-run` (MaxMind is free; AbuseIPDB's free tier has a daily quota — one call per distinct

@@ -12,17 +12,24 @@ fails the eval loudly (`FixtureMissingError`) instead of silently scoring degrad
 a mismatched/unreadable fixture is still never raised even in strict mode — only a genuinely
 *missing* file, or a *present but poisoned* one (ruling R25, below), is.
 
-Two module-level constants, added at m7 task-02 fix-1 and shared with `evals/record.py` (which
-imports them from here — `evals` may import `worker`, never the reverse, CONVENTIONS.md §2):
+Two module-level constants, added at m7 task-02 fix-1/fix-2 and shared with `evals/record.py`
+(which imports them from here — `evals` may import `worker`, never the reverse, CONVENTIONS.md
+§2):
 
-- `TRANSIENT_REASONS` (ruling R25, review C1): the set of `unavailable(reason)` tokens that mean
-  "the OWNER's environment couldn't answer this" (no API key, no `.mmdb`, a quota hit, a network
-  blip, ...) rather than "the tool's own logic produced this deterministically" (e.g.
-  `invalid_arguments`). `evals.record.record` never persists a fixture whose reason is transient
-  — it removes the file `LiveToolRecorder` already wrote and reports the call as `failed` instead
-  — and `ReplayToolRecorder(strict=True)` refuses to SERVE a fixture recorded with a transient
-  reason even if one was hand-written to disk (`FixtureMissingError` with `":poisoned"` appended
-  to the key), so a poisoned file committed by hand can never become tool evidence.
+- `DETERMINISTIC_REASONS` (ruling R30, re-review N2 — replaces the fix-1 `TRANSIENT_REASONS`
+  DENY-list): a fail-closed ALLOW-list of the only `unavailable(reason)` tokens a tool's own
+  argument/lookup logic can produce (`invalid_arguments`, `unknown_session`, `unknown_asset`) —
+  the only reasons that reproduce identically on every future run. Every OTHER reason — a fixed
+  environment-failure token (`no_api_key`, `quota_exceeded`, ...), a DYNAMICALLY formatted one
+  (`IpReputationTool`'s `f"http_{status}"` for an HTTP error it doesn't special-case — the fix-1
+  deny-list could never enumerate this, since it is not a fixed string at all), or anything nobody
+  has named yet — is transient. `evals.record.record` never persists a fixture whose reason is
+  outside this allow-list: it removes the file `LiveToolRecorder` already wrote and reports the
+  call as `failed` instead — and `ReplayToolRecorder(strict=True)` refuses to SERVE a fixture
+  recorded with a reason outside the allow-list even if one was hand-written to disk
+  (`FixtureMissingError` with `":poisoned"` appended to the key), so a poisoned file committed by
+  hand (or minted by a fixed OR dynamic transient reason before this ruling existed) can never
+  become tool evidence.
 - `STRICT_TOOL_NAMES` (ruling R26, review I1): the default `strict_tools` — the two `{"ip"}`
   tools a v2 case's `src_ip` lets `evals.record` enumerate and pre-mint every fixture for
   (`get_ip_geo_asn`, `lookup_ip_reputation`). `get_alert_history` is also `external = True` but
@@ -48,24 +55,8 @@ logger = logging.getLogger(__name__)
 
 FIXTURE_KEY_CHARS = 16
 
-TRANSIENT_REASONS: frozenset[str] = frozenset(
-    {
-        "no_api_key",
-        "no_database",
-        "database_error",
-        "geoip_db_not_configured",
-        "geoip_db_error",
-        "quota_exceeded",
-        "network_error",
-        "malformed_response",
-        "unauthorized",
-        "assets_file_missing",
-        "assets_file_invalid",
-        "fixture_missing",
-        "fixture_unreadable",
-        "fixture_mismatch",
-        "unknown_tool",
-    }
+DETERMINISTIC_REASONS: frozenset[str] = frozenset(
+    {"invalid_arguments", "unknown_session", "unknown_asset"}
 )
 
 STRICT_TOOL_NAMES: frozenset[str] = frozenset({"get_ip_geo_asn", "lookup_ip_reputation"})
@@ -188,8 +179,9 @@ class ReplayToolRecorder:
         Never calls `tool.run` for an external tool — that is the whole point (PRD §7.2,
         CLAUDE.md "never live APIs"). A mismatched/unreadable/wrong-shaped fixture is always
         reported via `unavailable(...)`, never raised. A *missing* fixture, or a *present* one
-        whose recorded result is itself `unavailable(reason)` with `reason` in
-        `TRANSIENT_REASONS` (a poisoned fixture, ruling R25), is reported the same way UNLESS
+        whose recorded result is itself `unavailable(reason)` with `reason` NOT in
+        `DETERMINISTIC_REASONS` (a poisoned fixture, ruling R30 — fail-closed: any reason outside
+        the allow-list is poison, fixed or dynamic, known or not), is reported the same way UNLESS
         `tool.name` is in this recorder's `strict_tools` AND `strict` is `True`, in which case it
         raises `FixtureMissingError(f"{tool.name}:{key}")` (missing) or
         `FixtureMissingError(f"{tool.name}:{key}:poisoned")` (present but poisoned) instead (m7
@@ -200,7 +192,7 @@ class ReplayToolRecorder:
         Raises:
             FixtureMissingError: `strict` is `True`, `tool.name` is in `strict_tools`, and
                 `tool`/`arguments` has no fixture, or its fixture's recorded result is
-                `unavailable(reason)` with a transient `reason`.
+                `unavailable(reason)` with `reason` outside `DETERMINISTIC_REASONS`.
         """
         if not tool.external:
             return await tool.run(arguments, ctx)
@@ -234,7 +226,7 @@ class ReplayToolRecorder:
         if (
             strict_here
             and result.get("unavailable")
-            and str(result.get("reason", "")) in TRANSIENT_REASONS
+            and str(result.get("reason", "")) not in DETERMINISTIC_REASONS
         ):
             raise FixtureMissingError(f"{tool.name}:{path.stem}:poisoned")
 

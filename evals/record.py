@@ -14,13 +14,19 @@ this module cannot enumerate every value the model might ask for, so it is never
 always replays leniently in `evals.run` regardless of `--replay-strict` (ruling R26, m7 task-02
 fix-1; `worker.tools.STRICT_TOOL_NAMES`).
 
-Idempotent: an existing fixture is never re-recorded. A transient `unavailable(reason)` result —
-`reason` in `worker.tools.TRANSIENT_REASONS`, meaning the OWNER's environment couldn't answer
-(no API key, no `.mmdb`, a quota hit, ...) rather than the tool's own deterministic logic — is
-never persisted: the fixture `LiveToolRecorder` already wrote for it is removed and the call is
-reported under `failed` instead (ruling R25, review C1), so a partial Step-6 run against an
-unconfigured environment can never silently poison a committed fixture. `--dry-run` prints the
-plan and calls nothing. `--only <tool>` restricts recording to one tool name.
+Idempotent: an existing fixture is never re-recorded. Persistence is fail-closed (ruling R30,
+re-review N2): only an `unavailable(reason)` result whose `reason` is in
+`worker.tools.DETERMINISTIC_REASONS` — the tokens a tool's own argument/lookup logic can produce
+(`invalid_arguments`, `unknown_session`, `unknown_asset`), which reproduce identically forever —
+is ever persisted. Every OTHER reason is transient: a fixed environment-failure token
+(`no_api_key`, `quota_exceeded`, ...), a DYNAMICALLY formatted one (`IpReputationTool`'s
+`f"http_{status}"` for an HTTP error it doesn't special-case — no fixed deny-list could ever
+enumerate this), or anything nobody has named yet. A transient result's fixture — the file
+`LiveToolRecorder` already wrote, since it does not know the recording is transient — is removed
+and the call is reported under `failed` instead, so a partial Step-6 run against an unconfigured
+environment, or one that hits a vendor 5xx partway through, can never silently poison a committed
+fixture. `--dry-run` prints the plan and calls nothing. `--only <tool>` restricts recording to one
+tool name.
 
 This module is the OWNER's tool, run once against the real APIs (Step 6, m7 task-02's brief) —
 nothing here is exercised against a live network in CI; `tests/test_record.py`/
@@ -49,7 +55,7 @@ from core.config import Settings
 from core.schemas.alert import CowrieEvent, SessionAlert
 from evals.golden import GoldenCase, load_golden
 from worker.tools import (
-    TRANSIENT_REASONS,
+    DETERMINISTIC_REASONS,
     LiveToolRecorder,
     ToolContext,
     ToolRegistry,
@@ -149,15 +155,17 @@ async def record(
     stable 3-tuple every caller already destructures): a raising tool's exception CLASS name
     (`"RuntimeError"`, parsed from the registry's `"<ExceptionClass>: tool raised"` shape — the
     raised message itself never reaches the report or a fixture file, PRD §10.6), or a transient
-    `unavailable(reason)` result's own `reason` token verbatim (`"no_api_key"`,
-    `"quota_exceeded"`, ... — `worker.tools.TRANSIENT_REASONS`). Neither ever leaves a fixture
-    behind: a raising tool never wrote one (`LiveToolRecorder.execute` calls `write_fixture` only
-    after `tool.run` returns), and a transient `unavailable` result's file — which
-    `LiveToolRecorder` writes unconditionally, since it does not know the recording is transient —
-    is unlinked before being reported (ruling R25, review C1). A DETERMINISTIC `unavailable`
-    result (e.g. `invalid_arguments`, not in `TRANSIENT_REASONS`) is the opposite: it is persisted
-    like a real answer, because the tool's own logic — not the owner's environment — produced it
-    and it reproduces identically on every future run.
+    `unavailable(reason)` result's own `reason` token verbatim (`"no_api_key"`, `"http_503"`,
+    ... — anything NOT in `worker.tools.DETERMINISTIC_REASONS`, ruling R30's fail-closed
+    ALLOW-list). Neither ever leaves a fixture behind: a raising tool never wrote one
+    (`LiveToolRecorder.execute` calls `write_fixture` only after `tool.run` returns), and a
+    transient `unavailable` result's file — which `LiveToolRecorder` writes unconditionally, since
+    it does not know the recording is transient — is unlinked before being reported (ruling R25,
+    tightened to fail-closed by R30, review C1/N2). A DETERMINISTIC `unavailable` result (`reason`
+    IN `DETERMINISTIC_REASONS`: `invalid_arguments`, `unknown_session`, `unknown_asset`) is the
+    opposite: it is persisted like a real answer, because the tool's own logic — not the owner's
+    environment, and not an open-ended vendor status code — produced it and it reproduces
+    identically on every future run.
 
     Args:
         cases: The golden-set cases to record fixtures for.
@@ -190,12 +198,15 @@ async def record(
         execution = await registry.execute(tool_name, arguments, ctx)
         if execution.result.get("unavailable"):
             reason = str(execution.result.get("reason", ""))
-            if reason in TRANSIENT_REASONS or ":" in reason:
-                # A raising tool's own backstop reason ("<ExceptionClass>: tool raised", detected
-                # by its colon — never itself a member of TRANSIENT_REASONS) never wrote a file;
-                # a transient `unavailable` result did (LiveToolRecorder writes unconditionally,
-                # ruling R25) — either way this call never reproduces reliably, so remove whatever
-                # is there and report it as a failure, never a fixture.
+            if reason not in DETERMINISTIC_REASONS:
+                # Fail-closed (ruling R30): only a tool's own argument/lookup logic — a reason IN
+                # DETERMINISTIC_REASONS — reproduces identically forever. Everything else never
+                # wrote a file (a raising tool's own backstop reason, "<ExceptionClass>: tool
+                # raised", detected by its colon) or did (a transient `unavailable` result —
+                # fixed or dynamic, e.g. `IpReputationTool`'s `f"http_{status}"` — since
+                # LiveToolRecorder writes unconditionally) — either way this call never reproduces
+                # reliably, so remove whatever is there and report it as a failure, never a
+                # fixture.
                 path.unlink(missing_ok=True)
                 reported_reason = reason.split(":", 1)[0] if ":" in reason else reason
                 failed.append((tool_name, fixture_key(arguments), reported_reason))

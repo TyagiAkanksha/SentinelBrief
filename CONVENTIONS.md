@@ -128,10 +128,13 @@ no contract forbids the import.
   `PayloadTooLargeError` (413: declared `Content-Length` over `Settings.ingest_max_body_bytes`,
   m6 task-02), `NotFoundError`, `ConflictError`, `RateLimitedError`,
   `FixtureMissingError(ConfigError)` (m7 task-02: `ReplayToolRecorder(strict=True)` found no
-  fixture for a v2 case's tool call — subclasses `ConfigError` so `status_for`'s MRO walk resolves
-  it to 500 without a new `STATUS_BY_ERROR` row; a worker/evals-only error no route under `api/`
-  ever raises or names), `BudgetExceededError` (M8). Services and the worker raise these; they
-  never construct HTTP responses.
+  fixture for a v2 case's tool call, OR found one but its recorded `unavailable(reason)` is
+  outside `worker.tools.DETERMINISTIC_REASONS` — a poisoned fixture, ruling R30 — subclasses
+  `ConfigError` so `status_for`'s MRO walk resolves it to 500 without a new `STATUS_BY_ERROR` row;
+  a worker/evals-only error no route under `api/` ever raises or names; the raise applies only to
+  the tools named in `strict_tools`, defaulting to `worker.tools.STRICT_TOOL_NAMES`, ruling R26),
+  `BudgetExceededError` (M8). Services and the worker raise these; they never construct HTTP
+  responses.
 - `api/errors.py::register_error_handlers(app)` maps each exception type to a status code and the
   PRD §8 envelope `{"error": {"code", "message"}}` exactly once. `RequestValidationError` is
   enveloped as `422` with location + message only — never the echoed input. Unhandled exceptions

@@ -18,6 +18,16 @@ paths: evals/**, fixtures/**, docs/results.md
 - Replay is **strict by default for a `v2*` golden file** (m7 task-02, PRD §13): a case whose
   fixture is missing fails that case (and the run) loudly instead of silently scoring degraded
   tool evidence — mint every fixture a v2 case can request with `evals/record.py` before scoring.
+  Strict applies only to the two `{"ip"}` tools `evals/record.py` can enumerate
+  (`worker.tools.STRICT_TOOL_NAMES`, ruling R26); `get_alert_history`'s `window_hours` is the
+  model's free choice and always replays leniently, strict or not.
+- **Fixture persistence is a fail-closed ALLOW-list** (ruling R30): `evals.record` only ever
+  persists an `unavailable(reason)` result whose `reason` is in
+  `worker.tools.DETERMINISTIC_REASONS` (`invalid_arguments`, `unknown_session`,
+  `unknown_asset` — a tool's own argument/lookup logic, reproducible forever). Every other reason
+  — fixed (`no_api_key`, `quota_exceeded`, ...) or dynamic (`IpReputationTool`'s
+  `f"http_{status}"`) — is transient: the fixture is removed, the call is reported failed, and
+  `ReplayToolRecorder(strict=True)` refuses to SERVE such a fixture even if hand-written to disk.
 - Metrics are pure functions in `evals/scoring.py` with unit tests; failed cases count in every
   denominator and as wrong. `critical_recall` is recall over labeled severity ≥ 4 — the number
   that matters most (PRD §7.3).
