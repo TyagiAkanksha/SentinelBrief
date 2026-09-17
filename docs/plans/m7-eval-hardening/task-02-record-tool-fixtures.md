@@ -73,6 +73,13 @@ class ReplayToolRecorder:
   such as `invalid_arguments` / `unknown_session` / `unknown_asset`) is persisted. Strict replay
   additionally refuses to SERVE a fixture whose reason is transient (`FixtureMissingError` with
   `":poisoned"` appended to the key) so a poisoned file committed by hand cannot become evidence.
+- **R30 — R25 inverted to fail-closed (re-review N2).** A deny-list of fixed reason strings cannot
+  hold a dynamic token such as `http_503`, so the persistence rule is an ALLOW-list:
+  `DETERMINISTIC_REASONS = {"invalid_arguments", "unknown_session", "unknown_asset"}` — an
+  `unavailable` result is persisted only when its reason is in that set; every other reason
+  (fixed or dynamic) is transient: file removed, reported failed, exit 1; strict replay refuses to
+  serve any fixture whose `unavailable.reason` is outside the set (`:poisoned`). `TRANSIENT_REASONS`
+  is deleted. The poison tests are parametrized over `http_503` as well.
 - **R26 — strictness is scoped to the tools the sampler can enumerate.** `ReplayToolRecorder(…,
   strict=True, strict_tools=frozenset({"get_ip_geo_asn", "lookup_ip_reputation"}))`; the strict
   raise applies to those tools only. `get_alert_history` (external, but its `window_hours` is the
