@@ -49,6 +49,13 @@ class CaseResult:
     escalated: bool = False
     """Whether routing escalated this case to the strong model (PRD §6.4, m5 task-03); always
     `False` on a failed case. Defaulted so every pre-task-03 construction keeps working."""
+    tool_trace_sha256: str = ""
+    """sha256 over the canonical JSON of every tool call's name/arguments/result, in order (m7
+    task-02 fix-1, ruling R28) — the "tool evidence" fingerprint the determinism proof compares:
+    two replayed runs over the same golden set/prompt/model must produce identical digests, so a
+    tool result silently drifting between runs is caught even though it isn't scored. Computed by
+    `evals.run.run_golden`; `""` on every pre-fix-1 construction (defaulted so existing callers
+    keep working) and on a failed case (no tool evidence was gathered before the failure)."""
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,26 @@ never raise" contract holds even at the recorder layer, UNLESS `ReplayToolRecord
 `strict=True` (m7 task-02, PRD §13): a v2 eval run defaults to strict so a case with no fixture
 fails the eval loudly (`FixtureMissingError`) instead of silently scoring degraded tool evidence;
 a mismatched/unreadable fixture is still never raised even in strict mode — only a genuinely
-*missing* file is.
+*missing* file, or a *present but poisoned* one (ruling R25, below), is.
+
+Two module-level constants, added at m7 task-02 fix-1 and shared with `evals/record.py` (which
+imports them from here — `evals` may import `worker`, never the reverse, CONVENTIONS.md §2):
+
+- `TRANSIENT_REASONS` (ruling R25, review C1): the set of `unavailable(reason)` tokens that mean
+  "the OWNER's environment couldn't answer this" (no API key, no `.mmdb`, a quota hit, a network
+  blip, ...) rather than "the tool's own logic produced this deterministically" (e.g.
+  `invalid_arguments`). `evals.record.record` never persists a fixture whose reason is transient
+  — it removes the file `LiveToolRecorder` already wrote and reports the call as `failed` instead
+  — and `ReplayToolRecorder(strict=True)` refuses to SERVE a fixture recorded with a transient
+  reason even if one was hand-written to disk (`FixtureMissingError` with `":poisoned"` appended
+  to the key), so a poisoned file committed by hand can never become tool evidence.
+- `STRICT_TOOL_NAMES` (ruling R26, review I1): the default `strict_tools` — the two `{"ip"}`
+  tools a v2 case's `src_ip` lets `evals.record` enumerate and pre-mint every fixture for
+  (`get_ip_geo_asn`, `lookup_ip_reputation`). `get_alert_history` is also `external = True` but
+  its `window_hours` is the model's free choice — the fixture space is unbounded, so it keeps the
+  lenient M4-era degrade (`unavailable("fixture_missing")`) even under `strict=True`; making it
+  strict would fail a v2 run non-deterministically depending on which window the model happened
+  to pick, the opposite of PRD §7.2's determinism goal.
 """
 
 from __future__ import annotations
@@ -28,6 +47,28 @@ from worker.tools.base import Tool, ToolContext, unavailable
 logger = logging.getLogger(__name__)
 
 FIXTURE_KEY_CHARS = 16
+
+TRANSIENT_REASONS: frozenset[str] = frozenset(
+    {
+        "no_api_key",
+        "no_database",
+        "database_error",
+        "geoip_db_not_configured",
+        "geoip_db_error",
+        "quota_exceeded",
+        "network_error",
+        "malformed_response",
+        "unauthorized",
+        "assets_file_missing",
+        "assets_file_invalid",
+        "fixture_missing",
+        "fixture_unreadable",
+        "fixture_mismatch",
+        "unknown_tool",
+    }
+)
+
+STRICT_TOOL_NAMES: frozenset[str] = frozenset({"get_ip_geo_asn", "lookup_ip_reputation"})
 
 
 def fixture_key(arguments: Mapping[str, Any]) -> str:
@@ -114,17 +155,29 @@ class LiveToolRecorder:
 class ReplayToolRecorder:
     """Serves an external tool's result from a recorded fixture; runs local tools live."""
 
-    def __init__(self, fixtures_dir: Path, *, strict: bool = False) -> None:
+    def __init__(
+        self,
+        fixtures_dir: Path,
+        *,
+        strict: bool = False,
+        strict_tools: frozenset[str] | None = None,
+    ) -> None:
         """Build a recorder that replays fixtures from `fixtures_dir`.
 
         Args:
             fixtures_dir: The fixtures directory root (e.g. `tests/fixtures/tools`).
-            strict: When `True`, a missing fixture raises `FixtureMissingError` instead of
-                degrading to `unavailable("fixture_missing")` (m7 task-02); default `False`
-                preserves the M4-era degrade for every pre-task-02 call site.
+            strict: When `True`, a missing or poisoned fixture for a tool named in
+                `strict_tools` raises `FixtureMissingError` instead of degrading to
+                `unavailable(...)` (m7 task-02); default `False` preserves the M4-era degrade for
+                every pre-task-02 call site.
+            strict_tools: Which tool names the `strict` raise applies to; `None` (default) uses
+                `STRICT_TOOL_NAMES` (ruling R26) — every other external tool (e.g.
+                `get_alert_history`, whose argument space `evals.record` cannot enumerate) always
+                gets the lenient degrade, even when `strict=True`.
         """
         self._fixtures_dir = fixtures_dir
         self._strict = strict
+        self._strict_tools = strict_tools if strict_tools is not None else STRICT_TOOL_NAMES
         self._warned: set[Path] = set()  # per-path missing-fixture warning guard (I5)
 
     async def execute(
@@ -134,21 +187,28 @@ class ReplayToolRecorder:
 
         Never calls `tool.run` for an external tool — that is the whole point (PRD §7.2,
         CLAUDE.md "never live APIs"). A mismatched/unreadable/wrong-shaped fixture is always
-        reported via `unavailable(...)`, never raised. A *missing* fixture is reported the same
-        way UNLESS this recorder is `strict`, in which case it raises `FixtureMissingError(f"
-        {tool.name}:{key}")` instead (m7 task-02) — `ToolRegistry.execute`'s one carved-out
-        `except FixtureMissingError: raise` lets it propagate rather than being swallowed into
-        the registry's own `unavailable(...)` backstop.
+        reported via `unavailable(...)`, never raised. A *missing* fixture, or a *present* one
+        whose recorded result is itself `unavailable(reason)` with `reason` in
+        `TRANSIENT_REASONS` (a poisoned fixture, ruling R25), is reported the same way UNLESS
+        `tool.name` is in this recorder's `strict_tools` AND `strict` is `True`, in which case it
+        raises `FixtureMissingError(f"{tool.name}:{key}")` (missing) or
+        `FixtureMissingError(f"{tool.name}:{key}:poisoned")` (present but poisoned) instead (m7
+        task-02) — `ToolRegistry.execute`'s one carved-out `except FixtureMissingError: raise`
+        lets it propagate rather than being swallowed into the registry's own `unavailable(...)`
+        backstop.
 
         Raises:
-            FixtureMissingError: `strict` is `True` and no fixture exists for `tool`/`arguments`.
+            FixtureMissingError: `strict` is `True`, `tool.name` is in `strict_tools`, and
+                `tool`/`arguments` has no fixture, or its fixture's recorded result is
+                `unavailable(reason)` with a transient `reason`.
         """
         if not tool.external:
             return await tool.run(arguments, ctx)
 
+        strict_here = self._strict and tool.name in self._strict_tools
         path = fixture_path(self._fixtures_dir, tool.name, arguments)
         if not path.exists():
-            if self._strict:
+            if strict_here:
                 raise FixtureMissingError(f"{tool.name}:{path.stem}")
             if path not in self._warned:
                 logger.warning("tool fixture missing tool=%s path=%s", tool.name, path)
@@ -170,4 +230,12 @@ class ReplayToolRecorder:
         if data["tool"] != tool.name or data["arguments"] != dict(arguments):
             return unavailable("fixture_mismatch")
 
-        return dict(data["result"])
+        result = data["result"]
+        if (
+            strict_here
+            and result.get("unavailable")
+            and str(result.get("reason", "")) in TRANSIENT_REASONS
+        ):
+            raise FixtureMissingError(f"{tool.name}:{path.stem}:poisoned")
+
+        return dict(result)

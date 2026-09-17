@@ -19,15 +19,24 @@ printed table's `escalation_rate` column reports the fraction of cases each run 
 (`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
 (`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
 (`.claude/rules/evals.md`) — local tools (`get_session_commands`, `get_asset_info`) still run.
+Only `lookup_ip_reputation`/`get_ip_geo_asn` are recordable/strict (`evals/record.py` can
+enumerate every argument set a case can request, keyed on `src_ip` alone); `get_alert_history`'s
+`window_hours` is the model's free choice, so its fixture space is unbounded and it always
+replays leniently, strict or not (ruling R26, m7 task-02 fix-1).
 
 `--replay-strict`/`--no-replay-strict` (default: strict iff `is_v2_golden(args.golden)`, PRD §13
-— "a v2 case whose fixture is missing fails the eval loudly rather than going live") makes a
-missing fixture raise `core.errors.FixtureMissingError` instead of degrading to
-`unavailable("fixture_missing")`; a case whose pipeline run raises it is captured as
+— "a v2 case whose fixture is missing fails the eval loudly rather than going live") applies ONLY
+to the two `{"ip"}` tools `evals.record` can enumerate (`worker.tools.STRICT_TOOL_NAMES`, ruling
+R26, m7 task-02 fix-1) — `get_alert_history`'s `window_hours` is the model's free choice and keeps
+the lenient M4-era degrade even under `--replay-strict`. For a strict-scoped tool, a missing (or
+poisoned, ruling R25) fixture raises `core.errors.FixtureMissingError` instead of degrading to
+`unavailable(...)`; a case whose pipeline run raises it is captured as
 `CaseResult(error="fixture_missing:<tool>:<key>", verdict=None)`, exactly like any other per-case
-failure, but the run itself also exits `1` — after the usual table is printed, a
-`"MISSING FIXTURES (n): <tool> <key> ..."` line names every distinct missing fixture across every
-prompt version run, so a new v2 golden row without its fixtures fails CI loudly (m7 task-02).
+failure. Whenever any case hit one, the run exits `1` and — taking priority over the
+`all_cases_failed` path below even when every case failed this way (ruling I2) — prints the usual
+table followed by a `"MISSING FIXTURES (n): <tool> <key> ..."` line naming every distinct missing
+fixture across every prompt version run, so a new v2 golden row without its fixtures fails CI
+loudly.
 
 Every failure path prints exactly one `error: <code>: <message>` line to stderr, leaves stdout
 empty, and never raises a traceback:
@@ -56,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import subprocess
 from collections.abc import Sequence
@@ -75,7 +85,8 @@ from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
 from evals.scoring import CaseResult, ResultRow, RunMetrics, format_table, score
 from worker.llm_client import OpenAICompatibleLLMClient
-from worker.tools import ReplayToolRecorder
+from worker.outcome import ToolCallRecord
+from worker.tools import STRICT_TOOL_NAMES, ReplayToolRecorder
 from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
 
@@ -116,6 +127,33 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _tool_trace_sha256(tool_calls: Sequence[ToolCallRecord]) -> str:
+    """sha256 over the canonical JSON of `tool_calls`' name/arguments/result, in order (m7
+    task-02 fix-1, ruling R28) — the "tool evidence" fingerprint two replayed runs must agree on.
+
+    `seq`/`latency_ms` are deliberately excluded: `seq` is redundant with list order and
+    `latency_ms` is real wall-clock time, not tool evidence.
+
+    Args:
+        tool_calls: The pipeline run's tool-call trace, in the order the calls were made; `()`
+            for an empty trace (no tool calls, or a case that failed before any were recorded).
+
+    Returns:
+        `sha256(json.dumps([{"name", "arguments", "result"}, ...], sort_keys=True,
+        separators=(",", ":"), ensure_ascii=True)).hexdigest()`.
+    """
+    canonical = json.dumps(
+        [
+            {"name": call.tool_name, "arguments": call.arguments, "result": call.result}
+            for call in tool_calls
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 async def run_golden(
     cases: Sequence[GoldenCase], *, pipeline: TriagePipeline, concurrency: int = 4
 ) -> list[CaseResult]:
@@ -154,6 +192,7 @@ async def run_golden(
                     latency_ms=0,
                     error=f"{e.code}:{e}",
                     tool_calls=0,
+                    tool_trace_sha256=_tool_trace_sha256(()),
                 )
             except (VerdictValidationError, LLMCallError) as e:
                 # M0: a failed case's tokens/cost/latency are not threaded back out of
@@ -169,6 +208,7 @@ async def run_golden(
                     latency_ms=0,
                     error=f"{e.code}: {e}",
                     tool_calls=0,
+                    tool_trace_sha256=_tool_trace_sha256(()),
                 )
             return CaseResult(
                 case_id=case.case_id,
@@ -181,6 +221,7 @@ async def run_golden(
                 error=None,
                 tool_calls=len(outcome.tool_calls),
                 escalated=outcome.escalated_model,
+                tool_trace_sha256=_tool_trace_sha256(outcome.tool_calls),
             )
 
     return list(await asyncio.gather(*(_run_one(case) for case in cases)))
@@ -295,10 +336,16 @@ async def _run_all(
         )
 
         # One registry per run (N-M5), over the shared `http` client — never one per prompt
-        # version.
+        # version. `strict_tools=STRICT_TOOL_NAMES` is explicit (ruling R26): only the two
+        # `{"ip"}` tools a v2 case's `src_ip` lets `evals.record` enumerate are strict;
+        # `get_alert_history`'s `window_hours` is the model's free choice and keeps the lenient
+        # M4-era degrade even under `strict=True`, so a v2 run never flips exit code depending on
+        # which window the model happened to pick.
         registry = build_registry(
             settings,
-            recorder=ReplayToolRecorder(args.tool_fixtures, strict=replay_strict),
+            recorder=ReplayToolRecorder(
+                args.tool_fixtures, strict=replay_strict, strict_tools=STRICT_TOOL_NAMES
+            ),
             http=http,
         )
 
@@ -359,14 +406,20 @@ async def _run_all(
             except OSError as e:
                 return fail("output_error", str(e))
 
+        # I2 (m7 task-02 fix-1): a missing-fixture report takes priority over the
+        # all_cases_failed short-circuit below — the ordinary Step-6 situation (no fixtures
+        # minted yet, so every v2 case raises FixtureMissingError) must still name every missing
+        # pair, not just report "every case failed" with nothing actionable.
+        if missing_fixtures:
+            print(format_table(rows))
+            pairs = " ".join(f"{tool_name} {key}" for tool_name, key in sorted(missing_fixtures))
+            print(f"MISSING FIXTURES ({len(missing_fixtures)}): {pairs}")
+            return 1
+
         if not any_case_succeeded:
             return fail("all_cases_failed", "every case failed in every prompt run")
 
         print(format_table(rows))
-        if missing_fixtures:
-            pairs = " ".join(f"{tool_name} {key}" for tool_name, key in sorted(missing_fixtures))
-            print(f"MISSING FIXTURES ({len(missing_fixtures)}): {pairs}")
-            return 1
         return 0
     finally:
         await http.aclose()

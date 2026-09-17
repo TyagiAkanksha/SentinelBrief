@@ -2,28 +2,40 @@
 task-02).
 
 `python -m evals.record --golden evals/golden/v2.jsonl [--fixtures tests/fixtures/tools]
-[--only get_ip_geo_asn] [--dry-run]` walks every case in `--golden` and calls each EXTERNAL tool
-the pipeline can legitimately request for that case — `get_ip_geo_asn` and `lookup_ip_reputation`,
-each keyed on the session's own `src_ip` only (`{"ip": ...}`; `get_alert_history` reads the DB,
-never a fixture, and is out of scope here) — live, exactly ONCE per distinct `(tool, ip)` pair,
-writing fixtures with the existing `worker.tools.write_fixture` layout under `--fixtures`
-(`tests/fixtures/tools/<tool>/<key>.json`, m4 task-01) so a v2 case's fixture can be minted once
-and replayed deterministically forever after (`.claude/rules/evals.md`). Idempotent: an existing
-fixture is never re-recorded. `--dry-run` prints the plan and calls nothing. `--only <tool>`
-restricts recording to one tool name.
+[--only get_ip_geo_asn] [--dry-run]` walks every case in `--golden` and calls `get_ip_geo_asn` and
+`lookup_ip_reputation` — the only two external tools this module can enumerate every argument set
+for, each keyed on the session's own `src_ip` only (`{"ip": ...}`) — live, exactly ONCE per
+distinct `(tool, ip)` pair, writing fixtures with the existing `worker.tools.write_fixture` layout
+under `--fixtures` (`tests/fixtures/tools/<tool>/<key>.json`, m4 task-01) so a v2 case's fixture
+can be minted once and replayed deterministically forever after (`.claude/rules/evals.md`).
+`get_alert_history` is also `external = True` and IS replayed from a fixture at eval time
+(`worker/tools/alert_history.py`), but its `window_hours` argument is the model's free choice —
+this module cannot enumerate every value the model might ask for, so it is never recorded here and
+always replays leniently in `evals.run` regardless of `--replay-strict` (ruling R26, m7 task-02
+fix-1; `worker.tools.STRICT_TOOL_NAMES`).
+
+Idempotent: an existing fixture is never re-recorded. A transient `unavailable(reason)` result —
+`reason` in `worker.tools.TRANSIENT_REASONS`, meaning the OWNER's environment couldn't answer
+(no API key, no `.mmdb`, a quota hit, ...) rather than the tool's own deterministic logic — is
+never persisted: the fixture `LiveToolRecorder` already wrote for it is removed and the call is
+reported under `failed` instead (ruling R25, review C1), so a partial Step-6 run against an
+unconfigured environment can never silently poison a committed fixture. `--dry-run` prints the
+plan and calls nothing. `--only <tool>` restricts recording to one tool name.
 
 This module is the OWNER's tool, run once against the real APIs (Step 6, m7 task-02's brief) —
-nothing here is exercised against a live network in CI; `tests/test_record.py` drives `record()`
-and `main()` entirely through in-file external-tool stubs (CONVENTIONS.md §10), never a real
-`Settings()`/API-key path unless the caller omits the `registry=` injection seam.
+nothing here is exercised against a live network in CI; `tests/test_record.py`/
+`tests/test_record_poison.py` drive `record()` and `main()` entirely through in-file
+external-tool stubs (CONVENTIONS.md §10), never a real `Settings()`/API-key path unless the caller
+omits the `registry=` injection seam. Recording is deliberately label-agnostic: it reads only
+`case.alert.src_ip`, never `labeled_by`, so fixtures can be minted for a not-yet-human-labeled
+`v2-candidates.jsonl` row before the labeling pass — unlike `evals.run`, which enforces PRD §13's
+human-label requirement before scoring a v2 file (m7 task-02 fix-1, review M4).
 """
 
 from __future__ import annotations
 
 import asyncio
-import threading
-from collections.abc import Coroutine, Sequence
-from concurrent.futures import Future
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,13 +48,21 @@ from core.cli import Parser, UsageError, fail
 from core.config import Settings
 from core.schemas.alert import CowrieEvent, SessionAlert
 from evals.golden import GoldenCase, load_golden
-from worker.tools import LiveToolRecorder, ToolContext, ToolRegistry, fixture_key, fixture_path
+from worker.tools import (
+    TRANSIENT_REASONS,
+    LiveToolRecorder,
+    ToolContext,
+    ToolRegistry,
+    fixture_key,
+    fixture_path,
+)
 from worker.tools.wiring import build_registry
 
 DEFAULT_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "tools"
 
-# The pipeline's only two EXTERNAL tools that take just the session's `src_ip` (PRD §6.3);
-# `get_alert_history` depends on the alerts table, not a fixture, so it is never planned here.
+# The pipeline's only two EXTERNAL tools whose complete argument set this module can enumerate
+# from a `GoldenCase` alone (PRD §6.3); `get_alert_history`'s `window_hours` is the model's free
+# choice and is never planned here (ruling R26, review I1).
 EXTERNAL_TOOL_NAMES: tuple[str, ...] = ("get_ip_geo_asn", "lookup_ip_reputation")
 
 
@@ -124,22 +144,35 @@ async def record(
     Calls each planned `(tool_name, arguments)` pair through `registry.execute` — never a bare
     `tool.run` — so a raising tool is reported the same shape a real misbehaving tool would be
     (`ToolRegistry.execute`'s own `unavailable("<ExceptionClass>: tool raised")` backstop,
-    controller ruling Q6); this function reports that back as a `failed` entry keyed by exception
-    CLASS only — the raised message never reaches the report or a fixture file (PRD §10.6).
+    controller ruling Q6). Two kinds of failure share the `failed` list, distinguished only by
+    their reason token's shape (never by a separate discriminator field, so the tuple stays the
+    stable 3-tuple every caller already destructures): a raising tool's exception CLASS name
+    (`"RuntimeError"`, parsed from the registry's `"<ExceptionClass>: tool raised"` shape — the
+    raised message itself never reaches the report or a fixture file, PRD §10.6), or a transient
+    `unavailable(reason)` result's own `reason` token verbatim (`"no_api_key"`,
+    `"quota_exceeded"`, ... — `worker.tools.TRANSIENT_REASONS`). Neither ever leaves a fixture
+    behind: a raising tool never wrote one (`LiveToolRecorder.execute` calls `write_fixture` only
+    after `tool.run` returns), and a transient `unavailable` result's file — which
+    `LiveToolRecorder` writes unconditionally, since it does not know the recording is transient —
+    is unlinked before being reported (ruling R25, review C1). A DETERMINISTIC `unavailable`
+    result (e.g. `invalid_arguments`, not in `TRANSIENT_REASONS`) is the opposite: it is persisted
+    like a real answer, because the tool's own logic — not the owner's environment — produced it
+    and it reproduces identically on every future run.
 
     Args:
         cases: The golden-set cases to record fixtures for.
         registry: The tool registry to execute calls through; the caller wires it with a
             `LiveToolRecorder(record_dir=fixtures_dir)` so a successful call also writes the
             fixture (`worker.tools.write_fixture` layout, m4 task-01).
-        fixtures_dir: Where fixtures are read from (to check "already exists").
+        fixtures_dir: Where fixtures are read from (to check "already exists") and removed from
+            (a poisoned transient result).
         only: Restrict recording to this tool name; `None` records every planned call.
         dry_run: When `True`, plan only — `registry` is never touched and nothing is written.
 
     Returns:
         `RecordReport(planned=len(the possibly `only`-filtered plan), recorded=<newly written
-        count>, skipped_existing=<already-present count>, failed=<[(tool, key, reason class),
-        ...]>)`. Under `dry_run`, `recorded`/`skipped_existing`/`failed` are all zero/empty.
+        count>, skipped_existing=<already-present count>, failed=<[(tool, key, reason), ...]>)`.
+        Under `dry_run`, `recorded`/`skipped_existing`/`failed` are all zero/empty.
     """
     calls = _filtered_calls(cases, only)
     if dry_run:
@@ -150,14 +183,31 @@ async def record(
     skipped_existing = 0
     failed: list[tuple[str, str, str]] = []
     for tool_name, arguments in calls:
-        if fixture_path(fixtures_dir, tool_name, arguments).exists():
+        path = fixture_path(fixtures_dir, tool_name, arguments)
+        if path.exists():
             skipped_existing += 1
             continue
         execution = await registry.execute(tool_name, arguments, ctx)
         if execution.result.get("unavailable"):
             reason = str(execution.result.get("reason", ""))
-            reason_class = reason.split(":", 1)[0]
-            failed.append((tool_name, fixture_key(arguments), reason_class))
+            if reason in TRANSIENT_REASONS or ":" in reason:
+                # A raising tool's own backstop reason ("<ExceptionClass>: tool raised", detected
+                # by its colon — never itself a member of TRANSIENT_REASONS) never wrote a file;
+                # a transient `unavailable` result did (LiveToolRecorder writes unconditionally,
+                # ruling R25) — either way this call never reproduces reliably, so remove whatever
+                # is there and report it as a failure, never a fixture.
+                path.unlink(missing_ok=True)
+                reported_reason = reason.split(":", 1)[0] if ":" in reason else reason
+                failed.append((tool_name, fixture_key(arguments), reported_reason))
+                continue
+            # A deterministic `unavailable` result: falls through to the M2 check below exactly
+            # like a real answer.
+
+        if not path.exists():
+            # M2 (review): the injected registry's recorder never actually wrote a fixture (e.g.
+            # a bare LiveToolRecorder() with no record_dir) — a mis-wired registry must be a loud
+            # failure, never a silent "recorded" count over an empty fixtures directory.
+            failed.append((tool_name, fixture_key(arguments), "not_recorded"))
             continue
         recorded += 1
 
@@ -188,35 +238,6 @@ async def _record_all(
             await http.aclose()
 
 
-def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
-    """Run `coro` to completion, whether or not an event loop is already running.
-
-    `main` is a synchronous CLI entrypoint that must call the async `record()`; a plain
-    `asyncio.run(coro)` would raise `RuntimeError: asyncio.run() cannot be called from a running
-    event loop` when `main` happens to be invoked from inside one — which the pinned
-    `tests/test_record.py::test_failed_tool_reported_by_class_only` does (it `await`s `record()`
-    directly, then calls `main()` in the same `async def` test body under pytest-asyncio's
-    `asyncio_mode = "auto"`). When a loop is already running, `coro` is instead driven to
-    completion on a dedicated thread with its own fresh loop; otherwise this is exactly
-    `asyncio.run(coro)`.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    future: Future[T] = Future()
-
-    def _runner() -> None:
-        try:
-            future.set_result(asyncio.run(coro))
-        except BaseException as exc:  # relayed to the caller thread via the Future, not swallowed
-            future.set_exception(exc)
-
-    threading.Thread(target=_runner).start()
-    return future.result()
-
-
 def main(argv: Sequence[str] | None = None, *, registry: ToolRegistry | None = None) -> int:
     """Record every fixture `--golden`'s cases can request, once.
 
@@ -230,8 +251,8 @@ def main(argv: Sequence[str] | None = None, *, registry: ToolRegistry | None = N
     Returns:
         `0` on success, including `--dry-run` and a run with no failures; `1` on a usage error,
         an invalid/missing golden file, a `Settings()` validation failure, or when `record()`
-        reports any `failed` entry — printed to stderr as tool/key/exception-class names only,
-        never the raised message (PRD §10.6).
+        reports any `failed` entry — printed to stderr as tool/key/reason names only, never a
+        raised message (PRD §10.6).
     """
     parser = Parser(prog="python -m evals.record")
     parser.add_argument("--golden", required=True, type=Path)
@@ -266,7 +287,7 @@ def main(argv: Sequence[str] | None = None, *, registry: ToolRegistry | None = N
             settings, recorder=LiveToolRecorder(record_dir=args.fixtures), http=http_client
         )
 
-    report = _run_async(
+    report = asyncio.run(
         _record_all(
             cases,
             registry=used_registry,
