@@ -1114,3 +1114,317 @@ def test_run_judges_each_case_with_replayed_tool_results_and_separate_cost(
     assert metrics_no_judge["judge_pct_le2"] is None
     assert metrics_no_judge["injection_pass_rate"] is None
     assert Decimal(metrics_no_judge["judge_cost_total_usd"]) == Decimal("0")
+
+
+# --- m7 task-03 fix-1 (review findings I1, I2): judge-failure branch and both halves of R33 -----
+# Additive only, appended at the end; no existing test/helper above is edited.
+
+
+def test_judge_failure_records_judge_error_and_does_not_zero_other_scores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I1: a judge call whose own retry fails twice (`VerdictValidationError`) must not silently
+    become a perfect score. `CaseResult.judge` reads back `None`, `judge_error` names the
+    exception CLASS (never the message, which could carry attacker-echoed model text, ruling
+    R40), the already-spent judge tokens are still counted (`judge_cost_usd > 0` -- the failed
+    attempt's own spend, recovered from `VerdictValidationError.__cause__`, is never dropped,
+    CONVENTIONS.md §7), the case's OWN triage verdict is untouched, and `RunMetrics.judge_mean` is
+    computed over the other, successfully judged case only -- never treating the failed judgment
+    as a 0 or silently dropping it from the run.
+    """
+    monkeypatch.setenv("STRONG_MODEL", "strong-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}, '
+        '"strong-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+
+    golden_path = _write_golden(
+        tmp_path / "golden.jsonl", [_golden_case("alert1.json"), _golden_case("alert2.json")]
+    )
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+
+    judge_score_b = json.dumps(
+        {
+            "score": 4,
+            "cites_evidence": True,
+            "fabrication": False,
+            "conclusion_follows": True,
+            "rationale": "cites the summary's login counts.",
+        }
+    )
+    fake = FakeLLMClient(
+        [
+            VALID_VERDICT_JSON,  # case A's triage verdict
+            "{}",  # case A's judge attempt 1: invalid
+            "{}",  # case A's judge attempt 2 (the one retry): invalid -> VerdictValidationError
+            VALID_VERDICT_JSON,  # case B's triage verdict
+            judge_score_b,  # case B's judge score
+        ]
+    )
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    assert rc == 0
+    assert len(fake.calls) == 5
+
+    written = list(output_dir.glob("*-triage-v1.json"))
+    assert len(written) == 1
+    payload = json.loads(written[0].read_text())
+    cases = payload["cases"]
+    assert len(cases) == 2
+
+    case_a, case_b = cases
+    assert case_a["verdict"] is not None  # the triage result is untouched by the judge failure
+    assert case_a["judge"] is None
+    assert case_a["judge_error"] == "VerdictValidationError"
+    assert Decimal(case_a["judge_cost_usd"]) > Decimal("0")
+
+    assert case_b["judge"] is not None
+    assert case_b["judge"]["score"] == 4
+    assert case_b["judge_error"] is None
+
+    metrics = payload["metrics"]
+    assert metrics["judge_mean"] == pytest.approx(4.0)  # case B only -- case A excluded, not 0
+
+
+def test_judge_default_on_for_v2_golden_requires_a_configured_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I2(a)/(b): R33's default half, both directions. A v2-named golden with NO judge model
+    configured and no `--judge`/`--no-judge` flag must not call the judge at all (the default
+    resolves to `False`); the SAME golden with `STRONG_MODEL` configured (and priced) must call
+    the judge (the default resolves to `True`) -- with no flag passed either way, only the model
+    configuration differs.
+    """
+    from evals.judge import JudgeScore
+
+    case = _golden_case("alert1.json").model_copy(update={"labeled_by": "human"})
+    golden_path = _write_golden(tmp_path / "v2-default.jsonl", [case])
+
+    # (a) STRONG_MODEL empty (the autouse fixture already clears it): no judge call.
+    output_dir_a = tmp_path / "results-a"
+    output_dir_a.mkdir()
+    fake_a = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc_a = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir_a),
+        ],
+        llm=fake_a,
+    )
+
+    assert rc_a == 0
+    assert not any(c.response_model is JudgeScore for c in fake_a.calls)
+
+    # (b) STRONG_MODEL configured and priced, still no --judge flag: the judge IS called.
+    monkeypatch.setenv("STRONG_MODEL", "strong-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}, '
+        '"strong-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+    output_dir_b = tmp_path / "results-b"
+    output_dir_b.mkdir()
+    judge_reply = json.dumps(
+        {
+            "score": 3,
+            "cites_evidence": True,
+            "fabrication": False,
+            "conclusion_follows": True,
+            "rationale": "reasonable.",
+        }
+    )
+    fake_b = FakeLLMClient([VALID_VERDICT_JSON, judge_reply])
+
+    rc_b = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir_b),
+        ],
+        llm=fake_b,
+    )
+
+    assert rc_b == 0
+    assert any(c.response_model is JudgeScore for c in fake_b.calls)
+
+
+def test_explicit_judge_with_no_model_configured_is_config_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """I2(c): R33's `config_error` half. An EXPLICIT `--judge` with no judge model configured
+    (`STRONG_MODEL` empty, no `--judge-model`) must exit 1 with a `config_error` BEFORE any LLM
+    call -- never a silent no-op, and never a call made with an empty model id.
+    """
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    fake = FakeLLMClient([])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert captured.err.startswith("error: config_error:")
+    assert len(fake.calls) == 0
+    assert list(output_dir.glob("*.json")) == []
+
+
+def test_judge_model_flag_and_default_route_to_the_right_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I2(d): `--judge-model X` sends the judge call to `X`, not to `settings.strong_model`; with
+    no `--judge-model` flag, the judge call goes to `settings.strong_model`. Proven on
+    `call.model` itself, not merely on `response_model.__name__` -- a judge silently routed to the
+    cheap model would still pass a `response_model`-only check.
+    """
+    from evals.judge import JudgeScore
+
+    monkeypatch.setenv("STRONG_MODEL", "strong-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}, '
+        '"strong-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    judge_reply = json.dumps(
+        {
+            "score": 3,
+            "cites_evidence": True,
+            "fabrication": False,
+            "conclusion_follows": True,
+            "rationale": "reasonable.",
+        }
+    )
+
+    # --judge-model overrides the default.
+    output_dir_x = tmp_path / "results-x"
+    output_dir_x.mkdir()
+    fake_x = FakeLLMClient([VALID_VERDICT_JSON, judge_reply])
+    rc_x = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--judge-model",
+            "custom-judge-model",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir_x),
+        ],
+        llm=fake_x,
+    )
+    assert rc_x == 0
+    judge_calls_x = [c for c in fake_x.calls if c.response_model is JudgeScore]
+    assert len(judge_calls_x) == 1
+    assert judge_calls_x[0].model == "custom-judge-model"
+
+    # No --judge-model: defaults to settings.strong_model.
+    output_dir_default = tmp_path / "results-default"
+    output_dir_default.mkdir()
+    fake_default = FakeLLMClient([VALID_VERDICT_JSON, judge_reply])
+    rc_default = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir_default),
+        ],
+        llm=fake_default,
+    )
+    assert rc_default == 0
+    judge_calls_default = [c for c in fake_default.calls if c.response_model is JudgeScore]
+    assert len(judge_calls_default) == 1
+    assert judge_calls_default[0].model == "strong-model"
+
+
+def test_judge_prompt_validated_before_any_case_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """I4: the judge prompt version is validated ONCE, up front, before any case runs -- the same
+    "price before spend" guarantee the triage prompt already gets at `TriagePipeline.__init__`. A
+    bad `JUDGE_PROMPT_VERSION` with an explicit `--judge` must exit 1 as a `config_error` with the
+    FakeLLMClient recording ZERO calls, never burning a case's triage spend before the judge
+    prompt failure surfaces (which, before this fix, happened lazily inside the first case's own
+    judge call, after that case's full triage run had already been paid for).
+    """
+    monkeypatch.setenv("STRONG_MODEL", "strong-model")
+    monkeypatch.setenv("JUDGE_PROMPT_VERSION", "judge-v999")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}, '
+        '"strong-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    fake = FakeLLMClient([])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert captured.err.startswith("error: config_error:")
+    assert len(fake.calls) == 0
+    assert list(output_dir.glob("*.json")) == []

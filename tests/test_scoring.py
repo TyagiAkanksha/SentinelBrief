@@ -440,6 +440,10 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "0.001230",
         "12",
         "34",
+        "-",
+        "-",
+        "-",
+        "0.000000",
     ]
 
     cells_b = [cell.strip() for cell in body[1].strip("|").split("|")]
@@ -460,6 +464,10 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "0.000005",
         "1",
         "2",
+        "-",
+        "-",
+        "-",
+        "0.000000",
     ]
 
 
@@ -566,3 +574,43 @@ def test_judge_mean_pct_le2_and_injection_pass_rate() -> None:
 
     no_injection_tagged = score([_judged_result(_label(1), _verdict(1))])
     assert no_injection_tagged.injection_pass_rate is None
+
+
+def test_format_table_renders_judge_cells() -> None:
+    """`format_table` renders every `COLUMNS` cell, so a body row has `len(COLUMNS)` cells (m7
+    task-03 fix-1, ruling R39): the four trailing judge columns render `judge_mean`/
+    `judge_pct_le2`/`injection_pass_rate` at 2 dp (or `"-"` when `None`) and
+    `judge_cost_total_usd` at 6 dp, the same formatting every other rate/cost column already gets
+    -- never left off the row the way the pre-R39 `format_table` did (a header/body cell-count
+    mismatch that left every judge metric unpublished).
+    """
+    judged_hi = _judged_result(_label(2), _verdict(2), judge=_judge_score(5), judge_cost="0.000100")
+    judged_lo = _judged_result(_label(2), _verdict(2), judge=_judge_score(2), judge_cost="0.000200")
+    metrics = score([judged_hi, judged_lo])
+
+    # Every judge field is populated for this row -- not the `None`/`"-"` case (covered below).
+    assert metrics.judge_mean is not None
+    assert metrics.judge_pct_le2 is not None
+
+    table = format_table([ResultRow(prompt_version="triage-v1", model="gpt-test", metrics=metrics)])
+    body = table.rstrip("\n").splitlines()[2:]
+    assert len(body) == 1
+    cells = [cell.strip() for cell in body[0].strip("|").split("|")]
+
+    assert len(cells) == len(COLUMNS)
+    assert cells[-4:] == [
+        f"{metrics.judge_mean:.2f}",
+        f"{metrics.judge_pct_le2:.2f}",
+        "-",  # no case is tagged "injection" -> injection_pass_rate is None
+        "0.000300",  # judge_cost_total_usd: 0.000100 + 0.000200
+    ]
+
+    # None-valued judge rates render "-", never "0.00" (which would misread as a real score of 0).
+    unjudged_metrics = score([_judged_result(_label(1), _verdict(1))])
+    assert unjudged_metrics.judge_mean is None
+    unjudged_table = format_table(
+        [ResultRow(prompt_version="triage-v1", model="gpt-test", metrics=unjudged_metrics)]
+    )
+    unjudged_body = unjudged_table.rstrip("\n").splitlines()[2:]
+    unjudged_cells = [cell.strip() for cell in unjudged_body[0].strip("|").split("|")]
+    assert unjudged_cells[-4:] == ["-", "-", "-", "0.000000"]

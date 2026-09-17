@@ -24,13 +24,19 @@ enumerate every argument set a case can request, keyed on `src_ip` alone); `get_
 `window_hours` is the model's free choice, so its fixture space is unbounded and it always
 replays leniently, strict or not (ruling R26, m7 task-02 fix-1).
 
-`--judge`/`--no-judge` (default: on iff `is_v2_golden(args.golden)`, m7 task-03) scores every
-successful case's verdict reasoning through `evals.judge.judge_case` (PRD §7.3), over the SAME
-replayed tool results that case's own pipeline trace recorded; `--judge-model` (default
-`settings.strong_model`) is the model the judgment is requested from. A judge failure never fails
-the case's own (already-succeeded) triage result — it is recorded as a `None` judge instead. Judge
-spend is accounted separately (`RunMetrics.judge_cost_total_usd`) and never added to
-`cost_mean_usd`/`cost_total_usd` (`.claude/rules/evals.md`).
+`--judge`/`--no-judge` (default: on iff `is_v2_golden(args.golden)` AND a judge model is
+configured, ruling R33 — an explicit `--judge` with no model configured is instead a
+`config_error`, m7 task-03 fix-0) scores every successful case's verdict reasoning through
+`evals.judge.judge_case` (PRD §7.3), over the SAME replayed tool results that case's own pipeline
+trace recorded; `--judge-model` (default `settings.strong_model`) is the model the judgment is
+requested from. A judge failure — `StructuredOutputError`/`VerdictValidationError` (the judge's own
+retry already failed twice) or `LLMCallError` (a transport failure, m7 task-03 fix-1 ruling R40/I5)
+— never fails the case's own (already-succeeded) triage result: it is recorded as
+`CaseResult.judge=None`, `CaseResult.judge_error=<exception class name>`, which distinguishes
+"judged and failed" from "never judged at all" (`judge_error is None`). The judge prompt version is
+validated once, up front, before any case runs — the same "price before spend" guarantee the
+triage prompt gets (I4). Judge spend is accounted separately (`RunMetrics.judge_cost_total_usd`)
+and never added to `cost_mean_usd`/`cost_total_usd` (`.claude/rules/evals.md`).
 
 `--replay-strict`/`--no-replay-strict` (default: strict iff `is_v2_golden(args.golden)`, PRD §13
 — "a v2 case whose fixture is missing fails the eval loudly rather than going live") applies ONLY
@@ -60,6 +66,10 @@ empty, and never raises a traceback:
         --strong-model, unknown --prompt), raised before any case runs
         ("price before spend")                                                config_error
     `ValueError` from `TriagePipeline` (--strong-model equal to --model)       config_error
+    --judge is on with no judge model configured (ruling R33)                 config_error
+    --judge is on with an unpriced judge model                                config_error
+    --judge is on with an invalid/missing JUDGE_PROMPT_VERSION, raised
+        before any case runs ("price before spend", m7 task-03 fix-1 I4)      config_error
     output directory not writable                                            output_error
     every case failed in every prompt run (a per-case failure alone still
         exits 0 -- it is captured as `CaseResult.error`, not a run failure)   all_cases_failed
@@ -98,7 +108,7 @@ from core.errors import (
 )
 from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
-from evals.judge import JudgeScore, judge_case
+from evals.judge import JudgeScore, judge_case, load_judge_prompt
 from evals.scoring import CaseResult, ResultRow, RunMetrics, format_table, score
 from worker.llm_client import OpenAICompatibleLLMClient
 from worker.outcome import ToolCallRecord, TriageOutcome
@@ -197,8 +207,12 @@ async def run_golden(
     semaphore-guarded task — over the SAME tool results that case's own pipeline trace recorded
     (`TriageOutcome.tool_calls`), never a fresh/live tool call and never another case's trace. A
     judge failure (`StructuredOutputError`/`VerdictValidationError` — the judge's own one retry
-    already failed twice) is caught here and recorded as `CaseResult.judge=None`; it never fails
-    the case's own already-succeeded triage result.
+    already failed twice — or `LLMCallError`, m7 task-03 fix-1 ruling R40/I5: a transient judge
+    transport failure must not abort the whole run either) is caught here and recorded as
+    `CaseResult.judge=None`, `CaseResult.judge_error=<exception class name>`; it never fails the
+    case's own already-succeeded triage result. `judge_error` distinguishes "judged and the judge
+    call itself failed" from "not judged at all" (`judge_error is None`), which `judge=None` alone
+    cannot (ruling R40).
 
     Args:
         cases: The golden-set cases to run, in the order results should be returned in.
@@ -214,9 +228,11 @@ async def run_golden(
     """
     semaphore = asyncio.Semaphore(concurrency)
 
-    async def _judge(case: GoldenCase, outcome: TriageOutcome) -> tuple[JudgeScore | None, Decimal]:
+    async def _judge(
+        case: GoldenCase, outcome: TriageOutcome
+    ) -> tuple[JudgeScore | None, Decimal, str | None]:
         if judge_llm is None:
-            return None, Decimal("0")
+            return None, Decimal("0"), None
         tool_results = [
             {"tool_name": call.tool_name, "arguments": call.arguments, "result": call.result}
             for call in outcome.tool_calls
@@ -230,12 +246,23 @@ async def run_golden(
                 tool_results=tool_results,
                 verdict=outcome.verdict,
             )
-        except (StructuredOutputError, VerdictValidationError) as e:
+        except (StructuredOutputError, VerdictValidationError, LLMCallError) as e:
             logger.warning(
                 "judge call failed case_id=%s reason=%s", case.case_id, e.__class__.__name__
             )
-            return None, Decimal("0")
-        return judge_outcome.score, judge_outcome.cost_usd
+            # The failed call's own spend already happened and must not be dropped
+            # (CONVENTIONS.md §7). A bare StructuredOutputError carries its own cost directly;
+            # judge_case's second (final) StructuredOutputError is preserved as
+            # VerdictValidationError.__cause__ (`raise ... from second_err`), so its cost is
+            # recovered from there. LLMCallError is a transport failure with no priced reply —
+            # its judge spend for this case is 0 (ruling R40/I5).
+            failed_cost = Decimal("0")
+            if isinstance(e, StructuredOutputError):
+                failed_cost = e.cost_usd
+            elif isinstance(e.__cause__, StructuredOutputError):
+                failed_cost = e.__cause__.cost_usd
+            return None, failed_cost, e.__class__.__name__
+        return judge_outcome.score, judge_outcome.cost_usd, None
 
     async def _run_one(case: GoldenCase) -> CaseResult:
         async with semaphore:
@@ -272,7 +299,7 @@ async def run_golden(
                     tool_trace_sha256=_tool_trace_sha256(()),
                     tags=tuple(case.tags),
                 )
-            judge_score, judge_cost_usd = await _judge(case, outcome)
+            judge_score, judge_cost_usd, judge_error = await _judge(case, outcome)
             return CaseResult(
                 case_id=case.case_id,
                 label=case.label,
@@ -287,6 +314,7 @@ async def run_golden(
                 tool_trace_sha256=_tool_trace_sha256(outcome.tool_calls),
                 judge=judge_score,
                 judge_cost_usd=judge_cost_usd,
+                judge_error=judge_error,
                 tags=tuple(case.tags),
             )
 
@@ -406,6 +434,15 @@ async def _run_all(
             and judge_model not in settings.model_prices_json
         ):
             return fail("config_error", f"model {judge_model!r} has no entry in MODEL_PRICES_JSON")
+        # m7 task-03 fix-1 (I4): validate the judge prompt ONCE, up front, exactly like the triage
+        # prompt is validated at `TriagePipeline.__init__` before any case runs ("price before
+        # spend") — `judge_case` still loads it again per case (a file read, not a spend; I4's own
+        # text), so this is a fail-fast check, not a cache.
+        if judge_enabled:
+            try:
+                load_judge_prompt(settings.judge_prompt_version)
+            except ConfigError as e:
+                return fail(e.code, str(e))
 
         try:
             cases = load_golden(args.golden)
@@ -482,10 +519,18 @@ async def _run_all(
                     judge_prompt_version=settings.judge_prompt_version,
                 )
             except (ConfigError, LLMCallError) as e:
-                # Backstop: `_run_one` already captures a per-case `VerdictValidationError`/
-                # `LLMCallError` as `CaseResult.error`, so a `ConfigError`/`LLMCallError` should
-                # never actually escape `run_golden` today. Mirrors `worker/triage_one.py`'s
-                # `asyncio.run(pipeline.run(...))` guard at no cost.
+                # Backstop (m7 task-03 fix-1, I4): `_run_one` already captures a per-case
+                # `VerdictValidationError`/`LLMCallError` from the triage pipeline as
+                # `CaseResult.error`, and `_judge` catches `StructuredOutputError`/
+                # `VerdictValidationError`/`LLMCallError` from the judge call as
+                # `CaseResult.judge_error` (ruling R40/I5) — neither escapes to here in normal
+                # operation. A judge `ConfigError` (a bad prompt version) is already caught up
+                # front, before any case runs, by the `load_judge_prompt` check above (I4) — the
+                # same "price before spend" guarantee `TriagePipeline.__init__`'s own `ConfigError`
+                # handling gives the triage side. So a `ConfigError`/`LLMCallError` should never
+                # actually escape `run_golden` today; this is a true backstop, not a documented
+                # failure path. Mirrors `worker/triage_one.py`'s `asyncio.run(pipeline.run(...))`
+                # guard at no cost.
                 return fail(e.code, str(e))
             metrics = score(results)
             rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))

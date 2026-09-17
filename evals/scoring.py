@@ -65,6 +65,13 @@ class CaseResult:
     """Cost of this case's judge call in USD; `Decimal("0")` when unjudged. Accounted separately
     from `cost_usd` (the triage cost) — summed into `RunMetrics.judge_cost_total_usd`, which never
     inflates `cost_mean_usd`/`cost_total_usd` (m7 task-03, `.claude/rules/evals.md`)."""
+    judge_error: str | None = None
+    """The judge call's exception CLASS NAME (e.g. `"VerdictValidationError"`) when judging was
+    attempted and failed (m7 task-03 fix-1, ruling R40) — never the exception message, which can
+    carry model output echoing attacker text. Semantics: `judge is None and judge_error is None`
+    means "not judged" (`--no-judge`, or a failed pipeline case); `judge is None and judge_error`
+    set means "judged and the judge call itself failed" — the two are otherwise indistinguishable
+    in the per-case JSON. `None` whenever `judge` is set (a successful judgment)."""
     tags: tuple[str, ...] = ()
     """This case's `GoldenCase.tags` (e.g. `"injection"`, PRD §10.6), carried through so
     `injection_pass_rate` can be computed purely from already-scored `CaseResult`s (m7 task-03)."""
@@ -295,11 +302,20 @@ COLUMNS: tuple[str, ...] = (
 )
 
 
+def _rate_or_dash(value: float | None) -> str:
+    """`f"{value:.2f}"`, or `"-"` when `value` is `None` (R39: no case was judged/tagged)."""
+    return f"{value:.2f}" if value is not None else "-"
+
+
 def format_table(rows: Sequence[ResultRow]) -> str:
     """Render `rows` as the markdown table `docs/results.md` reuses (PRD §7.5).
 
-    Header cells are `COLUMNS` verbatim; rates render at 2 decimal places, costs at 6, and
-    latencies as plain integers.
+    Header cells are `COLUMNS` verbatim; rates render at 2 decimal places (`"-"` when `None` —
+    R39: `judge_mean`/`judge_pct_le2`/`injection_pass_rate` are `None` when nothing was judged/
+    tagged), costs at 6 (`judge_cost_total_usd` is never `None`, defaulting to `Decimal("0")`),
+    and latencies as plain integers. Every row has exactly `len(COLUMNS)` cells (m7 task-03 fix-1,
+    ruling R39 — a body row used to stop at the pre-judge 16 columns, leaving the four judge
+    columns in the header with nothing under them).
 
     Args:
         rows: one `ResultRow` per prompt/model combination, in the order they should appear.
@@ -329,6 +345,10 @@ def format_table(rows: Sequence[ResultRow]) -> str:
             f"{m.cost_total_usd:.6f}",
             str(m.latency_p50_ms),
             str(m.latency_p95_ms),
+            _rate_or_dash(m.judge_mean),
+            _rate_or_dash(m.judge_pct_le2),
+            _rate_or_dash(m.injection_pass_rate),
+            f"{m.judge_cost_total_usd:.6f}",
         ]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
