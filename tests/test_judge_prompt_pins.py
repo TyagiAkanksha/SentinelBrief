@@ -23,7 +23,7 @@ import hashlib
 from pathlib import Path
 
 _JUDGE_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "evals" / "prompts"
-_JUDGE_V1_SHA256 = "<set at GREEN>"
+_JUDGE_V1_SHA256 = "68c551bd736ca7c7ad02b4b63f6da94a724eaaec9be4db707d177757d5371800"
 
 
 def test_shipped_judge_v1_hash_pinned() -> None:

@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # ValidationError instead (CONVENTIONS.md §7).
     model_prices_json: Annotated[dict[str, ModelPrice], NoDecode] = Field(default_factory=dict)
     triage_prompt_version: str = "triage-v4"
+    judge_prompt_version: str = "judge-v1"
+    """Active LLM-as-judge rubric prompt version — a file under `evals/prompts/` (PRD §7.3; m7
+    task-03). Never a literal in `evals/judge.py`/`evals/run.py`."""
     environment: str = "development"
     database_url: SecretStr = SecretStr("")
     redis_url: SecretStr = SecretStr("")

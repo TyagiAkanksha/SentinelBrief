@@ -24,6 +24,14 @@ enumerate every argument set a case can request, keyed on `src_ip` alone); `get_
 `window_hours` is the model's free choice, so its fixture space is unbounded and it always
 replays leniently, strict or not (ruling R26, m7 task-02 fix-1).
 
+`--judge`/`--no-judge` (default: on iff `is_v2_golden(args.golden)`, m7 task-03) scores every
+successful case's verdict reasoning through `evals.judge.judge_case` (PRD §7.3), over the SAME
+replayed tool results that case's own pipeline trace recorded; `--judge-model` (default
+`settings.strong_model`) is the model the judgment is requested from. A judge failure never fails
+the case's own (already-succeeded) triage result — it is recorded as a `None` judge instead. Judge
+spend is accounted separately (`RunMetrics.judge_cost_total_usd`) and never added to
+`cost_mean_usd`/`cost_total_usd` (`.claude/rules/evals.md`).
+
 `--replay-strict`/`--no-replay-strict` (default: strict iff `is_v2_golden(args.golden)`, PRD §13
 — "a v2 case whose fixture is missing fails the eval loudly rather than going live") applies ONLY
 to the two `{"ip"}` tools `evals.record` can enumerate (`worker.tools.STRICT_TOOL_NAMES`, ruling
@@ -67,6 +75,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import subprocess
 from collections.abc import Sequence
 from dataclasses import asdict
@@ -80,15 +89,25 @@ from pydantic import ValidationError
 
 from core.cli import Parser, UsageError, fail
 from core.config import Settings
-from core.errors import ConfigError, FixtureMissingError, LLMCallError, VerdictValidationError
+from core.errors import (
+    ConfigError,
+    FixtureMissingError,
+    LLMCallError,
+    StructuredOutputError,
+    VerdictValidationError,
+)
 from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
+from evals.judge import JudgeScore, judge_case
 from evals.scoring import CaseResult, ResultRow, RunMetrics, format_table, score
 from worker.llm_client import OpenAICompatibleLLMClient
-from worker.outcome import ToolCallRecord
+from worker.outcome import ToolCallRecord, TriageOutcome
+from worker.summarize import summarize_session
 from worker.tools import STRICT_TOOL_NAMES, ReplayToolRecorder
 from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TOOL_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "tools"
 
@@ -155,7 +174,13 @@ def _tool_trace_sha256(tool_calls: Sequence[ToolCallRecord]) -> str:
 
 
 async def run_golden(
-    cases: Sequence[GoldenCase], *, pipeline: TriagePipeline, concurrency: int = 4
+    cases: Sequence[GoldenCase],
+    *,
+    pipeline: TriagePipeline,
+    concurrency: int = 4,
+    judge_llm: LLMClient | None = None,
+    judge_model: str = "",
+    judge_prompt_version: str = "",
 ) -> list[CaseResult]:
     """Run every golden-set case through `pipeline`, bounded by a concurrency semaphore.
 
@@ -167,15 +192,50 @@ async def run_golden(
     after the first colon, unlike the other two — so `main` can parse the tool/key back out to
     build the "MISSING FIXTURES" list without re-deriving them.
 
+    m7 task-03: when `judge_llm` is given, every case whose pipeline run succeeds is scored by
+    `evals.judge.judge_case` (PRD §7.3) right after its own verdict, inside the same
+    semaphore-guarded task — over the SAME tool results that case's own pipeline trace recorded
+    (`TriageOutcome.tool_calls`), never a fresh/live tool call and never another case's trace. A
+    judge failure (`StructuredOutputError`/`VerdictValidationError` — the judge's own one retry
+    already failed twice) is caught here and recorded as `CaseResult.judge=None`; it never fails
+    the case's own already-succeeded triage result.
+
     Args:
         cases: The golden-set cases to run, in the order results should be returned in.
         pipeline: The real `TriagePipeline` to run every case through (never a reimplementation).
         concurrency: Maximum number of cases running through the pipeline at once.
+        judge_llm: The LLM client to score reasoning quality through; `None` (default) disables
+            judging — no case is judged, every `CaseResult.judge` reads back `None`.
+        judge_model: The model id to request the judgment from; ignored when `judge_llm` is `None`.
+        judge_prompt_version: The judge prompt version to load; ignored when `judge_llm` is `None`.
 
     Returns:
         One `CaseResult` per case, in the same order as `cases`.
     """
     semaphore = asyncio.Semaphore(concurrency)
+
+    async def _judge(case: GoldenCase, outcome: TriageOutcome) -> tuple[JudgeScore | None, Decimal]:
+        if judge_llm is None:
+            return None, Decimal("0")
+        tool_results = [
+            {"tool_name": call.tool_name, "arguments": call.arguments, "result": call.result}
+            for call in outcome.tool_calls
+        ]
+        try:
+            judge_outcome = await judge_case(
+                judge_llm,
+                model=judge_model,
+                prompt_version=judge_prompt_version,
+                summary=summarize_session(case.alert),
+                tool_results=tool_results,
+                verdict=outcome.verdict,
+            )
+        except (StructuredOutputError, VerdictValidationError) as e:
+            logger.warning(
+                "judge call failed case_id=%s reason=%s", case.case_id, e.__class__.__name__
+            )
+            return None, Decimal("0")
+        return judge_outcome.score, judge_outcome.cost_usd
 
     async def _run_one(case: GoldenCase) -> CaseResult:
         async with semaphore:
@@ -193,6 +253,7 @@ async def run_golden(
                     error=f"{e.code}:{e}",
                     tool_calls=0,
                     tool_trace_sha256=_tool_trace_sha256(()),
+                    tags=tuple(case.tags),
                 )
             except (VerdictValidationError, LLMCallError) as e:
                 # M0: a failed case's tokens/cost/latency are not threaded back out of
@@ -209,7 +270,9 @@ async def run_golden(
                     error=f"{e.code}: {e}",
                     tool_calls=0,
                     tool_trace_sha256=_tool_trace_sha256(()),
+                    tags=tuple(case.tags),
                 )
+            judge_score, judge_cost_usd = await _judge(case, outcome)
             return CaseResult(
                 case_id=case.case_id,
                 label=case.label,
@@ -222,6 +285,9 @@ async def run_golden(
                 tool_calls=len(outcome.tool_calls),
                 escalated=outcome.escalated_model,
                 tool_trace_sha256=_tool_trace_sha256(outcome.tool_calls),
+                judge=judge_score,
+                judge_cost_usd=judge_cost_usd,
+                tags=tuple(case.tags),
             )
 
     return list(await asyncio.gather(*(_run_one(case) for case in cases)))
@@ -258,11 +324,13 @@ def _metrics_payload(metrics: RunMetrics) -> dict[str, Any]:
 
 
 def _case_payload(result: CaseResult) -> dict[str, Any]:
-    """`asdict(result)` with `verdict`/`label` as plain dicts and `cost_usd` as a string."""
+    """`asdict(result)` with `verdict`/`label`/`judge` as plain dicts and `Decimal`s as strings."""
     payload: dict[str, Any] = asdict(result)
     payload["verdict"] = result.verdict.model_dump() if result.verdict is not None else None
     payload["label"] = result.label.model_dump()
     payload["cost_usd"] = str(result.cost_usd)
+    payload["judge"] = result.judge.model_dump() if result.judge is not None else None
+    payload["judge_cost_usd"] = str(result.judge_cost_usd)
     return payload
 
 
@@ -293,6 +361,20 @@ async def _run_all(
         strong_model: str | None = (
             args.strong_model if args.strong_model is not None else settings.strong_model
         ) or None
+        # m7 task-03: --judge defaults on for a v2-named golden file (PRD §13); --judge-model
+        # defaults to the strong tier (Interfaces). The DEFAULT additionally requires a judge
+        # model to actually be configured — an unconfigured judge tier must never turn a v2 run
+        # that never asked for judging into a crash or a surprise spend; `--judge` passed
+        # EXPLICITLY still turns judging on regardless (mirrors `strong_model or None`: an empty
+        # id means "this tier is off," the same rule two-tier routing already uses).
+        judge_model: str = (
+            args.judge_model if args.judge_model is not None else settings.strong_model
+        )
+        judge_enabled: bool = (
+            args.judge
+            if args.judge is not None
+            else (is_v2_golden(args.golden) and bool(judge_model))
+        )
 
         # Price before spend for the flag itself: a fake never prices, so this only applies to
         # the real client, and it must fail here rather than mid-run inside `TriagePipeline`/
@@ -308,6 +390,13 @@ async def _run_all(
             and strong_model not in settings.model_prices_json
         ):
             return fail("config_error", f"model {strong_model!r} has no entry in MODEL_PRICES_JSON")
+        if (
+            llm is None
+            and judge_enabled
+            and judge_model
+            and judge_model not in settings.model_prices_json
+        ):
+            return fail("config_error", f"model {judge_model!r} has no entry in MODEL_PRICES_JSON")
 
         try:
             cases = load_golden(args.golden)
@@ -375,7 +464,14 @@ async def _run_all(
             # elapsed wall-clock time needs the former.
             started_at = datetime.now(UTC)
             try:
-                results = await run_golden(cases, pipeline=pipeline, concurrency=args.concurrency)
+                results = await run_golden(
+                    cases,
+                    pipeline=pipeline,
+                    concurrency=args.concurrency,
+                    judge_llm=client if judge_enabled else None,
+                    judge_model=judge_model,
+                    judge_prompt_version=settings.judge_prompt_version,
+                )
             except (ConfigError, LLMCallError) as e:
                 # Backstop: `_run_one` already captures a per-case `VerdictValidationError`/
                 # `LLMCallError` as `CaseResult.error`, so a `ConfigError`/`LLMCallError` should
@@ -459,6 +555,8 @@ def main(
     parser.add_argument("--strong-model", default=None)
     parser.add_argument("--concurrency", type=_positive_int, default=4)
     parser.add_argument("--replay-strict", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--judge", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--judge-model", default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
     try:

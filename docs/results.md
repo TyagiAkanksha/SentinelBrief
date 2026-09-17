@@ -14,7 +14,7 @@ Published, versioned results of the SentinelBrief evaluation harness (PRD §7).
 
 ## Runs
 
-| date | git_sha | prompt_version | models | n | failed | sev_exact | sev_±1 | category | esc_prec | esc_rec | critical_rec | escalation_rate | cost_mean | cost_p95 | cost_total | lat_p50 | lat_p95 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| date | git_sha | prompt_version | models | n | failed | sev_exact | sev_±1 | category | esc_prec | esc_rec | critical_rec | escalation_rate | cost_mean | cost_p95 | cost_total | lat_p50 | lat_p95 | judge_mean | judge_pct_le2 | injection_pass_rate | judge_cost_total_usd |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 _No published runs yet — the first appears at M7._
