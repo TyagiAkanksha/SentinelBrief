@@ -18,6 +18,10 @@ the bottom of this module, past the m5 task-01 registry-lifecycle test.
 
 m5 task-03 fix-1 (review I1) adds one more: `--strong-model` equal to `--model` must fail as a
 clean `config_error`, not escape `TriagePipeline.__init__`'s bare `ValueError` as a traceback.
+
+m7 task-04 (ruling R35) adds `--database-url`/`--schema` (the `eval_runs` row writer) and ruling
+R42's judge-`LLMCallError` regression pin, appended at the end -- additive only, no existing test/
+helper above is touched.
 """
 
 from __future__ import annotations
@@ -33,7 +37,9 @@ from typing import Any
 
 import httpx
 import pytest
+from sqlalchemy import select
 
+from core.errors import LLMCallError
 from core.schemas.alert import SessionAlert
 from evals.golden import GoldenCase, GoldenLabel
 from evals.run import main, run_golden
@@ -1428,3 +1434,181 @@ def test_judge_prompt_validated_before_any_case_runs(
     assert captured.err.startswith("error: config_error:")
     assert len(fake.calls) == 0
     assert list(output_dir.glob("*.json")) == []
+
+
+# --- m7 task-04 ruling R42 (carried from task-03's re-review): a judge LLMCallError is recorded,
+# never fatal --------------------------------------------------------------------------------
+
+
+def test_judge_llm_call_error_is_recorded_not_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling R42: a judge call that fails with `core.errors.LLMCallError` (a transport failure,
+    never a validation failure) is recorded as `CaseResult.judge=None`/
+    `judge_error="LLMCallError"` -- the SAME non-fatal treatment
+    `StructuredOutputError`/`VerdictValidationError` already get (ruling R40, m7 task-03 fix-1) --
+    never left to escape `run_golden` as an unhandled exception; the case's own (already-succeeded)
+    triage verdict is untouched.
+
+    REGRESSION PIN: `evals/run.py::_judge`'s `except (StructuredOutputError,
+    VerdictValidationError, LLMCallError)` tuple already names `LLMCallError` today, so this test
+    passes on arrival -- it pins that the implementer must not narrow that tuple back down while
+    touching this file for task-04's other changes (verified by mutation: removing `LLMCallError`
+    from that tuple in an rsync scratch copy must make this test fail).
+    """
+    monkeypatch.setenv("STRONG_MODEL", "strong-model")
+    monkeypatch.setenv(
+        "MODEL_PRICES_JSON",
+        '{"fake-model": {"input_per_mtok": "0", "output_per_mtok": "0"}, '
+        '"strong-model": {"input_per_mtok": "0", "output_per_mtok": "0"}}',
+    )
+
+    case = _golden_case("alert1.json").model_copy(update={"labeled_by": "human"})
+    golden_path = _write_golden(tmp_path / "v2-judge-llm-error.jsonl", [case])
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+
+    fake = FakeLLMClient([VALID_VERDICT_JSON, LLMCallError("transient judge transport failure")])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--judge",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    assert rc == 0
+    assert len(fake.calls) == 2
+
+    written = list(output_dir.glob("*-triage-v1.json"))
+    assert len(written) == 1
+    payload = json.loads(written[0].read_text())
+    cases = payload["cases"]
+    assert len(cases) == 1
+    case_payload = cases[0]
+    assert case_payload["verdict"] is not None
+    assert case_payload["judge"] is None
+    assert case_payload["judge_error"] == "LLMCallError"
+
+    metrics = payload["metrics"]
+    assert metrics["judge_mean"] is None  # the only case's judgment failed -- never scored 0
+
+
+# --- m7 task-04 (ruling R35): --database-url writes an eval_runs row after each prompt version ---
+
+
+def test_main_writes_eval_runs_row_when_database_url_given(
+    tmp_schema: tuple[str, str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ruling R35: with `--database-url`/`--schema` given, `evals.run` opens ONE session
+    (`core.db.make_engine`/`make_session_factory`, the same pattern the sampler's own
+    `--database-url`/`--schema` test uses, `tests/test_sample.py::test_main_writes_file_and_
+    exits_zero`) after each prompt version is scored, writes one `eval_runs` row via
+    `evals.publish.write_eval_run_row` with `model_config = {"model", "judge_model",
+    "replay_strict", "judge"}` (the run's own effective config), commits it, and prints
+    `eval_runs: <uuid> (<prompt_version>)` on stdout after the table.
+
+    `evals.run` does not know `--database-url`/`--schema` yet, so this test is RED today: argparse
+    rejects them as unrecognized arguments (`core.cli.Parser` -> `UsageError` -> `rc == 1`,
+    `error: usage: ...`), not the `rc == 0` this test asserts.
+    """
+    from core.db import make_engine, make_session_factory
+    from core.models.eval_runs import EvalRunRow
+
+    url, schema = tmp_schema
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--database-url",
+            url,
+            "--schema",
+            schema,
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+    out_lines = captured.out.rstrip("\n").splitlines()
+    assert re.fullmatch(r"eval_runs: [0-9a-f-]{36} \(triage-v1\)", out_lines[-1])
+
+    async def _read_back() -> list[EvalRunRow]:
+        engine = make_engine(url, schema=schema)
+        try:
+            factory = make_session_factory(engine)
+            async with factory() as session:
+                result = await session.execute(select(EvalRunRow))
+                return list(result.scalars().all())
+        finally:
+            await engine.dispose()
+
+    rows = asyncio.run(_read_back())
+    assert len(rows) == 1
+    assert rows[0].prompt_version == "triage-v1"
+    assert rows[0].model_config == {
+        "model": "fake-model",
+        "judge_model": "",
+        "replay_strict": False,
+        "judge": False,
+    }
+    assert rows[0].metrics is not None
+    assert rows[0].metrics["cost_total_usd"] == "0.000100"
+
+
+def test_main_without_database_url_touches_no_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling R35: without `--database-url`, no DB code runs at all -- `evals.run` never calls
+    `evals.publish.write_eval_run_row`, so the existing DB-less test suite stays green. Proven by
+    monkeypatching `evals.run.write_eval_run_row` to raise if it is ever called.
+
+    `evals.run` does not import that name yet, so this test is RED today with `AttributeError`
+    (`monkeypatch.setattr` on an attribute the target module doesn't have).
+    """
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("write_eval_run_row must not be called without --database-url")
+
+    monkeypatch.setattr("evals.run.write_eval_run_row", _boom)
+
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+        ],
+        llm=fake,
+    )
+
+    assert rc == 0

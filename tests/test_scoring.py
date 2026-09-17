@@ -14,12 +14,24 @@ merely at first use.
 m5 task-03 (PRD §6.4) adds `CaseResult.escalated` and `RunMetrics.escalation_rate`: this module's
 own tests go RED again on `CaseResult(...)`/`RunMetrics(...)` rejecting the new `escalated`/
 `escalation_rate` keywords, until those fields exist.
+
+m7 task-04 (PRD §7.3, ruling R34-R38) adds `PR`/`per_severity`/`confusion`/`category_confusion`/
+`sev_macro_f1` and three `RunMetrics` fields + `COLUMNS` cells for them -- this module's own
+import line above now names `PR`/`category_confusion`/`confusion`/`per_severity`/`sev_macro_f1`,
+so the WHOLE module (every test below, not just the new ones) is RED again at collection with
+`ImportError: cannot import name 'PR' from 'evals.scoring'` until task-04 lands. Ruling R38
+authorizes exactly one edit to a pre-existing (m1-era) test in this file:
+`test_format_table_one_row_per_result_with_headers`'s two hand-built `RunMetrics(...)` calls gain
+the four new keyword arguments, and its two expected-cells lists gain the three new severity
+cells in the R34 position (right after the `lat_p95` cell, right before `judge_mean`'s `-`) --
+nothing else in any pre-existing test/helper above this task's own section is touched.
 """
 
 from __future__ import annotations
 
 import itertools
 from decimal import Decimal
+from typing import get_args
 
 import pytest
 
@@ -28,12 +40,17 @@ from evals.golden import GoldenLabel
 from evals.judge import JudgeScore
 from evals.scoring import (
     COLUMNS,
+    PR,
     CaseResult,
     ResultRow,
     RunMetrics,
+    category_confusion,
+    confusion,
     format_table,
+    per_severity,
     percentile,
     score,
+    sev_macro_f1,
 )
 
 _case_id_counter = itertools.count(1)
@@ -387,6 +404,10 @@ def test_format_table_one_row_per_result_with_headers() -> None:
             cost_total_usd=Decimal("0.001230"),
             latency_p50_ms=12,
             latency_p95_ms=34,
+            per_severity={b: PR(0.0, 0.0, 0) for b in range(1, 6)},
+            confusion=((0,) * 6,) * 5,
+            category_confusion={},
+            sev_macro_f1=0.0,
         ),
     )
     row_b = ResultRow(
@@ -407,6 +428,10 @@ def test_format_table_one_row_per_result_with_headers() -> None:
             cost_total_usd=Decimal("0.000005"),
             latency_p50_ms=1,
             latency_p95_ms=2,
+            per_severity={b: PR(0.0, 0.0, 0) for b in range(1, 6)},
+            confusion=((0,) * 6,) * 5,
+            category_confusion={},
+            sev_macro_f1=0.0,
         ),
     )
 
@@ -440,6 +465,9 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "0.001230",
         "12",
         "34",
+        "0.00",
+        "0.00",
+        "0.00",
         "-",
         "-",
         "-",
@@ -464,6 +492,9 @@ def test_format_table_one_row_per_result_with_headers() -> None:
         "0.000005",
         "1",
         "2",
+        "0.00",
+        "0.00",
+        "0.00",
         "-",
         "-",
         "-",
@@ -614,3 +645,153 @@ def test_format_table_renders_judge_cells() -> None:
     unjudged_body = unjudged_table.rstrip("\n").splitlines()[2:]
     unjudged_cells = [cell.strip() for cell in unjudged_body[0].strip("|").split("|")]
     assert unjudged_cells[-4:] == ["-", "-", "-", "0.000000"]
+
+
+# --- m7 task-04: per-severity P/R, confusion matrices, sev_macro_f1, COLUMNS growth (R34-R38) ----
+# Additive only, appended at the end; no existing test/helper above (other than the one R38-
+# authorized edit to test_format_table_one_row_per_result_with_headers) is touched.
+
+
+def test_per_severity_precision_recall_with_failed_as_false_negative() -> None:
+    """`per_severity` (R38's scoring rule): `recall_b = TP_b / support_b` (`support` = labeled
+    count; `0.0` when `support == 0`); `precision_b = TP_b / predicted_b` (`0.0` when nothing was
+    predicted `b`); a FAILED case (`verdict is None`) is a false negative for its OWN labeled
+    band and enters no predicted column at all -- it lowers that band's recall but never touches
+    ANY band's precision.
+
+    `hit5` (label 5, verdict 5) and `failed5` (label 5, failed) together give band 5 a support of
+    2 with only 1 true positive -> recall 0.5; only `hit5` predicted band 5 -> precision stays
+    1.0 (the failed case never entered the denominator). `hit2` is an unrelated exact match so
+    band 2 reads back a clean 1.0/1.0. Band 1 has no labeled case at all -> support 0, recall 0.0
+    (never a `ZeroDivisionError`), and nothing predicted band 1 either -> precision 0.0. Every key
+    1..5 is present regardless of support (`per_severity` never omits an unsupported band).
+    """
+    hit2 = _result(_label(2), _verdict(2))
+    hit5 = _result(_label(5), _verdict(5))
+    failed5 = _result(_label(5), None, error="llm timeout")
+
+    by_band = per_severity([hit2, hit5, failed5])
+
+    assert set(by_band.keys()) == {1, 2, 3, 4, 5}
+
+    assert by_band[5].support == 2
+    assert by_band[5].recall == 0.5
+    assert by_band[5].precision == 1.0
+
+    assert by_band[2].support == 1
+    assert by_band[2].recall == 1.0
+    assert by_band[2].precision == 1.0
+
+    assert by_band[1].support == 0
+    assert by_band[1].recall == 0.0
+    assert by_band[1].precision == 0.0
+
+
+def test_confusion_matrix_shape_and_failed_column() -> None:
+    """`confusion`: 5 rows (labeled severity 1..5) x 6 columns (predicted severity 1..5, then a
+    sixth `"failed"` column) -- every case falls into exactly one cell of its own row (its
+    predicted severity, or the failed column when `verdict is None`), so each row sums to that
+    band's labeled count. The failed column counts `verdict is None` cases only -- a normal
+    (non-failed) case, even a wildly wrong one, never adds to it.
+    """
+    exact_3 = _result(_label(3), _verdict(3))
+    off_2_to_4 = _result(_label(2), _verdict(4))
+    failed_5 = _result(_label(5), None, error="llm timeout")
+
+    matrix = confusion([exact_3, off_2_to_4, failed_5])
+
+    assert len(matrix) == 5
+    assert all(len(row) == 6 for row in matrix)
+
+    labeled_counts = [
+        sum(1 for r in (exact_3, off_2_to_4, failed_5) if r.label.severity == band)
+        for band in range(1, 6)
+    ]
+    assert [sum(row) for row in matrix] == labeled_counts
+
+    assert matrix[2][2] == 1  # band 3 labeled, predicted band 3
+    assert matrix[1][3] == 1  # band 2 labeled, predicted band 4
+    assert matrix[4][5] == 1  # band 5 labeled, verdict is None -> the failed column
+    assert matrix[4][4] == 0  # band 5's own predicted-band-5 cell stays 0: no hit here
+
+
+def test_category_confusion_all_keys_present() -> None:
+    """`category_confusion`'s keys: all seven `VerdictCategory` values on the labeled side, each
+    mapping to all seven plus `"failed"` on the predicted side, ints, zeros present (R38's
+    scoring rule) -- proven by asserting the FULL key set on both sides, not merely the non-zero
+    cells, so a category silently omitted (rather than zeroed) never passes.
+    """
+    categories = get_args(VerdictCategory)
+    assert len(categories) == 7
+
+    exact_matches = [_result(_label(2, cat=c), _verdict(2, cat=c)) for c in categories]
+    mismatch = _result(_label(1, cat="scanning"), _verdict(1, cat="other"))
+    failed = _result(_label(1, cat="brute_force"), None, error="llm timeout")
+
+    cc = category_confusion([*exact_matches, mismatch, failed])
+
+    assert set(cc.keys()) == set(categories)
+    for labeled_cat in categories:
+        assert set(cc[labeled_cat].keys()) == set(categories) | {"failed"}
+        assert all(isinstance(v, int) for v in cc[labeled_cat].values())
+
+    assert cc["scanning"]["scanning"] == 1  # the exact-match case
+    assert cc["scanning"]["other"] == 1  # the mismatch case
+    assert cc["brute_force"]["brute_force"] == 1  # the exact-match case
+    assert cc["brute_force"]["failed"] == 1  # the failed case
+    assert cc["malware_delivery"]["scanning"] == 0  # present, zero -- never omitted
+
+
+def test_sev_macro_f1_ignores_unsupported_bands() -> None:
+    """`sev_macro_f1`: the mean of `2PR/(P+R)` over bands with `support > 0` only (`0.0` when
+    `P+R == 0`); a band with zero LABELED cases never enters the mean, even when another case's
+    wrong verdict merely PREDICTED that band. `score([])` (via a direct empty-list call here) is
+    `0.0`, never a `ZeroDivisionError`.
+
+    Hand-computed: band 2 gets one exact match (`band2_exact`) plus `predicts_unsupported_band`,
+    which is labeled band 2 but predicted band 3 -- so band 2's own support is 2, TP 1 ->
+    precision 1.0, recall 0.5 -> F1 = 2*1.0*0.5/1.5 = 2/3. Band 4 gets one hit (`band4_hit`) and
+    one miss (`band4_miss`, predicted band 3) -- support 2, TP 1 -> precision 1.0, recall 0.5 ->
+    F1 = 2/3 too. Band 3 receives two PREDICTIONS (from `band4_miss` and
+    `predicts_unsupported_band`) but zero LABELS -- support 0 -- and must be excluded from the
+    mean entirely: if it were wrongly included at F1 0.0, the mean would be 4/9, not 2/3.
+    """
+    band2_exact = _result(_label(2), _verdict(2))
+    band4_hit = _result(_label(4), _verdict(4))
+    band4_miss = _result(_label(4), _verdict(3))
+    predicts_unsupported_band = _result(_label(2), _verdict(3))
+
+    f1 = sev_macro_f1([band2_exact, band4_hit, band4_miss, predicts_unsupported_band])
+
+    assert f1 == pytest.approx(2 / 3)
+    assert sev_macro_f1([]) == 0.0
+
+
+def test_columns_gain_three_severity_columns_and_table_renders() -> None:
+    """`COLUMNS` (ruling R34) gains `sev4_rec`, `sev5_rec`, `sev_macro_f1` immediately after
+    `lat_p95` and immediately before `judge_mean`; `format_table` renders them at the table's
+    existing float formatting (`per_severity[4].recall`/`[5].recall` and `sev_macro_f1`, each
+    `f"{v:.2f}"`) with no row-length drift (still exactly `len(COLUMNS)` cells).
+    """
+    assert COLUMNS.index("sev4_rec") == COLUMNS.index("lat_p95") + 1
+    assert COLUMNS.index("sev5_rec") == COLUMNS.index("sev4_rec") + 1
+    assert COLUMNS.index("sev_macro_f1") == COLUMNS.index("sev5_rec") + 1
+    assert COLUMNS.index("sev_macro_f1") == COLUMNS.index("judge_mean") - 1
+
+    hit4 = _result(_label(4), _verdict(4))
+    hit5 = _result(_label(5), _verdict(5))
+    metrics = score([hit4, hit5])
+    row = ResultRow(prompt_version="triage-v1", model="gpt-test", metrics=metrics)
+
+    table = format_table([row])
+    body = table.rstrip("\n").splitlines()[2:]
+    assert len(body) == 1
+    cells = [cell.strip() for cell in body[0].strip("|").split("|")]
+    assert len(cells) == len(COLUMNS)
+
+    idx4 = COLUMNS.index("sev4_rec")
+    idx5 = COLUMNS.index("sev5_rec")
+    idx_f1 = COLUMNS.index("sev_macro_f1")
+    assert cells[idx4] == f"{metrics.per_severity[4].recall:.2f}"
+    assert cells[idx5] == f"{metrics.per_severity[5].recall:.2f}"
+    assert cells[idx_f1] == f"{metrics.sev_macro_f1:.2f}"
