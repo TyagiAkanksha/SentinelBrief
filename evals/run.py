@@ -15,6 +15,14 @@ never `docs/results.md`, the README, or a commit message.
 `worker.triage.TriagePipeline`) wires two-tier routing into every prompt version's pipeline; the
 printed table's `escalation_rate` column reports the fraction of cases each run escalated.
 
+`--database-url URL [--schema NAME]` (m7 task-04, ruling R35; optional — the seam is the flag
+only, never `Settings().database_url`, unlike `evals.sample`) writes one `eval_runs` row (PRD
+§7.2) per `--prompt` value after it is scored, via `evals.publish.write_eval_run_row`, over ONE
+session built from `core.db.make_engine`/`make_session_factory` exactly as `evals.sample` does;
+`model_config` records the run's own effective configuration (model, judge model, replay
+strictness, whether judging ran). Each row's id is printed as `eval_runs: <uuid>
+(<prompt_version>)` on stdout after the table. Without the flag, no DB code path runs at all.
+
 `--tool-fixtures DIR` (default `tests/fixtures/tools`) is where every external tool
 (`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
 (`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
@@ -87,6 +95,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -96,9 +105,11 @@ from typing import Any
 
 import httpx
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from core.cli import Parser, UsageError, fail
 from core.config import Settings
+from core.db import make_engine, make_session_factory
 from core.errors import (
     ConfigError,
     FixtureMissingError,
@@ -109,7 +120,8 @@ from core.errors import (
 from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
 from evals.judge import JudgeScore, judge_case, load_judge_prompt
-from evals.scoring import CaseResult, ResultRow, RunMetrics, format_table, score
+from evals.publish import metrics_payload, write_eval_run_row
+from evals.scoring import CaseResult, ResultRow, format_table, score
 from worker.llm_client import OpenAICompatibleLLMClient
 from worker.outcome import ToolCallRecord, TriageOutcome
 from worker.summarize import summarize_session
@@ -338,19 +350,6 @@ def _git_sha() -> str:
     return result.stdout.strip()
 
 
-def _metrics_payload(metrics: RunMetrics) -> dict[str, Any]:
-    """`asdict(metrics)` with every `Decimal` field rendered as its exact string.
-
-    JSON has no decimal type; `Decimal` -> `float` would silently reintroduce the precision
-    drift CONVENTIONS.md §7 forbids.
-    """
-    payload: dict[str, Any] = asdict(metrics)
-    for key, value in payload.items():
-        if isinstance(value, Decimal):
-            payload[key] = str(value)
-    return payload
-
-
 def _case_payload(result: CaseResult) -> dict[str, Any]:
     """`asdict(result)` with `verdict`/`label`/`judge` as plain dicts and `Decimal`s as strings."""
     payload: dict[str, Any] = asdict(result)
@@ -384,6 +383,7 @@ async def _run_all(
     Returns:
         `0` on success, `1` on any failure path (see `main`'s own docstring).
     """
+    db_engine: AsyncEngine | None = None
     try:
         model: str = args.model if args.model is not None else settings.cheap_model
         strong_model: str | None = (
@@ -484,8 +484,23 @@ async def _run_all(
             http=http,
         )
 
+        # m7 task-04, ruling R35: --database-url writes an eval_runs row per prompt version. The
+        # sampler's own seam (`evals/sample.py:~322`) — never `Settings().database_url`, since
+        # `evals.run` writes only when explicitly told to.
+        db_session_factory = None
+        if args.database_url:
+            db_engine = make_engine(args.database_url, schema=args.schema)
+            db_session_factory = make_session_factory(db_engine)
+        model_config: dict[str, Any] = {
+            "model": model,
+            "judge_model": judge_model,
+            "replay_strict": replay_strict,
+            "judge": judge_enabled,
+        }
+
         git_sha = _git_sha()
         rows: list[ResultRow] = []
+        eval_run_rows: list[tuple[uuid.UUID, str]] = []
         any_case_succeeded = False
         missing_fixtures: set[tuple[str, str]] = set()
         for prompt_version in args.prompt:
@@ -534,6 +549,18 @@ async def _run_all(
                 return fail(e.code, str(e))
             metrics = score(results)
             rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
+            if db_session_factory is not None:
+                async with db_session_factory() as db_session:
+                    row_id = await write_eval_run_row(
+                        db_session,
+                        git_sha=git_sha,
+                        prompt_version=prompt_version,
+                        model_config=model_config,
+                        started_at=started_at,
+                        metrics=metrics,
+                    )
+                    await db_session.commit()
+                eval_run_rows.append((row_id, prompt_version))
             if any(r.error is None for r in results):
                 any_case_succeeded = True
             for result in results:
@@ -546,7 +573,7 @@ async def _run_all(
                 "model": model,
                 "git_sha": git_sha,
                 "started_at": started_at.isoformat(),
-                "metrics": _metrics_payload(metrics),
+                "metrics": metrics_payload(metrics),
                 "cases": [_case_payload(r) for r in results],
             }
             filename = f"{started_at.strftime('%Y%m%dT%H%M%SZ')}-{prompt_version}.json"
@@ -570,9 +597,13 @@ async def _run_all(
             return fail("all_cases_failed", "every case failed in every prompt run")
 
         print(format_table(rows))
+        for row_id, prompt_version in eval_run_rows:
+            print(f"eval_runs: {row_id} ({prompt_version})")
         return 0
     finally:
         await http.aclose()
+        if db_engine is not None:
+            await db_engine.dispose()
 
 
 def main(
@@ -613,6 +644,8 @@ def main(
     parser.add_argument("--judge-model", default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
+    parser.add_argument("--database-url", default=None)
+    parser.add_argument("--schema", default=None)
     try:
         args = parser.parse_args(argv)
     except UsageError as e:

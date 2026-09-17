@@ -11,6 +11,11 @@ because that spend/time already happened.
 
 `escalation_rate` (m5 task-03, PRD §6.4) is `escalated ÷ n_cases`: a failed case never counts as
 escalated, same rule as every other rate here.
+
+m7 task-04 (PRD §7.3, ruling R34-R38) adds `per_severity`/`confusion`/`category_confusion`/
+`sev_macro_f1` to `RunMetrics`; the two matrices are NOT `COLUMNS` cells (they go to the per-run
+JSON via `evals.publish.metrics_payload`) — only `sev4_rec`, `sev5_rec` and `sev_macro_f1` render
+in `format_table`'s row, right after `lat_p95` and before `judge_mean`.
 """
 
 from __future__ import annotations
@@ -19,8 +24,9 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
+from typing import get_args
 
-from core.schemas.verdict import Verdict
+from core.schemas.verdict import Verdict, VerdictCategory
 from evals.golden import GoldenLabel
 from evals.judge import JudgeScore
 
@@ -78,6 +84,123 @@ class CaseResult:
 
 
 @dataclass(frozen=True)
+class PR:
+    """One severity band's precision, recall and support (PRD §7.3, m7 task-04, ruling R38).
+
+    `support` is the band's labeled count; `precision` is `0.0` when nothing was predicted that
+    band (never a `ZeroDivisionError`); `recall` is `0.0` when the band has no labeled cases.
+    """
+
+    precision: float
+    recall: float
+    support: int
+
+
+def per_severity(results: Sequence[CaseResult]) -> dict[int, PR]:
+    """Per-severity-band precision/recall/support over `results` (PRD §7.3, ruling R38).
+
+    `recall_b = TP_b / support_b` (`support` = labeled count for band `b`); `precision_b = TP_b /
+    predicted_b`. A failed case (`verdict is None`) is a false negative for its own labeled band
+    and enters no predicted column at all — it lowers that band's recall but never touches any
+    band's precision.
+
+    Args:
+        results: one `CaseResult` per golden-set case in the run.
+
+    Returns:
+        One `PR` per severity band 1..5, always present regardless of support.
+    """
+    support = dict.fromkeys(range(1, 6), 0)
+    true_positive = dict.fromkeys(range(1, 6), 0)
+    predicted = dict.fromkeys(range(1, 6), 0)
+    for r in results:
+        support[r.label.severity] += 1
+        if r.verdict is not None:
+            predicted[r.verdict.severity] += 1
+            if r.verdict.severity == r.label.severity:
+                true_positive[r.label.severity] += 1
+    return {
+        band: PR(
+            precision=(true_positive[band] / predicted[band]) if predicted[band] else 0.0,
+            recall=(true_positive[band] / support[band]) if support[band] else 0.0,
+            support=support[band],
+        )
+        for band in range(1, 6)
+    }
+
+
+def confusion(results: Sequence[CaseResult]) -> tuple[tuple[int, ...], ...]:
+    """5x6 confusion matrix over `results` (PRD §7.3, ruling R38).
+
+    Rows are the labeled severity 1..5; the first five columns are the predicted severity 1..5
+    and the sixth is `"failed"` (`verdict is None`) — every case falls into exactly one cell of
+    its own row, so each row sums to that band's labeled count.
+
+    Args:
+        results: one `CaseResult` per golden-set case in the run.
+
+    Returns:
+        A `(5, 6)` tuple of tuples of counts.
+    """
+    matrix = [[0] * 6 for _ in range(5)]
+    for r in results:
+        row = matrix[r.label.severity - 1]
+        if r.verdict is None:
+            row[5] += 1
+        else:
+            row[r.verdict.severity - 1] += 1
+    return tuple(tuple(row) for row in matrix)
+
+
+def category_confusion(results: Sequence[CaseResult]) -> dict[str, dict[str, int]]:
+    """Category confusion counts over `results` (PRD §7.3, ruling R38).
+
+    Keyed by every `VerdictCategory` value on the labeled side, each mapping to every
+    `VerdictCategory` value plus `"failed"` on the predicted side — zero cells are present, never
+    omitted, so a category never scored still reads back as `0`, not a missing key.
+
+    Args:
+        results: one `CaseResult` per golden-set case in the run.
+
+    Returns:
+        A dict of dicts of counts, all `VerdictCategory` keys present on both sides.
+    """
+    categories = get_args(VerdictCategory)
+    cc: dict[str, dict[str, int]] = {
+        labeled: dict.fromkeys((*categories, "failed"), 0) for labeled in categories
+    }
+    for r in results:
+        row = cc[r.label.category]
+        if r.verdict is None:
+            row["failed"] += 1
+        else:
+            row[r.verdict.category] += 1
+    return cc
+
+
+def sev_macro_f1(results: Sequence[CaseResult]) -> float:
+    """Macro-averaged F1 over severity bands with labeled support (PRD §7.3, ruling R38).
+
+    The mean of `2PR/(P+R)` over bands with `support > 0` only (`0.0` for a band when `P+R ==
+    0`); a band with zero LABELED cases is excluded from the mean entirely, even when another
+    case's wrong verdict merely predicted that band.
+
+    Args:
+        results: one `CaseResult` per golden-set case in the run.
+
+    Returns:
+        The macro-F1, or `0.0` when no band has support (never a `ZeroDivisionError`).
+    """
+    scores = []
+    for pr in per_severity(results).values():
+        if pr.support == 0:
+            continue
+        denom = pr.precision + pr.recall
+        scores.append((2 * pr.precision * pr.recall / denom) if denom else 0.0)
+    return sum(scores) / len(scores) if scores else 0.0
+
+
+@dataclass(frozen=True)
 class RunMetrics:
     """Aggregate metrics for one eval run over its `CaseResult`s (PRD §7.3).
 
@@ -101,6 +224,18 @@ class RunMetrics:
     cost_total_usd: Decimal
     latency_p50_ms: int
     latency_p95_ms: int
+    per_severity: dict[int, PR]
+    """Per-severity-band precision/recall/support (PRD §7.3, m7 task-04, ruling R38); see
+    `per_severity()`."""
+    confusion: tuple[tuple[int, ...], ...]
+    """5x6 confusion matrix — labeled severity 1..5 rows, predicted severity 1..5 plus a `failed`
+    column (PRD §7.3, m7 task-04, ruling R38); see `confusion()`."""
+    category_confusion: dict[str, dict[str, int]]
+    """Category confusion counts, every `VerdictCategory` present on both sides (PRD §7.3, m7
+    task-04, ruling R38); see `category_confusion()`."""
+    sev_macro_f1: float
+    """Macro-averaged F1 over severity bands with labeled support (PRD §7.3, m7 task-04, ruling
+    R38); see `sev_macro_f1()`."""
     judge_mean: float | None = None
     """Mean LLM-as-judge score (1-5) over every JUDGED case (PRD §7.3, m7 task-03); `None` when
     no case was judged. A `judge=None` case is excluded from the denominator, never counted as 0."""
@@ -262,6 +397,10 @@ def score(results: Sequence[CaseResult]) -> RunMetrics:
         cost_total_usd=cost_total_usd,
         latency_p50_ms=latency_p50_ms,
         latency_p95_ms=latency_p95_ms,
+        per_severity=per_severity(results),
+        confusion=confusion(results),
+        category_confusion=category_confusion(results),
+        sev_macro_f1=sev_macro_f1(results),
         judge_mean=judge_mean,
         judge_pct_le2=judge_pct_le2,
         injection_pass_rate=injection_pass_rate,
@@ -295,6 +434,9 @@ COLUMNS: tuple[str, ...] = (
     "cost_total",
     "lat_p50",
     "lat_p95",
+    "sev4_rec",
+    "sev5_rec",
+    "sev_macro_f1",
     "judge_mean",
     "judge_pct_le2",
     "injection_pass_rate",
@@ -345,6 +487,9 @@ def format_table(rows: Sequence[ResultRow]) -> str:
             f"{m.cost_total_usd:.6f}",
             str(m.latency_p50_ms),
             str(m.latency_p95_ms),
+            f"{m.per_severity[4].recall:.2f}",
+            f"{m.per_severity[5].recall:.2f}",
+            f"{m.sev_macro_f1:.2f}",
             _rate_or_dash(m.judge_mean),
             _rate_or_dash(m.judge_pct_le2),
             _rate_or_dash(m.injection_pass_rate),

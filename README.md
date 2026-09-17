@@ -183,6 +183,20 @@ traffic and is the only source of the numbers in [`docs/results.md`](docs/result
 `STRONG_MODEL`; the printed table's `escalation_rate` column reports the fraction of cases each
 run escalated to the strong model.
 
+Metrics computed on every run (PRD §7.3; `evals/scoring.py`):
+
+- Severity exact-match % and within-±1 %.
+- Per-severity precision/recall, a 5×6 confusion matrix, and category confusion (per-run JSON;
+  not results-table columns).
+- Macro-F1 over severity bands with labeled support.
+- Critical recall (labeled severity ≥ 4) — the security-relevant number.
+- Escalation precision/recall, escalation rate to the strong model, category accuracy.
+- Cost (mean/p95/total USD) and latency (p50/p95 ms).
+- LLM-as-judge reasoning quality (mean, % scoring ≤2) and injection-tagged pass rate, when judged.
+
+`--database-url URL [--schema NAME]` additionally writes one `eval_runs` row per `--prompt` value
+scored, carrying the full metrics blob and the run's effective model configuration.
+
 ### Evals — labeling v2
 
 Golden set v2 labels are human work (PRD §13): `python -m evals.sample` draws a stratified,

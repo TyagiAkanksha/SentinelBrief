@@ -49,7 +49,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.cache import TTLCache
 from core.config import Settings
 from core.errors import ConfigError, LLMCallError, StructuredOutputError, VerdictValidationError
-from core.llm import ChatMessage, LLMClient, LLMResult, tool_calls_message
+from core.llm import ChatMessage, LLMClient, LLMResult, ToolCallTurn, tool_calls_message
 from core.models.alerts import AlertStatus
 from core.schemas.alert import SessionAlert
 from core.schemas.verdict import VERDICT_JSON_SCHEMA, Verdict
@@ -81,6 +81,46 @@ FINAL_VERDICT_INSTRUCTION = (
     "The tool budget is exhausted. Using only the evidence already gathered, reply with ONLY a "
     "JSON object that matches the schema in the system message."
 )
+
+
+@dataclass(frozen=True)
+class Totals:
+    """Running input/output tokens, cost and latency across one `run()` call's LLM turns (m7
+    task-04, ruling R37: the M5-review-deferred cleanup of `run`'s four bare accumulators and
+    their `nonlocal` rebinds).
+
+    Every field defaults to zero so `Totals()` is the identity accumulator both `run`'s start and
+    the strong-pass reset (seeding from the cheap pass's own final tallies) construct directly.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: Decimal = Decimal("0")
+    latency_ms: int = 0
+
+    def add(self, result: LLMResult[Any] | ToolCallTurn) -> Totals:
+        """Fold one successful LLM call's usage/cost/latency into a NEW `Totals`.
+
+        `result` is `LLMResult[Any]` for a validated content reply (a tool-less call, a retry, or
+        the strong pass) or `ToolCallTurn` for one tool-calling turn — both carry the same
+        `usage`/`cost_usd`/`latency_ms` shape.
+        """
+        return Totals(
+            input_tokens=self.input_tokens + result.usage.input_tokens,
+            output_tokens=self.output_tokens + result.usage.output_tokens,
+            cost_usd=self.cost_usd + result.cost_usd,
+            latency_ms=self.latency_ms + result.latency_ms,
+        )
+
+    def add_error(self, err: StructuredOutputError) -> Totals:
+        """Fold one failed (but already-billed) `StructuredOutputError`'s usage into a NEW
+        `Totals` — the PRD §6.5 retry's own already-spent usage must not be dropped."""
+        return Totals(
+            input_tokens=self.input_tokens + err.input_tokens,
+            output_tokens=self.output_tokens + err.output_tokens,
+            cost_usd=self.cost_usd + err.cost_usd,
+            latency_ms=self.latency_ms + err.latency_ms,
+        )
 
 
 @dataclass(frozen=True)
@@ -247,25 +287,23 @@ class TriagePipeline:
         messages = build_messages(self._template, summary=summary, schema=VERDICT_JSON_SCHEMA)
 
         records: list[ToolCallRecord] = []
-        input_tokens = 0
-        output_tokens = 0
-        cost_usd = Decimal("0")
-        latency_ms = 0
+        totals = Totals()
 
         def _outcome(result: LLMResult[Verdict], *, model: str, retried: bool) -> TriageOutcome:
             """Add `result`'s own usage/cost/latency to the running totals and build the outcome.
 
             `model` is parameterised (m5 task-03) so the same closure serves both the cheap and
-            the strong pass while still sharing the one set of running totals.
+            the strong pass while still sharing the one running `Totals` (m7 task-04, ruling R37).
             """
+            merged = totals.add(result)
             return TriageOutcome(
                 verdict=result.parsed,
                 model=model,
                 prompt_version=self._prompt_version,
-                input_tokens=input_tokens + result.usage.input_tokens,
-                output_tokens=output_tokens + result.usage.output_tokens,
-                cost_usd=cost_usd + result.cost_usd,
-                latency_ms=latency_ms + result.latency_ms,
+                input_tokens=merged.input_tokens,
+                output_tokens=merged.output_tokens,
+                cost_usd=merged.cost_usd,
+                latency_ms=merged.latency_ms,
                 retried=retried,
                 tool_calls=tuple(records),
             )
@@ -275,11 +313,8 @@ class TriagePipeline:
         ) -> TriageOutcome:
             """The one PRD §6.5 retry: always tool-less, always the final word for this call's
             tier (`model` — the cheap or the strong id, m5 task-03)."""
-            nonlocal input_tokens, output_tokens, cost_usd, latency_ms
-            input_tokens += first_err.input_tokens
-            output_tokens += first_err.output_tokens
-            cost_usd += first_err.cost_usd
-            latency_ms += first_err.latency_ms
+            nonlocal totals
+            totals = totals.add_error(first_err)
             retry_messages: list[ChatMessage] = [
                 *msgs,
                 {"role": "assistant", "content": first_err.raw_text},
@@ -316,7 +351,7 @@ class TriagePipeline:
         async def _cheap_pass() -> TriageOutcome:
             """The M4 tool loop, unchanged in behaviour, always at `self._model` (the cheap
             tier)."""
-            nonlocal input_tokens, output_tokens, cost_usd, latency_ms
+            nonlocal totals
             specs = self._tools.specs() if self._tools is not None else []
             has_tools = self._tools is not None and bool(specs)
             if has_tools:
@@ -337,10 +372,7 @@ class TriagePipeline:
                         return _outcome(reply, model=self._model, retried=False)
 
                     # ToolCallTurn: the model asked for one or more tools this turn.
-                    input_tokens += reply.usage.input_tokens
-                    output_tokens += reply.usage.output_tokens
-                    cost_usd += reply.cost_usd
-                    latency_ms += reply.latency_ms
+                    totals = totals.add(reply)
                     messages.append(tool_calls_message(reply.calls))
                     for call in reply.calls:
                         execution = await self._tools.execute(call.name, call.arguments, ctx)
@@ -388,12 +420,9 @@ class TriagePipeline:
             self._strong_model,
         )
         # Seed the running totals with the cheap pass's own final tallies (its own `_outcome`
-        # call folded its result's usage into its return value, not back into these nonlocals) so
+        # call folded its result's usage into its return value, not back into `totals`) so
         # `_final`'s strong-tier accumulation sums across BOTH tiers, not the strong call alone.
-        input_tokens = cheap.input_tokens
-        output_tokens = cheap.output_tokens
-        cost_usd = cheap.cost_usd
-        latency_ms = cheap.latency_ms
+        totals = Totals(cheap.input_tokens, cheap.output_tokens, cheap.cost_usd, cheap.latency_ms)
         # `messages` is the cheap conversation exactly as it stands: system prompt, delimited
         # summary, every tool-call turn/result, and FINAL_VERDICT_INSTRUCTION on the cap path —
         # the cheap verdict text itself is never appended (no anchoring), and no tools are
@@ -463,7 +492,7 @@ class TriagePipeline:
                 session,
                 alert_id=alert_id,
                 outcome=outcome,
-                model_primary=outcome.model_primary or outcome.model,
+                model_primary=outcome.effective_model_primary,
                 escalated_model=outcome.escalated_model,
                 tool_calls=outcome.tool_calls,
             )

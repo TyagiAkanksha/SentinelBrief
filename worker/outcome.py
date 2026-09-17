@@ -53,7 +53,17 @@ class TriageOutcome:
     tool_calls: tuple[ToolCallRecord, ...] = ()
     model_primary: str | None = None
     """The cheap-tier model id, when routing escalated; `None` means no routing happened (`model`
-    is already the only model this run used) — `persist_verdict` receives `model_primary or
-    model` (m5 task-03, PRD §6.4)."""
+    is already the only model this run used). Read back through `effective_model_primary` (m5
+    task-03, m7 task-04 ruling R36, PRD §6.4)."""
     escalated_model: bool = False
     """Whether routing escalated this run to the strong model (m5 task-03, PRD §6.4)."""
+
+    @property
+    def effective_model_primary(self) -> str:
+        """The cheap-tier model that started this run when routing escalated it, else `model`
+        itself — the only model the run ever used (m7 task-04, ruling R36). This is always the
+        model that produced the run's FIRST verdict, never the strong tier that overrode it on
+        escalation (that model is `model`) — the one expression the pipeline's persisted-verdict
+        argument and the CLI's printed JSON both need.
+        """
+        return self.model_primary or self.model
