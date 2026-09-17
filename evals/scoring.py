@@ -497,3 +497,50 @@ def format_table(rows: Sequence[ResultRow]) -> str:
         ]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
+
+
+def render_confusion(metrics: RunMetrics) -> str:
+    """Render `metrics.confusion` as a markdown table (PRD §7.3, m7 task-04 fix-0, ruling R45).
+
+    Header `| labeled\\predicted | 1 | 2 | 3 | 4 | 5 | failed |`; one body row per labeled
+    severity band 1..5, cells are `RunMetrics.confusion`'s counts verbatim — `evals.run --matrix`
+    prints this, never `format_table` (the matrix is not a `COLUMNS` cell).
+
+    Args:
+        metrics: The run's aggregated metrics.
+
+    Returns:
+        A markdown table: a header line, a separator line, then one body line per severity band.
+    """
+    header = "| labeled\\predicted | 1 | 2 | 3 | 4 | 5 | failed |"
+    separator = "|" + "|".join("---" for _ in range(7)) + "|"
+    lines = [header, separator]
+    for band in range(1, 6):
+        cells = " | ".join(str(count) for count in metrics.confusion[band - 1])
+        lines.append(f"| {band} | {cells} |")
+    return "\n".join(lines) + "\n"
+
+
+def render_category_confusion(metrics: RunMetrics) -> str:
+    """Render `metrics.category_confusion` as a markdown table (PRD §7.3, m7 task-04 fix-0,
+    ruling R45).
+
+    The seven `VerdictCategory` values as rows, the same seven plus `failed` as columns — same
+    key order `category_confusion()` builds them in.
+
+    Args:
+        metrics: The run's aggregated metrics.
+
+    Returns:
+        A markdown table: a header line, a separator line, then one body line per category.
+    """
+    categories = get_args(VerdictCategory)
+    columns = (*categories, "failed")
+    header = "| labeled\\predicted | " + " | ".join(columns) + " |"
+    separator = "|" + "|".join("---" for _ in range(len(columns) + 1)) + "|"
+    lines = [header, separator]
+    for labeled in categories:
+        row = metrics.category_confusion[labeled]
+        cells = " | ".join(str(row[col]) for col in columns)
+        lines.append(f"| {labeled} | {cells} |")
+    return "\n".join(lines) + "\n"

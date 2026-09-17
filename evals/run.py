@@ -23,6 +23,12 @@ session built from `core.db.make_engine`/`make_session_factory` exactly as `eval
 strictness, whether judging ran). Each row's id is printed as `eval_runs: <uuid>
 (<prompt_version>)` on stdout after the table. Without the flag, no DB code path runs at all.
 
+`--matrix` (default off, m7 task-04 fix-0, ruling R45) prints, after the results table and once
+per `--prompt` value, a `## Matrix (<prompt_version>)` section holding the severity confusion
+(`evals.scoring.render_confusion`) and category confusion (`evals.scoring.render_category_
+confusion`) markdown tables for that prompt version's run — the matrices themselves are never
+`format_table` columns (they already land in full in the per-run JSON via `metrics_payload`).
+
 `--tool-fixtures DIR` (default `tests/fixtures/tools`) is where every external tool
 (`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
 (`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
@@ -121,7 +127,14 @@ from core.llm import LLMClient
 from evals.golden import GoldenCase, load_golden
 from evals.judge import JudgeScore, judge_case, load_judge_prompt
 from evals.publish import metrics_payload, write_eval_run_row
-from evals.scoring import CaseResult, ResultRow, format_table, score
+from evals.scoring import (
+    CaseResult,
+    ResultRow,
+    format_table,
+    render_category_confusion,
+    render_confusion,
+    score,
+)
 from worker.llm_client import OpenAICompatibleLLMClient
 from worker.outcome import ToolCallRecord, TriageOutcome
 from worker.summarize import summarize_session
@@ -361,6 +374,15 @@ def _case_payload(result: CaseResult) -> dict[str, Any]:
     return payload
 
 
+def _print_matrix_sections(rows: Sequence[ResultRow]) -> None:
+    """Print one `## Matrix (<prompt_version>)` section per row (m7 task-04 fix-0, ruling R45):
+    the severity confusion and category confusion markdown tables, `--matrix`'s only output."""
+    for row in rows:
+        print(f"## Matrix ({row.prompt_version})")
+        print(render_confusion(row.metrics))
+        print(render_category_confusion(row.metrics))
+
+
 async def _run_all(
     args: argparse.Namespace, settings: Settings, *, llm: LLMClient | None, http: httpx.AsyncClient
 ) -> int:
@@ -589,6 +611,8 @@ async def _run_all(
         # pair, not just report "every case failed" with nothing actionable.
         if missing_fixtures:
             print(format_table(rows))
+            if args.matrix:
+                _print_matrix_sections(rows)
             pairs = " ".join(f"{tool_name} {key}" for tool_name, key in sorted(missing_fixtures))
             print(f"MISSING FIXTURES ({len(missing_fixtures)}): {pairs}")
             return 1
@@ -597,6 +621,8 @@ async def _run_all(
             return fail("all_cases_failed", "every case failed in every prompt run")
 
         print(format_table(rows))
+        if args.matrix:
+            _print_matrix_sections(rows)
         for row_id, prompt_version in eval_run_rows:
             print(f"eval_runs: {row_id} ({prompt_version})")
         return 0
@@ -646,6 +672,7 @@ def main(
     parser.add_argument("--tool-fixtures", type=Path, default=DEFAULT_TOOL_FIXTURES)
     parser.add_argument("--database-url", default=None)
     parser.add_argument("--schema", default=None)
+    parser.add_argument("--matrix", action="store_true")
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
