@@ -361,12 +361,14 @@ async def _run_all(
         strong_model: str | None = (
             args.strong_model if args.strong_model is not None else settings.strong_model
         ) or None
-        # m7 task-03: --judge defaults on for a v2-named golden file (PRD §13); --judge-model
-        # defaults to the strong tier (Interfaces). The DEFAULT additionally requires a judge
-        # model to actually be configured — an unconfigured judge tier must never turn a v2 run
-        # that never asked for judging into a crash or a surprise spend; `--judge` passed
-        # EXPLICITLY still turns judging on regardless (mirrors `strong_model or None`: an empty
-        # id means "this tier is off," the same rule two-tier routing already uses).
+        # m7 task-03 (ruling R33): --judge defaults on for a v2-named golden file (PRD §13) ONLY
+        # when a judge model is actually configured — an unconfigured judge tier must never turn
+        # a v2 run that never asked for judging into a crash or a surprise spend (mirrors
+        # `strong_model or None`: an empty id means "this tier is off," the same rule two-tier
+        # routing already uses); `--judge-model` defaults to the strong tier (Interfaces). An
+        # EXPLICIT `--judge` with no judge model configured is instead a `config_error` below —
+        # unlike the default, an explicit ask for judging that cannot be honored is a
+        # configuration mistake, not a silent no-op.
         judge_model: str = (
             args.judge_model if args.judge_model is not None else settings.strong_model
         )
@@ -390,6 +392,13 @@ async def _run_all(
             and strong_model not in settings.model_prices_json
         ):
             return fail("config_error", f"model {strong_model!r} has no entry in MODEL_PRICES_JSON")
+        # ruling R33: this can only be reached via an EXPLICIT --judge (the default already
+        # requires bool(judge_model) to resolve to True at all), so an empty judge_model here
+        # means the caller asked for judging without configuring a model for it.
+        if judge_enabled and not judge_model:
+            return fail(
+                "config_error", "--judge is set but no judge model is configured (STRONG_MODEL)"
+            )
         if (
             llm is None
             and judge_enabled
