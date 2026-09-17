@@ -13,6 +13,18 @@ Also pins review I2 (the "MISSING FIXTURES" line must print even when every case
 fixture — today it is suppressed by the `all_cases_failed` early return) and review I5 (the
 `--only` flag and `main`'s all-recorded success exit, both previously untested).
 
+Fix round 2 (ruling R30, re-review N2): R25's persistence rule was a DENY-list of fixed reason
+strings, which cannot hold a dynamically formatted token — `IpReputationTool` emits
+`unavailable(f"http_{status}")` for any HTTP error it doesn't special-case, so `http_503`,
+`http_429`, etc. matched neither `TRANSIENT_REASONS` nor the raising-tool colon check and were
+persisted as fixtures. R30 inverts this to a fail-closed ALLOW-list: only
+`{"invalid_arguments", "unknown_session", "unknown_asset"}` — the tokens a tool's own
+argument/lookup logic can produce, reproducing identically forever — are ever persisted; every
+other reason, fixed or dynamic, known or not, is transient. `test_transient_unavailable_result_
+is_never_persisted_as_a_fixture` is now parametrized to include `http_503`/`http_429`, and two new
+tests pin the allow-list's exact membership and its fail-closed default for an unrecognized
+reason.
+
 `evals.record.record`/`main` do not yet special-case a transient reason (every `unavailable(...)`
 result is currently reported the same way, and the file it minted is never removed), and
 `ReplayToolRecorder` does not yet refuse a poisoned fixture, so most tests in this module are RED
@@ -196,7 +208,9 @@ def _registry(fixtures_dir: Path, *, tools: list[Any]) -> ToolRegistry:
 # --- R25: transient reasons are never persisted -------------------------------------------------
 
 
-@pytest.mark.parametrize("reason", ["no_api_key", "quota_exceeded", "network_error"])
+@pytest.mark.parametrize(
+    "reason", ["no_api_key", "quota_exceeded", "network_error", "http_503", "http_429"]
+)
 def test_transient_unavailable_result_is_never_persisted_as_a_fixture(
     tmp_path: Path, reason: str
 ) -> None:
@@ -280,10 +294,11 @@ async def test_deterministic_unavailable_result_is_persisted_as_a_fixture(tmp_pa
     assert report2.failed == []
 
 
-async def test_strict_replay_refuses_a_hand_poisoned_fixture(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reason", ["no_api_key", "http_503"])
+async def test_strict_replay_refuses_a_hand_poisoned_fixture(tmp_path: Path, reason: str) -> None:
     ip = "203.0.113.92"
     arguments = {"ip": ip}
-    write_fixture(tmp_path, "lookup_ip_reputation", arguments, unavailable("no_api_key"))
+    write_fixture(tmp_path, "lookup_ip_reputation", arguments, unavailable(reason))
     tool = _CannedExternalTool("lookup_ip_reputation")  # strict replay never calls .run
     recorder = ReplayToolRecorder(tmp_path, strict=True)
     ctx = _make_ctx()
@@ -293,6 +308,58 @@ async def test_strict_replay_refuses_a_hand_poisoned_fixture(tmp_path: Path) -> 
 
     assert ":poisoned" in str(exc_info.value)
     assert tool.run_count == 0
+
+
+# --- N2/R30: fixture persistence is a fail-closed ALLOW-list, not a deny-list -------------------
+
+
+@pytest.mark.parametrize("reason", ["invalid_arguments", "unknown_session", "unknown_asset"])
+async def test_deterministic_reasons_allow_list_is_exact(tmp_path: Path, reason: str) -> None:
+    """R30: only these three reasons are ever persisted — every other reason (fixed or dynamic,
+    known or not) is transient. Pins the allow-list membership exactly, one case per member.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    ip = "203.0.113.97"
+    cases = [_case("alert1.json", src_ip=ip)]
+    good_tool = _CannedExternalTool("get_ip_geo_asn")
+    allow_listed_tool = _ReasonExternalTool("lookup_ip_reputation", reason)
+
+    report = await record(
+        cases,
+        registry=_registry(fixtures_dir, tools=[good_tool, allow_listed_tool]),
+        fixtures_dir=fixtures_dir,
+        only=None,
+        dry_run=False,
+    )
+
+    assert fixture_path(fixtures_dir, "lookup_ip_reputation", {"ip": ip}).exists()
+    assert report.failed == []
+    assert report.recorded == 2
+
+
+async def test_unknown_reason_is_treated_as_transient(tmp_path: Path) -> None:
+    """R30 is fail-closed: a reason nobody has enumerated yet (not in the three-member allow-list,
+    and not a previously-known "transient" token either) must still be refused, never persisted —
+    the whole point of inverting R25's deny-list.
+    """
+    fixtures_dir = tmp_path / "fixtures"
+    ip = "203.0.113.98"
+    cases = [_case("alert1.json", src_ip=ip)]
+    good_tool = _CannedExternalTool("get_ip_geo_asn")
+    unknown_tool = _ReasonExternalTool("lookup_ip_reputation", "something_new")
+    key = fixture_key({"ip": ip})
+
+    report = await record(
+        cases,
+        registry=_registry(fixtures_dir, tools=[good_tool, unknown_tool]),
+        fixtures_dir=fixtures_dir,
+        only=None,
+        dry_run=False,
+    )
+
+    assert not fixture_path(fixtures_dir, "lookup_ip_reputation", {"ip": ip}).exists()
+    assert report.failed == [("lookup_ip_reputation", key, "something_new")]
+    assert report.recorded == 1
 
 
 # --- I2: the MISSING FIXTURES line must survive the all_cases_failed short-circuit ---------------
