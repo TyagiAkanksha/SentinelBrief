@@ -85,6 +85,11 @@ empty, and never raises a traceback:
     --judge is on with an invalid/missing JUDGE_PROMPT_VERSION, raised
         before any case runs ("price before spend", m7 task-03 fix-1 I4)      config_error
     output directory not writable                                            output_error
+    `--database-url` given and the `eval_runs` write fails (`OSError`/
+        `SQLAlchemyError` -- connection refused, bad credentials, a
+        malformed URL; m7 task-04 fix-1, finding I1); the per-run JSON is
+        always written FIRST, so a DB failure never discards a run's
+        already-spent results                                                database_error
     every case failed in every prompt run (a per-case failure alone still
         exits 0 -- it is captured as `CaseResult.error`, not a run failure)   all_cases_failed
 
@@ -111,6 +116,7 @@ from typing import Any
 
 import httpx
 from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from core.cli import Parser, UsageError, fail
@@ -571,18 +577,6 @@ async def _run_all(
                 return fail(e.code, str(e))
             metrics = score(results)
             rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
-            if db_session_factory is not None:
-                async with db_session_factory() as db_session:
-                    row_id = await write_eval_run_row(
-                        db_session,
-                        git_sha=git_sha,
-                        prompt_version=prompt_version,
-                        model_config=model_config,
-                        started_at=started_at,
-                        metrics=metrics,
-                    )
-                    await db_session.commit()
-                eval_run_rows.append((row_id, prompt_version))
             if any(r.error is None for r in results):
                 any_case_succeeded = True
             for result in results:
@@ -590,6 +584,10 @@ async def _run_all(
                     _, tool_name, key = result.error.split(":", 2)
                     missing_fixtures.add((tool_name, key))
 
+            # I1 (m7 task-04 fix-1): the per-run JSON is the primary artifact and the run's proof
+            # of spend — it is always written to disk BEFORE the eval_runs DB write is even
+            # attempted, so a DB failure below can never discard results the LLM has already been
+            # paid for.
             payload = {
                 "prompt_version": prompt_version,
                 "model": model,
@@ -604,6 +602,27 @@ async def _run_all(
                 (args.output_dir / filename).write_text(json.dumps(payload, indent=2))
             except OSError as e:
                 return fail("output_error", str(e))
+
+            if db_session_factory is not None:
+                try:
+                    async with db_session_factory() as db_session:
+                        row_id = await write_eval_run_row(
+                            db_session,
+                            git_sha=git_sha,
+                            prompt_version=prompt_version,
+                            model_config=model_config,
+                            started_at=started_at,
+                            metrics=metrics,
+                        )
+                        await db_session.commit()
+                except (OSError, SQLAlchemyError) as e:
+                    # Mirrors `evals/sample.py:331-335` verbatim: never render the URL or
+                    # credentials, just the exception class name (I1) — the JSON above is already
+                    # safely on disk by this point.
+                    return fail(
+                        "database_error", f"{type(e).__name__}: could not write the eval_runs row"
+                    )
+                eval_run_rows.append((row_id, prompt_version))
 
         # I2 (m7 task-02 fix-1): a missing-fixture report takes priority over the
         # all_cases_failed short-circuit below — the ordinary Step-6 situation (no fixtures
