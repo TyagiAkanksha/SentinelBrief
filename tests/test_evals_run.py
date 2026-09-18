@@ -29,6 +29,16 @@ makes the ONE pre-approved edit to a pre-existing (task-04) pin:
 assertion gains the two new keys `run_model_config` (ruling R43) adds -- `strong_model` and
 `prompt_version` -- with the values that run produces (`""` and `"triage-v1"`); no other
 pre-existing test/helper in this file is touched.
+
+m7 task-06 (ruling R47) adds `--publish`/`--from-artifact`, appended at the end, and makes the
+ONE pre-approved edit to a pre-existing (task-03) pin: `test_main_writes_result_json`'s
+`set(payload.keys())` assertion gains the new `"golden"` key `--from-artifact`'s v2-only refusal
+reads back, plus one new line asserting `payload["golden"] == str(golden_path)`; no other
+pre-existing test/helper in this file is touched. The new tests below use LOCAL imports for
+`evals.publish` names task-06 adds (`RESULTS_PATH`, `render_header`) -- never a top-level import
+-- so a not-yet-existing name fails only the test that needs it, not the whole module's
+collection (mirrors this file's own task-04 section, e.g. `core.db`/`core.models.eval_runs`
+imported inside `test_main_writes_eval_runs_row_when_database_url_given` rather than at the top).
 """
 
 from __future__ import annotations
@@ -277,7 +287,10 @@ def test_main_writes_result_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             "started_at",
             "metrics",
             "cases",
+            "golden",
         }
+        # R47: --from-artifact's v2-only refusal reads this field back from the artifact.
+        assert payload["golden"] == str(golden_path)
         assert payload["model"] == "fake-model"
         assert isinstance(payload["git_sha"], str) and payload["git_sha"]
         assert isinstance(payload["started_at"], str) and payload["started_at"]
@@ -1901,3 +1914,252 @@ def test_write_baseline_refuses_existing_and_non_v2(
     assert rc_v2 == 1
     assert captured_v2.err.startswith("error: config_error:")
     assert existing_baseline_path.read_text() == existing_baseline_marker
+
+
+# --- m7 task-06: `--publish` appends a docs/results.md row and (optionally) writes the eval_runs
+# row task-04 already writes; `--from-artifact` republishes one row with no LLM call (ruling R41)
+# -------------------------------------------------------------------------------------------------
+
+
+def _seed_results_doc(results_path: Path) -> None:
+    """Seed a tmp results file with `docs/results.md`'s real shape (header/separator under
+    `## Runs`, trailing prose below) -- LOCAL import of `render_header` (not yet defined), so this
+    helper only fails the tests that call it, never the whole module at collection."""
+    from evals.publish import render_header
+
+    n_cols = len(render_header().strip().strip("|").split("|"))
+    separator = "|" + "|".join("---" for _ in range(n_cols)) + "|"
+    results_path.write_text(
+        "# Evaluation results\n\n## Runs\n\n"
+        f"{render_header()}\n{separator}\n\n_No published runs yet._\n"
+    )
+
+
+def _published_rows(results_path: Path) -> list[list[str]]:
+    """Every body row (never the header/separator) under `## Runs` in `results_path`, split into
+    cells."""
+    lines = [
+        line
+        for line in results_path.read_text().splitlines()
+        if line.strip().startswith("|") and "date" not in line and "---" not in line
+    ]
+    return [[c.strip() for c in line.strip("|").split("|")] for line in lines]
+
+
+def test_publish_refuses_v1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`--publish` refuses a non-v2 golden file before any case runs -- v1 numbers are never
+    published (`.claude/rules/evals.md`). `evals.run` has no `--publish` flag yet, so this fails
+    RED today with a `usage` error from argparse's "unrecognized arguments", not the
+    `config_error` asserted here.
+    """
+    golden_path = _write_golden(tmp_path / "golden.jsonl", [_golden_case("alert1.json")])
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--publish",
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
+
+
+def test_publish_appends_row_to_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--publish` appends exactly one row to `RESULTS_PATH` (in `COLUMNS` order) per `--prompt`
+    row and prints `"published <n> row(s) to <path>"` -- proven against a temp results file
+    (never the real `docs/results.md`) by monkeypatching `evals.run.RESULTS_PATH`, the same
+    "import the name, monkeypatch it on the importing module" pattern this file's task-04 section
+    already uses for `evals.run.write_eval_run_row`.
+
+    `evals.run` does not import `RESULTS_PATH` yet, so this fails RED today with `AttributeError`
+    (`monkeypatch.setattr` on an attribute `evals.run` doesn't have).
+    """
+    results_path = tmp_path / "results.md"
+    _seed_results_doc(results_path)
+    monkeypatch.setattr("evals.run.RESULTS_PATH", results_path)
+
+    case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=2, category="brute_force", escalate=False),
+        labeler_note="human-labeled v2 case for the --publish append happy-path test.",
+        labeled_by="human",
+        labeled_at=datetime(2026, 9, 20, tzinfo=UTC),
+    )
+    golden_path = tmp_path / "v2.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--publish",
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+    assert f"published 1 row(s) to {results_path}" in captured.out
+
+    rows = _published_rows(results_path)
+    assert len(rows) == 1
+    assert rows[0][2] == "triage-v1"  # prompt_version
+    assert rows[0][3] == "fake-model"  # models: no --strong-model given
+
+
+def test_publish_from_artifact_appends_without_llm_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--publish --from-artifact PATH` republishes exactly the artifact's own row and makes NO
+    LLM call at all -- `--golden`/`--prompt` are ignored with it (ruling R41). `FakeLLMClient([])`
+    has zero queued responses, so any call at all raises inside the fake before this test's own
+    assertions would even run.
+
+    `evals.run` has no `--from-artifact` flag yet, so this fails RED today with a `usage` error
+    from argparse's "unrecognized arguments".
+    """
+    from evals.publish import metrics_payload
+    from evals.scoring import score
+
+    results_path = tmp_path / "results.md"
+    _seed_results_doc(results_path)
+    monkeypatch.setattr("evals.run.RESULTS_PATH", results_path)
+
+    payload = {
+        "prompt_version": "triage-v4",
+        "model": "gpt-4o-mini",
+        "git_sha": "1a2b3c4",
+        "started_at": "2026-09-19T00:00:00+00:00",
+        "metrics": metrics_payload(score([])),
+        "golden": "evals/golden/v2.jsonl",
+        "cases": [],
+    }
+    artifact_path = tmp_path / "20260919T000000Z-triage-v4.json"
+    artifact_path.write_text(json.dumps(payload))
+
+    fake = FakeLLMClient([])  # any LLM call at all fails this test
+
+    rc = main(
+        [
+            "--golden",
+            str(tmp_path / "ignored.jsonl"),  # never read: --from-artifact skips loading it
+            "--prompt",
+            "ignored",
+            "--publish",
+            "--from-artifact",
+            str(artifact_path),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+    assert fake.calls == []
+    assert "published 1 row(s) to" in captured.out
+
+    rows = _published_rows(results_path)
+    assert len(rows) == 1
+    assert rows[0][0] == "2026-09-19"  # date, taken from the artifact's started_at
+    assert rows[0][1] == "1a2b3c4"  # git_sha, taken from the artifact
+    assert rows[0][2] == "triage-v4"  # prompt_version, taken from the artifact
+
+
+def test_publish_writes_eval_runs_row(
+    tmp_schema: tuple[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--publish` and `--database-url` are independent flags that never double-write: combining
+    both on the same run writes exactly ONE `eval_runs` row (the task-04/ruling-R35 write) AND
+    appends exactly one `docs/results.md` row -- `--publish` never triggers a second DB write of
+    its own.
+
+    `evals.run` has no `--publish` flag yet, so this fails RED today with a `usage` error from
+    argparse's "unrecognized arguments".
+    """
+    from core.db import make_engine, make_session_factory
+    from core.models.eval_runs import EvalRunRow
+
+    url, schema = tmp_schema
+    results_path = tmp_path / "results.md"
+    _seed_results_doc(results_path)
+    monkeypatch.setattr("evals.run.RESULTS_PATH", results_path)
+
+    case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=2, category="brute_force", escalate=False),
+        labeler_note="human-labeled v2 case for the --publish + --database-url test.",
+        labeled_by="human",
+        labeled_at=datetime(2026, 9, 20, tzinfo=UTC),
+    )
+    golden_path = tmp_path / "v2.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([VALID_VERDICT_JSON])
+
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--publish",
+            "--database-url",
+            url,
+            "--schema",
+            schema,
+        ],
+        llm=fake,
+    )
+
+    assert rc == 0
+
+    async def _read_back() -> list[EvalRunRow]:
+        engine = make_engine(url, schema=schema)
+        try:
+            factory = make_session_factory(engine)
+            async with factory() as session:
+                result = await session.execute(select(EvalRunRow))
+                return list(result.scalars().all())
+        finally:
+            await engine.dispose()
+
+    rows = asyncio.run(_read_back())
+    assert len(rows) == 1  # never double-written by combining --publish with --database-url
+    assert rows[0].prompt_version == "triage-v1"
+
+    published = _published_rows(results_path)
+    assert len(published) == 1  # the docs/results.md row is also appended
