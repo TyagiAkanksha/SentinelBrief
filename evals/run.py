@@ -748,15 +748,25 @@ async def _run_all(
             target_row = rows[0]
             target_config = row_configs[0]
             if args.baseline.exists():
-                old = load_baseline(args.baseline)
-                print(
-                    f"--force-baseline: overwriting {args.baseline} — "
-                    f"severity_exact {old.metrics.severity_exact} -> "
-                    f"{target_row.metrics.severity_exact}, critical_recall "
-                    f"{old.metrics.critical_recall} -> {target_row.metrics.critical_recall}, "
-                    f"cost_mean_usd {old.metrics.cost_mean_usd} -> "
-                    f"{target_row.metrics.cost_mean_usd}"
-                )
+                # I1 (review fix-1): the old baseline may be corrupt — --force-baseline exists
+                # precisely to overwrite a bad file, so a diff-printing nicety must never turn
+                # into a traceback on that path (evals/run.py's own no-traceback contract).
+                try:
+                    old = load_baseline(args.baseline)
+                except ValueError as e:
+                    print(
+                        f"--force-baseline: overwriting {args.baseline} "
+                        f"(previous baseline unreadable: {e})"
+                    )
+                else:
+                    print(
+                        f"--force-baseline: overwriting {args.baseline} — "
+                        f"severity_exact {old.metrics.severity_exact} -> "
+                        f"{target_row.metrics.severity_exact}, critical_recall "
+                        f"{old.metrics.critical_recall} -> {target_row.metrics.critical_recall}, "
+                        f"cost_mean_usd {old.metrics.cost_mean_usd} -> "
+                        f"{target_row.metrics.cost_mean_usd}"
+                    )
             write_baseline(
                 args.baseline,
                 metrics=target_row.metrics,

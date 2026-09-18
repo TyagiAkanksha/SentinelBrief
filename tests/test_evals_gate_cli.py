@@ -232,6 +232,57 @@ def test_write_baseline_force_overwrites_and_prints_old_vs_new(
     assert loaded.metrics.severity_exact == 1.0
 
 
+def test_force_baseline_overwrites_corrupt_baseline_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review fix-1, I1: `--force-baseline` exists precisely to overwrite a BAD baseline file —
+    a corrupt existing file must never turn the diff-printing nicety into a traceback (the
+    module's own no-traceback contract, `evals/run.py`'s module docstring)."""
+    case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=4, category="brute_force", escalate=True),
+        labeler_note="human-labeled v2 case for the corrupt-baseline --force-baseline test.",
+        labeled_by="human",
+        labeled_at=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+    golden_path = tmp_path / "v2.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("{ not json")
+
+    fake = FakeLLMClient([_verdict_json(4)])
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--write-baseline",
+            "--force-baseline",
+            "--baseline",
+            str(baseline_path),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Traceback" not in captured.err
+    assert captured.err == ""
+    assert "previous baseline unreadable" in captured.out
+    assert f"baseline written to {baseline_path}" in captured.out
+
+    loaded = load_baseline(baseline_path)
+    assert loaded.metrics.severity_exact == 1.0
+    assert loaded.metrics.critical_recall == 1.0
+
+
 # --- evals.run --gate: the passing path ---------------------------------------------------------
 
 
