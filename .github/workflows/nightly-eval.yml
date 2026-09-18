@@ -32,11 +32,15 @@ jobs:
           python-version: "3.12"
 
       - name: nightly gate — strict-replay v2 golden set
+        # --no-judge until M8 ships the daily token-budget breaker: the gate conditions (PRD §7.4:
+        # severity_exact drop, critical_recall, cost_rise) do not use judge metrics, so skipping the
+        # strong-model judge keeps this recurring automated run from spending ~200 gpt-5.4 calls a
+        # night with no budget cap. Manual --publish runs keep the judge on. Re-enable here at M8.
         env:
           PROMPT_VERSION_INPUT: ${{ inputs.prompt_version }}
         run: |
           TRIAGE_PROMPT_VERSION="${PROMPT_VERSION_INPUT:-$TRIAGE_PROMPT_VERSION}"
-          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results
+          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results --no-judge
 
       - uses: actions/upload-artifact@v4
         if: always()
