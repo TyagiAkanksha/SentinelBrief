@@ -38,6 +38,8 @@ paths: evals/**, fixtures/**, docs/results.md
 - `docs/results.md` is **append-only** and includes runs whose numbers got worse (PRD §7.5).
   Every row carries date, git sha, prompt version, models, and all §7.3 metrics.
 - CI gate thresholds (PRD §7.4) are set from the first full v2 run at M7 — do not invent them
-  earlier.
+  earlier. The baseline itself (`evals/baseline.json`) is written ONLY by
+  `evals.run --write-baseline` from a real v2 run (m7 task-05) — never invented, hand-edited, or
+  fabricated by any other path; `evals.gate.load_baseline` raises rather than defaulting one.
 - Per-run JSON under `evals/results/` is gitignored; only the table in `docs/results.md` is
   published.

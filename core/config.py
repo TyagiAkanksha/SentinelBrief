@@ -179,6 +179,16 @@ class Settings(BaseSettings):
     one Redis pub/sub connection. Past this, new requests get a `429 rate_limited` envelope (m8a
     task-01). The cap is per process (`StreamGate` lives on `app.state`): running the API with
     multiple worker processes multiplies the real ceiling by the process count."""
+    eval_gate_severity_drop_points: Annotated[int, Field(ge=0)] = 3
+    """PRD §7.4 nightly CI gate: `severity_exact` trips when it falls more than this many points
+    below the committed baseline's (m7 task-05). Never a literal in `evals/gate.py`."""
+    eval_gate_critical_recall_min: Annotated[float, Field(ge=0.0, le=1.0)] = 0.90
+    """PRD §7.4 nightly CI gate: `critical_recall` trips when it falls below this absolute floor
+    (never baseline-relative, m7 task-05). Never a literal in `evals/gate.py`."""
+    eval_gate_cost_rise_fraction: Annotated[float, Field(ge=0.0)] = 0.50
+    """PRD §7.4 nightly CI gate: `cost_mean_usd` trips when it rises more than this fraction above
+    the baseline's, but only while the run's `model_config` matches the baseline's — a config
+    change disables this condition by design (m7 task-05). Never a literal in `evals/gate.py`."""
 
     @field_validator("model_prices_json", mode="before")
     @classmethod

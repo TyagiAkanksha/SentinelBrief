@@ -29,6 +29,18 @@ per `--prompt` value, a `## Matrix (<prompt_version>)` section holding the sever
 confusion`) markdown tables for that prompt version's run — the matrices themselves are never
 `format_table` columns (they already land in full in the per-run JSON via `metrics_payload`).
 
+`--gate`/`--no-gate` (default off; m7 task-05, PRD §7.4) evaluates every `--prompt` row's
+`RunMetrics` against the committed `--baseline` (default `evals/baseline.json`) via
+`evals.gate.evaluate_gate` after the table prints, printing `"GATE: PASS"` or `"GATE: FAIL
+<cond>=<details> ..."` per row and exiting `1` when any row trips a condition. The baseline is
+loaded up front — a missing/invalid baseline is a `config_error` before any case runs (the gate
+never invents one, PRD §7.4). `--write-baseline` (m7 task-05) writes `--baseline` from THIS run's
+(single) `--prompt` row via `evals.gate.write_baseline` — refusing (both `config_error`, before
+any case runs) for a non-v2 golden file, or when `--baseline` already exists without
+`--force-baseline` (which prints the old vs new metrics before overwriting). Every one of the
+three reads the run's effective config through the single `run_model_config` helper (ruling R43)
+also used to build the `eval_runs` row's `model_config`, so the three can never drift apart.
+
 `--tool-fixtures DIR` (default `tests/fixtures/tools`) is where every external tool
 (`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
 (`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
@@ -72,10 +84,16 @@ empty, and never raises a traceback:
     argparse usage error (no --prompt, unknown flag, --concurrency < 1,
         --tool-fixtures not a directory)                                     usage
     `Settings()` fails validation (e.g. malformed MODEL_PRICES_JSON)          config_error
+    `--gate` given and `--baseline` is missing/invalid (before any case
+        runs — the gate never invents one, PRD §7.4)                          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
     a v2 golden file (`is_v2_golden`) carrying a non-human-labeled row
         (PRD §13; ruling R13 — checked separately, AFTER a clean load, so a
         malformed row on a v2 path still reports invalid_golden, not this)     config_error
+    `--write-baseline` given and the golden file is not v2-named
+        (a baseline may only be recorded from a real v2 run, PRD §7.4/§13)     config_error
+    `--write-baseline` given and `--baseline` already exists without
+        `--force-baseline`                                                    config_error
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model or
         --strong-model, unknown --prompt), raised before any case runs
         ("price before spend")                                                config_error
@@ -130,6 +148,7 @@ from core.errors import (
     VerdictValidationError,
 )
 from core.llm import LLMClient
+from evals.gate import Baseline, evaluate_gate, load_baseline, write_baseline
 from evals.golden import GoldenCase, load_golden
 from evals.judge import JudgeScore, judge_case, load_judge_prompt
 from evals.publish import metrics_payload, write_eval_run_row
@@ -369,6 +388,48 @@ def _git_sha() -> str:
     return result.stdout.strip()
 
 
+def run_model_config(
+    args: argparse.Namespace,
+    settings: Settings,
+    *,
+    prompt_version: str,
+    judge_model: str,
+    replay_strict: bool,
+    judge: bool,
+) -> dict[str, Any]:
+    """This run's effective model configuration for one `--prompt` value (m7 task-05, ruling R43).
+
+    Built fresh INSIDE the `--prompt` loop, so a prompt change is itself part of the recorded
+    config — which disables the PRD §7.4 cost-rise gate condition by design, since that condition
+    only applies while the run's config equals the baseline's. The ONE place the `eval_runs` row,
+    `--write-baseline`, and `--gate` all build this from, so the three can never drift apart
+    (ruling R46: this dict is never added to the per-run JSON `payload`).
+
+    Args:
+        args: The parsed CLI arguments (`--model`/`--strong-model`).
+        settings: The validated config surface (`cheap_model`/`strong_model` fallbacks).
+        prompt_version: The prompt version this loop iteration is scoring.
+        judge_model: This run's effective judge model id (`""` when judging never ran).
+        replay_strict: Whether this run replayed tool fixtures strictly.
+        judge: Whether this run judged case reasoning.
+
+    Returns:
+        `{"model", "judge_model", "replay_strict", "judge", "strong_model", "prompt_version"}`.
+    """
+    model = args.model if args.model is not None else settings.cheap_model
+    strong_model = (
+        args.strong_model if args.strong_model is not None else settings.strong_model
+    ) or ""
+    return {
+        "model": model,
+        "judge_model": judge_model,
+        "replay_strict": replay_strict,
+        "judge": judge,
+        "strong_model": strong_model,
+        "prompt_version": prompt_version,
+    }
+
+
 def _case_payload(result: CaseResult) -> dict[str, Any]:
     """`asdict(result)` with `verdict`/`label`/`judge` as plain dicts and `Decimal`s as strings."""
     payload: dict[str, Any] = asdict(result)
@@ -413,6 +474,20 @@ async def _run_all(
     """
     db_engine: AsyncEngine | None = None
     try:
+        # m7 task-05 (PRD §7.4): --gate's baseline is loaded up front, before any case runs — a
+        # missing/invalid baseline is a config_error, never a fabricated default (the gate never
+        # invents one), and must not spend anything finding that out.
+        baseline: Baseline | None = None
+        if args.gate:
+            try:
+                baseline = load_baseline(args.baseline)
+            except ValueError:
+                return fail(
+                    "config_error",
+                    f"no baseline at {args.baseline} — write one from a real v2 run with "
+                    "--write-baseline",
+                )
+
         model: str = args.model if args.model is not None else settings.cheap_model
         strong_model: str | None = (
             args.strong_model if args.strong_model is not None else settings.strong_model
@@ -483,6 +558,19 @@ async def _run_all(
             for row_number, case in enumerate(cases, start=1):
                 if case.labeled_by != "human":
                     return fail("config_error", f"row {row_number} is not human-labeled (PRD §13)")
+        elif args.write_baseline:
+            # m7 task-05 (PRD §7.4/§13): a baseline may only be recorded from a real v2 run.
+            return fail(
+                "config_error",
+                f"--write-baseline requires a v2 golden file (PRD §7.4/§13), got {args.golden}",
+            )
+
+        if args.write_baseline and args.baseline.exists() and not args.force_baseline:
+            # m7 task-05: never silently clobber a committed baseline; --force-baseline required.
+            return fail(
+                "config_error",
+                f"{args.baseline} already exists — use --force-baseline to overwrite",
+            )
 
         try:
             client: LLMClient = (
@@ -519,15 +607,10 @@ async def _run_all(
         if args.database_url:
             db_engine = make_engine(args.database_url, schema=args.schema)
             db_session_factory = make_session_factory(db_engine)
-        model_config: dict[str, Any] = {
-            "model": model,
-            "judge_model": judge_model,
-            "replay_strict": replay_strict,
-            "judge": judge_enabled,
-        }
 
         git_sha = _git_sha()
         rows: list[ResultRow] = []
+        row_configs: list[dict[str, Any]] = []
         eval_run_rows: list[tuple[uuid.UUID, str]] = []
         any_case_succeeded = False
         missing_fixtures: set[tuple[str, str]] = set()
@@ -576,7 +659,19 @@ async def _run_all(
                 # guard at no cost.
                 return fail(e.code, str(e))
             metrics = score(results)
+            # m7 task-05, ruling R43/R46: the ONE place this run's effective config is built —
+            # the eval_runs row, --write-baseline, and --gate all read it from here so they
+            # cannot drift apart. Inside the loop so a prompt change is itself part of it.
+            config = run_model_config(
+                args,
+                settings,
+                prompt_version=prompt_version,
+                judge_model=judge_model,
+                replay_strict=replay_strict,
+                judge=judge_enabled,
+            )
             rows.append(ResultRow(prompt_version=prompt_version, model=model, metrics=metrics))
+            row_configs.append(config)
             if any(r.error is None for r in results):
                 any_case_succeeded = True
             for result in results:
@@ -610,7 +705,7 @@ async def _run_all(
                             db_session,
                             git_sha=git_sha,
                             prompt_version=prompt_version,
-                            model_config=model_config,
+                            model_config=config,
                             started_at=started_at,
                             metrics=metrics,
                         )
@@ -644,6 +739,54 @@ async def _run_all(
             _print_matrix_sections(rows)
         for row_id, prompt_version in eval_run_rows:
             print(f"eval_runs: {row_id} ({prompt_version})")
+
+        # m7 task-05 (PRD §7.4): --write-baseline records THIS run's (single) --prompt row. The
+        # "already exists without --force-baseline" refusal already returned above, before any
+        # case ran, so reaching here means either the file doesn't exist yet or the caller
+        # explicitly asked to overwrite it.
+        if args.write_baseline:
+            target_row = rows[0]
+            target_config = row_configs[0]
+            if args.baseline.exists():
+                old = load_baseline(args.baseline)
+                print(
+                    f"--force-baseline: overwriting {args.baseline} — "
+                    f"severity_exact {old.metrics.severity_exact} -> "
+                    f"{target_row.metrics.severity_exact}, critical_recall "
+                    f"{old.metrics.critical_recall} -> {target_row.metrics.critical_recall}, "
+                    f"cost_mean_usd {old.metrics.cost_mean_usd} -> "
+                    f"{target_row.metrics.cost_mean_usd}"
+                )
+            write_baseline(
+                args.baseline,
+                metrics=target_row.metrics,
+                git_sha=git_sha,
+                prompt_version=target_row.prompt_version,
+                model_config=target_config,
+                now=datetime.now(UTC),
+            )
+            print(f"baseline written to {args.baseline}")
+
+        # m7 task-05 (PRD §7.4): evaluate every --prompt row against the baseline loaded up
+        # front (a missing one already failed before any case ran, above).
+        if args.gate:
+            assert baseline is not None
+            gate_failed = False
+            for row, config in zip(rows, row_configs, strict=True):
+                gate_result = evaluate_gate(
+                    row.metrics, baseline, run_model_config=config, settings=settings
+                )
+                if gate_result.tripped:
+                    gate_failed = True
+                    conditions = " ".join(
+                        f"{name}={gate_result.details[name]}" for name in gate_result.tripped
+                    )
+                    print(f"GATE: FAIL {conditions}")
+                else:
+                    print("GATE: PASS")
+            if gate_failed:
+                return 1
+
         return 0
     finally:
         await http.aclose()
@@ -675,7 +818,9 @@ def main(
         case ran, an unwritable output directory, every case failing across every prompt run
         (`all_cases_failed`), or (m7 task-02) any case hitting a missing fixture under strict
         replay — the table is still printed, followed by one `"MISSING FIXTURES (n): ..."` line —
-        see the module docstring's failure-path table. Every OTHER `1` path prints exactly one
+        see the module docstring's failure-path table. `--gate` (m7 task-05) also returns `1`,
+        AFTER the table and one `"GATE: PASS"`/`"GATE: FAIL ..."` line per `--prompt` row, when
+        any row trips a PRD §7.4 condition. Every OTHER `1` path prints exactly one
         `error: <code>: <message>` line to stderr and leaves stdout empty.
     """
     parser = Parser(prog="python -m evals.run")
@@ -692,6 +837,10 @@ def main(
     parser.add_argument("--database-url", default=None)
     parser.add_argument("--schema", default=None)
     parser.add_argument("--matrix", action="store_true")
+    parser.add_argument("--gate", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--baseline", type=Path, default=Path("evals/baseline.json"))
+    parser.add_argument("--write-baseline", action="store_true")
+    parser.add_argument("--force-baseline", action="store_true")
     try:
         args = parser.parse_args(argv)
     except UsageError as e:

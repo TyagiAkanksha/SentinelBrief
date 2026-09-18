@@ -9,6 +9,10 @@ measuring how well it does.
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
+[![nightly-eval](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml/badge.svg)](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml)
+A nightly job replays the golden-set v2 harness and fails the build on a PRD §7.4 regression
+against the committed baseline (`docs/results.md` § Gate).
+
 ## What it does
 
 1. The honeypot's log shipper posts one HMAC-signed alert per attacker session.

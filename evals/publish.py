@@ -5,6 +5,10 @@ m7 task-04, ruling R35).
 reused by both the per-run JSON `evals.run` already writes and `write_eval_run_row`'s
 `eval_runs.metrics` column, without either reaching into the other's internals. Task-06 extends
 this module with the `docs/results.md` append helper — nothing defined here moves again.
+
+`metrics_from_payload` (m7 task-05, ruling R43) is the exact inverse of `metrics_payload`:
+`evals.gate.load_baseline` depends on it to rebuild a `RunMetrics` from a committed baseline's
+JSON; task-06's `--from-artifact` reuses it unchanged.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.models.eval_runs import EvalRunRow
-from evals.scoring import RunMetrics
+from evals.scoring import PR, RunMetrics
 
 
 def metrics_payload(metrics: RunMetrics) -> dict[str, Any]:
@@ -41,6 +45,29 @@ def metrics_payload(metrics: RunMetrics) -> dict[str, Any]:
         if isinstance(value, Decimal):
             payload[key] = str(value)
     return payload
+
+
+_DECIMAL_FIELDS = ("cost_mean_usd", "cost_p95_usd", "cost_total_usd", "judge_cost_total_usd")
+
+
+def metrics_from_payload(payload: dict[str, Any]) -> RunMetrics:
+    """The exact inverse of `metrics_payload` (m7 task-05, ruling R43).
+
+    Args:
+        payload: A JSON-safe metrics dict as produced by `metrics_payload`.
+
+    Returns:
+        The `RunMetrics` `payload` was built from: `per_severity`'s string band keys become
+        `int`s and its dict values become `PR`; `confusion` becomes a tuple of tuples;
+        `category_confusion` is carried through unchanged (already all-`str` keys); every
+        `Decimal` field's string is parsed back to `Decimal`; `None` judge fields are preserved.
+    """
+    data: dict[str, Any] = dict(payload)
+    data["per_severity"] = {int(band): PR(**pr) for band, pr in data["per_severity"].items()}
+    data["confusion"] = tuple(tuple(row) for row in data["confusion"])
+    for key in _DECIMAL_FIELDS:
+        data[key] = Decimal(data[key])
+    return RunMetrics(**data)
 
 
 async def write_eval_run_row(

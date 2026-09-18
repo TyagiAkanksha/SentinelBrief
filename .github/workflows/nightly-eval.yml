@@ -1,0 +1,35 @@
+name: nightly-eval
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+env:
+  UV_LOCKED: "1"
+
+jobs:
+  nightly-eval:
+    runs-on: ubuntu-latest
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: https://api.openai.com/v1
+      CHEAP_MODEL: gpt-4o-mini
+      STRONG_MODEL: gpt-5.4
+      MODEL_PRICES_JSON: '{"gpt-4o-mini":{"input_per_mtok":"0.15","output_per_mtok":"0.60"},"gpt-5.4":{"input_per_mtok":"2.50","output_per_mtok":"15.00"}}'
+      TRIAGE_PROMPT_VERSION: triage-v4
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: nightly gate — strict-replay v2 golden set
+        run: uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: evals/results/*.json

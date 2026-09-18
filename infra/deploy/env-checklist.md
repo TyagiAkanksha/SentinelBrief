@@ -34,6 +34,9 @@ unless the production compose file pins something else).
 | `MODEL_PRICES_JSON` | N | compose (pinned) | USD/million-token prices for `gpt-4o-mini` and `gpt-5.4` — see `infra/deploy/prod/docker-compose.yml`'s `x-shared-env`. |
 | `TRIAGE_PROMPT_VERSION` | N | compose (pinned) | `triage-v4` |
 | `JUDGE_PROMPT_VERSION` | N | default | `judge-v1` (`.env.example` default, PRD §7.3) — the LLM-as-judge's rubric prompt version; read by `evals/judge.py`, never `api`/`worker`. |
+| `EVAL_GATE_SEVERITY_DROP_POINTS` | N | default | `3` (`.env.example` default, PRD §7.4) — nightly CI gate threshold; read by `evals/gate.py`, never `api`/`worker`. |
+| `EVAL_GATE_CRITICAL_RECALL_MIN` | N | default | `0.90` (`.env.example` default, PRD §7.4) — nightly CI gate threshold; read by `evals/gate.py`, never `api`/`worker`. |
+| `EVAL_GATE_COST_RISE_FRACTION` | N | default | `0.50` (`.env.example` default, PRD §7.4) — nightly CI gate threshold; read by `evals/gate.py`, never `api`/`worker`. |
 | `ENVIRONMENT` | N | compose (pinned) | `production` — turns on boot-time required-secret guards. |
 | `DATABASE_URL` | **Y** | `.env` (SSM) | Postgres DSN for the compose `postgres` service — embeds `POSTGRES_PASSWORD` below (the same password). |
 | `REDIS_URL` | N — pinned in compose (`redis://redis:6379/0`, no password on the compose network); `Settings` keeps it `SecretStr` because a URL MAY embed a password | compose (pinned) | `redis://redis:6379/0` |

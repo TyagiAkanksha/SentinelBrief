@@ -12,6 +12,18 @@ Published, versioned results of the SentinelBrief evaluation harness (PRD §7).
   The metric columns are fixed by `evals/scoring.py::COLUMNS` from M1 on; the LLM-as-judge and
   per-severity/confusion-matrix columns are M7 additions.
 
+## Gate
+
+The nightly workflow (`.github/workflows/nightly-eval.yml`) runs `evals.run --gate` against
+`evals/baseline.json` and fails the build when any of the three PRD §7.4 conditions trips:
+`severity_exact` dropping more than `EVAL_GATE_SEVERITY_DROP_POINTS` (default 3) points below the
+baseline's, `critical_recall` falling below `EVAL_GATE_CRITICAL_RECALL_MIN` (default 0.90), or
+`cost_mean_usd` rising more than `EVAL_GATE_COST_RISE_FRACTION` (default 50%) above the
+baseline's while the run's model configuration is unchanged from the baseline's (a config change
+disables the cost condition by design). The baseline itself comes from the first full run over
+golden set v2 (`evals.run --write-baseline`, m7 task-05) — it is recorded once, from a real run,
+and never invented ahead of that.
+
 ## Runs
 
 | date | git_sha | prompt_version | models | n | failed | sev_exact | sev_±1 | category | esc_prec | esc_rec | critical_rec | escalation_rate | cost_mean | cost_p95 | cost_total | lat_p50 | lat_p95 | sev4_rec | sev5_rec | sev_macro_f1 | judge_mean | judge_pct_le2 | injection_pass_rate | judge_cost_total_usd |
