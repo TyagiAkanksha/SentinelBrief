@@ -37,6 +37,8 @@ async def write_eval_run_row(session_factory, *, git_sha, prompt_version, model_
 - **`models` cell:** `"<model>"` for an un-escalated run and `"<model>→<strong>"` when `--strong-model` was given (the arrow is U+2192); `render_row`'s `models` argument is computed by `evals.run` from its effective config.
 - **Header regeneration:** task-04 already regenerated `docs/results.md`'s header once for the 23-column `COLUMNS`; `regenerate_header` still lands here as the tool for future growth, and a test pins header == `render_header()`.
 
+- **R47 — `"golden"` provenance in the per-run JSON payload (pre-approved pin edit).** `--from-artifact`'s v2-only refusal needs to know which golden set produced the artifact. `evals/run.py`'s per-run `payload` dict gains `"golden": str(args.golden)` (unlike `model_config` under R46, this is read back — from the artifact — so it earns its place). That changes the key set the task-03 pin `tests/test_evals_run.py::test_main_writes_result_json` asserts, so this task's test-author extends that one assertion to include `"golden"` (the ONLY permitted edit to a pre-existing test, records the new sha256 with a one-line note — R44-shaped). `row_from_artifact(path)` raises `config_error` when `payload["golden"]` is not a v2 path (`is_v2_golden(Path(payload["golden"]))` False); `--publish --from-artifact <json>` publishes exactly that one row, makes NO LLM call, and appends via `append_result_row`. `metrics_from_payload` already exists in `evals/publish.py` (task-05, ruling R43) — REUSE it, do not redefine.
+
 ## Interfaces → test table
 
 | Interfaces line | test file::test name | failure branch covered |
