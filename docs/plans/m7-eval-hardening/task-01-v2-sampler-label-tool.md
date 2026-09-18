@@ -175,7 +175,7 @@ constructs a v2 label from anything but typed input.
 ```bash
 export TEST_DATABASE_URL=postgresql://sentinel:sentinel@127.0.0.1:5434/sentinelbrief_test TEST_REDIS_URL=redis://127.0.0.1:6380/0
 uv run pytest -q -rs tests/test_sample.py tests/test_label_tool.py tests/test_golden_v2.py tests/test_taxonomy_agreement.py tests/test_evals_run.py tests/test_golden.py   # all pass, 0 skipped
-grep -rn '"human"' evals/ scripts/ | grep -v label_tool.py | grep -c labeled_by     # 0
+uv run pytest -q tests/test_golden_v2.py::test_labeled_by_human_assignment_appears_only_in_prompt_label  # the AST guard: only the label tool mints labeled_by="human" (R18/N3 — the earlier grep -c line was unsatisfiable and is removed)
 test ! -e evals/golden/v2.jsonl && echo "v2 not created by agents"                   # ok
 uv run ruff check --no-cache . && uv run ruff format --check . && uv run mypy --no-incremental && uv run lint-imports && uv run pytest -q -rs --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
