@@ -244,21 +244,31 @@ def row_from_artifact(path: Path) -> PublishedRun:
     Raises:
         ConfigError: the artifact's `"golden"` field is not a v2 golden path — v1 numbers are
             never published, even via `--from-artifact` (`.claude/rules/evals.md`).
-        ValueError: the artifact is not valid JSON, or is missing a required key.
+        ValueError: the artifact is not valid JSON, or is missing a required key (e.g. any
+            pre-R47 artifact, which has no `"golden"` field) or a field is the wrong type.
         OSError: `path` does not exist or is not readable.
     """
     payload: dict[str, Any] = json.loads(path.read_text())
-    golden_path = Path(payload["golden"])
-    if not _is_v2_golden(golden_path):
-        raise ConfigError(
-            f"{path}: golden set {golden_path} is not v2 — v1 numbers are never published "
-            "(.claude/rules/evals.md)"
+    try:
+        golden_path = Path(payload["golden"])
+        if not _is_v2_golden(golden_path):
+            raise ConfigError(
+                f"{path}: golden set {golden_path} is not v2 — v1 numbers are never published "
+                "(.claude/rules/evals.md)"
+            )
+        metrics = metrics_from_payload(payload["metrics"])
+        row = ResultRow(
+            prompt_version=payload["prompt_version"], model=payload["model"], metrics=metrics
         )
-    metrics = metrics_from_payload(payload["metrics"])
-    row = ResultRow(
-        prompt_version=payload["prompt_version"], model=payload["model"], metrics=metrics
-    )
-    started_at = datetime.fromisoformat(payload["started_at"])
-    return PublishedRun(
-        row=row, date=started_at.date(), git_sha=payload["git_sha"], models=payload["model"]
-    )
+        started_at = datetime.fromisoformat(payload["started_at"])
+        published = PublishedRun(
+            row=row, date=started_at.date(), git_sha=payload["git_sha"], models=payload["model"]
+        )
+    except (KeyError, TypeError) as e:
+        # A missing key (any pre-R47 artifact has no "golden") or a wrong-typed field must never
+        # escape as a traceback -- `evals.run`'s "never raises a traceback" contract and this
+        # function's own docstring both promise `ValueError` here. `ConfigError` (raised above) is
+        # neither a `KeyError` nor a `TypeError`, so it is untouched by this except and still
+        # propagates as itself to `evals.run`'s `except ConfigError`.
+        raise ValueError(f"{path}: malformed artifact — missing or invalid field {e}") from e
+    return published

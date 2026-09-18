@@ -270,3 +270,80 @@ def test_row_from_artifact_refuses_non_v2(tmp_path: Path) -> None:
 
     with pytest.raises((ValueError, ConfigError)):
         row_from_artifact(artifact)
+
+
+# --- row_from_artifact: fix-1 (I1) -- a malformed artifact raises ValueError, never a traceback --
+
+
+def test_row_from_artifact_raises_value_error_on_missing_key(tmp_path: Path) -> None:
+    """A pre-R47 artifact (no `"golden"` key) or one missing `"metrics"` raises `ValueError`,
+    never the raw `KeyError`/`TypeError` -- `evals.run`'s "never raises a traceback" contract
+    (fix-1, I1) and this function's own docstring both promise `ValueError` here."""
+    base_payload = {
+        "prompt_version": "triage-v4",
+        "model": "gpt-4o-mini",
+        "git_sha": "1a2b3c4",
+        "started_at": "2026-09-20T12:34:56+00:00",
+        "metrics": metrics_payload(_sample_metrics()),
+        "golden": "evals/golden/v2.jsonl",
+        "cases": [],
+    }
+
+    missing_golden = {k: v for k, v in base_payload.items() if k != "golden"}
+    artifact_a = tmp_path / "missing_golden.json"
+    artifact_a.write_text(json.dumps(missing_golden))
+    with pytest.raises(ValueError):
+        row_from_artifact(artifact_a)
+
+    missing_metrics = {k: v for k, v in base_payload.items() if k != "metrics"}
+    artifact_b = tmp_path / "missing_metrics.json"
+    artifact_b.write_text(json.dumps(missing_metrics))
+    with pytest.raises(ValueError):
+        row_from_artifact(artifact_b)
+
+
+def test_from_artifact_missing_key_exits_1_config_error_no_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`evals.run --publish --from-artifact` on a malformed artifact (a pre-R47 shape with no
+    `"golden"` key) exits `1` with one `error: config_error: ...` line and no traceback -- never
+    a raw `KeyError` escaping `main` (fix-1, I1). `--golden`/`--prompt` are still required by
+    argparse but never read on this path; nothing is appended to any results file."""
+    from evals.run import main
+
+    for name in ("LLM_API_KEY", "MODEL_PRICES_JSON", "CHEAP_MODEL", "STRONG_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+    payload = {
+        "prompt_version": "triage-v4",
+        "model": "gpt-4o-mini",
+        "started_at": "2026-09-20T12:34:56+00:00",
+        "metrics": metrics_payload(_sample_metrics()),
+        "cases": [],
+        # deliberately no "golden" key -- a pre-R47 artifact shape.
+    }
+    artifact = tmp_path / "artifact.json"
+    artifact.write_text(json.dumps(payload))
+    results_path = tmp_path / "results.md"
+    monkeypatch.setattr("evals.run.RESULTS_PATH", results_path)
+
+    rc = main(
+        [
+            "--golden",
+            str(tmp_path / "ignored.jsonl"),
+            "--prompt",
+            "ignored",
+            "--publish",
+            "--from-artifact",
+            str(artifact),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+    assert not results_path.exists()  # nothing was ever appended
