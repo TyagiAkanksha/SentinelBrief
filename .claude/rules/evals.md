@@ -36,7 +36,10 @@ paths: evals/**, fixtures/**, docs/results.md
   over the summary and replayed tool results only, never another run's raw `reasoning`; judge
   spend accumulates in `RunMetrics.judge_cost_total_usd` and never touches `cost_mean_usd`.
 - `docs/results.md` is **append-only** and includes runs whose numbers got worse (PRD §7.5).
-  Every row carries date, git sha, prompt version, models, and all §7.3 metrics.
+  Every row carries date, git sha, prompt version, models, and all §7.3 metrics. Publication is
+  mechanical, never a hand-edit: every row is written by `evals.publish.append_result_row` (via
+  `evals.run --publish`/`--from-artifact`), which refuses to write under a stale header and never
+  rewrites an existing line.
 - CI gate thresholds (PRD §7.4) are set from the first full v2 run at M7 — do not invent them
   earlier. The baseline itself (`evals/baseline.json`) is written ONLY by
   `evals.run --write-baseline` from a real v2 run (m7 task-05) — never invented, hand-edited, or

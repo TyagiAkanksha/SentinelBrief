@@ -41,6 +41,15 @@ any case runs) for a non-v2 golden file, or when `--baseline` already exists wit
 three reads the run's effective config through the single `run_model_config` helper (ruling R43)
 also used to build the `eval_runs` row's `model_config`, so the three can never drift apart.
 
+`--publish` (default off; m7 task-06, PRD §7.5) appends one `docs/results.md` row per `--prompt`
+value, via `evals.publish.append_result_row`/`render_row`, after that row is scored — refusing
+(`config_error`, before any case runs) for a non-v2 golden file, exactly like `--write-baseline`
+above (v1 numbers are never published, `.claude/rules/evals.md`). It never writes a second
+`eval_runs` row of its own: combined with `--database-url`, the one row that flag already writes
+(ruling R35) is the only one. `--from-artifact PATH` (ruling R41) republishes exactly one row from
+a nightly run's already-written per-run JSON (`evals.publish.row_from_artifact`) with NO LLM call
+and without reading `--golden`/`--prompt` at all — checked first, before any other processing.
+
 `--tool-fixtures DIR` (default `tests/fixtures/tools`) is where every external tool
 (`lookup_ip_reputation`, `get_ip_geo_asn`, `get_alert_history`) replays its result from
 (`worker.tools.ReplayToolRecorder`); the LLM is the only live component of an eval run
@@ -94,6 +103,11 @@ empty, and never raises a traceback:
         (a baseline may only be recorded from a real v2 run, PRD §7.4/§13)     config_error
     `--write-baseline` given and `--baseline` already exists without
         `--force-baseline`                                                    config_error
+    `--publish` given and the golden file is not v2-named (v1 numbers are
+        never published, `.claude/rules/evals.md`, m7 task-06)                config_error
+    `--from-artifact PATH` given and the artifact's `"golden"` field is not
+        v2-named, or the artifact is missing/unreadable/malformed
+        (m7 task-06, ruling R41)                                              config_error
     `ConfigError` from `from_settings`/`TriagePipeline` (unpriced --model or
         --strong-model, unknown --prompt), raised before any case runs
         ("price before spend")                                                config_error
@@ -151,7 +165,14 @@ from core.llm import LLMClient
 from evals.gate import Baseline, evaluate_gate, load_baseline, write_baseline
 from evals.golden import GoldenCase, load_golden
 from evals.judge import JudgeScore, judge_case, load_judge_prompt
-from evals.publish import metrics_payload, write_eval_run_row
+from evals.publish import (
+    RESULTS_PATH,
+    append_result_row,
+    metrics_payload,
+    render_row,
+    row_from_artifact,
+    write_eval_run_row,
+)
 from evals.scoring import (
     CaseResult,
     ResultRow,
@@ -474,6 +495,31 @@ async def _run_all(
     """
     db_engine: AsyncEngine | None = None
     try:
+        # m7 task-06 (ruling R41): --from-artifact republishes exactly one row from a nightly
+        # run's already-written per-run JSON, with NO LLM call and no golden file read at all --
+        # --golden/--prompt are accepted (argparse still requires them) but never used on this
+        # path, so this must be the very first thing checked, before any other args/settings
+        # processing runs.
+        if args.from_artifact is not None:
+            try:
+                published = row_from_artifact(args.from_artifact)
+            except ConfigError as e:
+                return fail(e.code, str(e))
+            except (OSError, ValueError) as e:
+                return fail("config_error", str(e))
+            line = render_row(
+                published.row,
+                date=published.date,
+                git_sha=published.git_sha,
+                models=published.models,
+            )
+            try:
+                append_result_row(RESULTS_PATH, line)
+            except ValueError as e:
+                return fail("config_error", str(e))
+            print(f"published 1 row(s) to {RESULTS_PATH}")
+            return 0
+
         # m7 task-05 (PRD §7.4): --gate's baseline is loaded up front, before any case runs — a
         # missing/invalid baseline is a config_error, never a fabricated default (the gate never
         # invents one), and must not spend anything finding that out.
@@ -564,6 +610,13 @@ async def _run_all(
                 "config_error",
                 f"--write-baseline requires a v2 golden file (PRD §7.4/§13), got {args.golden}",
             )
+        elif args.publish:
+            # m7 task-06: v1 numbers are never published (`.claude/rules/evals.md`), refused
+            # before any case runs, exactly like --write-baseline above.
+            return fail(
+                "config_error",
+                f"--publish requires a v2 golden file (.claude/rules/evals.md), got {args.golden}",
+            )
 
         if args.write_baseline and args.baseline.exists() and not args.force_baseline:
             # m7 task-05: never silently clobber a committed baseline; --force-baseline required.
@@ -612,6 +665,7 @@ async def _run_all(
         rows: list[ResultRow] = []
         row_configs: list[dict[str, Any]] = []
         eval_run_rows: list[tuple[uuid.UUID, str]] = []
+        published_count = 0
         any_case_succeeded = False
         missing_fixtures: set[tuple[str, str]] = set()
         for prompt_version in args.prompt:
@@ -690,6 +744,9 @@ async def _run_all(
                 "started_at": started_at.isoformat(),
                 "metrics": metrics_payload(metrics),
                 "cases": [_case_payload(r) for r in results],
+                # R47: which golden set produced this run -- `--from-artifact`'s v2-only refusal
+                # (`evals.publish.row_from_artifact`) reads this field back.
+                "golden": str(args.golden),
             }
             filename = f"{started_at.strftime('%Y%m%dT%H%M%SZ')}-{prompt_version}.json"
             try:
@@ -719,6 +776,19 @@ async def _run_all(
                     )
                 eval_run_rows.append((row_id, prompt_version))
 
+            if args.publish:
+                # m7 task-06: --database-url already wrote the eval_runs row above (task-04,
+                # ruling R35) -- --publish never writes it again, it only appends the
+                # docs/results.md row. "models" mirrors the ruling's exact shape: the bare model
+                # id un-escalated, "<model>→<strong>" (U+2192) when two-tier routing is active.
+                models = f"{model}→{strong_model}" if strong_model else model
+                line = render_row(rows[-1], date=started_at.date(), git_sha=git_sha, models=models)
+                try:
+                    append_result_row(RESULTS_PATH, line)
+                except ValueError as e:
+                    return fail("config_error", str(e))
+                published_count += 1
+
         # I2 (m7 task-02 fix-1): a missing-fixture report takes priority over the
         # all_cases_failed short-circuit below — the ordinary Step-6 situation (no fixtures
         # minted yet, so every v2 case raises FixtureMissingError) must still name every missing
@@ -739,6 +809,8 @@ async def _run_all(
             _print_matrix_sections(rows)
         for row_id, prompt_version in eval_run_rows:
             print(f"eval_runs: {row_id} ({prompt_version})")
+        if args.publish:
+            print(f"published {published_count} row(s) to {RESULTS_PATH}")
 
         # m7 task-05 (PRD §7.4): --write-baseline records THIS run's (single) --prompt row. The
         # "already exists without --force-baseline" refusal already returned above, before any
@@ -851,6 +923,8 @@ def main(
     parser.add_argument("--baseline", type=Path, default=Path("evals/baseline.json"))
     parser.add_argument("--write-baseline", action="store_true")
     parser.add_argument("--force-baseline", action="store_true")
+    parser.add_argument("--publish", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--from-artifact", type=Path, default=None)
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
