@@ -11,7 +11,9 @@ lives in [`docs/plans/`](docs/plans/README.md); the spec is
 
 [![nightly-eval](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml/badge.svg)](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml)
 A nightly job replays the golden-set v2 harness and fails the build on a PRD §7.4 regression
-against the committed baseline (`docs/results.md` § Gate).
+against the committed baseline (`docs/results.md` § Gate). The gate has been proven to bite: a
+deliberately worsened prompt (`triage-v5-worse`) fails the nightly gate — see the
+`triage-v5-worse` row in the results table (published once the v2 golden set is labeled).
 
 ## What it does
 

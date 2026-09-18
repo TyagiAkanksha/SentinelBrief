@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "23 3 * * *"
   workflow_dispatch:
+    inputs:
+      prompt_version:
+        description: "Prompt version to replay against evals/golden/v2.jsonl (blank = pinned default)"
+        required: false
+        default: ""
+        type: string
 
 env:
   UV_LOCKED: "1"
@@ -26,7 +32,11 @@ jobs:
           python-version: "3.12"
 
       - name: nightly gate — strict-replay v2 golden set
-        run: uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results
+        env:
+          PROMPT_VERSION_INPUT: ${{ inputs.prompt_version }}
+        run: |
+          TRIAGE_PROMPT_VERSION="${PROMPT_VERSION_INPUT:-$TRIAGE_PROMPT_VERSION}"
+          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results
 
       - uses: actions/upload-artifact@v4
         if: always()
