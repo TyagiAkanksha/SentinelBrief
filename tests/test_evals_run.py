@@ -288,9 +288,16 @@ def test_main_writes_result_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             "metrics",
             "cases",
             "golden",
+            "strong_model",
         }
         # R47: --from-artifact's v2-only refusal reads this field back from the artifact.
         assert payload["golden"] == str(golden_path)
+        # R52 (whole-branch fix wave, finding I1): the strong-tier id is read back by
+        # `row_from_artifact` so a `--from-artifact` row's `models` cell matches a live row's --
+        # always a str, `""` here since this fixture never escalates (no --strong-model, empty
+        # STRONG_MODEL).
+        assert isinstance(payload["strong_model"], str)
+        assert payload["strong_model"] == ""
         assert payload["model"] == "fake-model"
         assert isinstance(payload["git_sha"], str) and payload["git_sha"]
         assert isinstance(payload["started_at"], str) and payload["started_at"]

@@ -86,8 +86,10 @@ Hard rules, declared as import-linter contracts in `pyproject.toml` and enforced
 
 1. `core.models` is a pure leaf — imports no other project package.
 2. `core` never imports `api`, `worker`, or `evals`.
-3. `api` never imports `worker` or `core.llm` (PRD §10.1). Indirect imports are checked too: a
-   transitive chain from `api` to `worker`/`core.llm` through any package fails the gate.
+3. `api` never imports `worker`, `evals`, or `core.llm` (PRD §10.1 — `evals` builds and calls the
+   real LLM client, so an `api` module reaching into it would smuggle an LLM call into a request
+   path; ruling R53). Indirect imports are checked too: a transitive chain from `api` to
+   `worker`/`evals`/`core.llm` through any package fails the gate.
    **No exceptions.** The M2 `ignore_imports` entries were deleted at m5 task-01; re-adding them
    fails `lint-imports` with "No matches for ignored import". The route layer never sees more than
    an `EnqueueFn` callable (`api/deps.py`).

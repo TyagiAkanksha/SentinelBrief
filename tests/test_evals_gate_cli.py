@@ -341,3 +341,190 @@ def test_gate_flag_passes_and_prints_pass(
     assert captured.err == ""
     assert "GATE: PASS" in captured.out
     assert "GATE: FAIL" not in captured.out
+
+
+# --- whole-branch fix wave M2: the missing-baseline config_error includes the ValueError detail --
+
+
+def test_gate_corrupt_baseline_error_includes_the_value_error_detail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M2 (whole-branch review): `--gate` against a corrupt (present-but-invalid) baseline must
+    surface the underlying `ValueError` text in the one stderr line, so a bad baseline is
+    diagnosable — not swallowed into a generic 'no baseline' message."""
+    case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=4, category="brute_force", escalate=True),
+        labeler_note="case for the corrupt-baseline --gate detail test.",
+    )
+    golden_path = tmp_path / "golden.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("not valid json{{{")
+
+    fake = FakeLLMClient([_verdict_json(4)])
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--gate",
+            "--baseline",
+            str(baseline_path),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "invalid baseline at" in lines[0]  # the ValueError detail, included by M2
+    assert str(baseline_path) in lines[0]
+    assert "--write-baseline" in lines[0]
+    assert "Traceback" not in captured.err
+    assert list(output_dir.glob("*.json")) == []  # failed before any case ran
+
+
+# --- whole-branch fix wave t05 M2: --write-baseline refuses more than one --prompt ----------------
+
+
+def test_write_baseline_refuses_multiple_prompts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """t05 M2 (whole-branch review): a baseline records exactly ONE prompt's row (PRD §7.4); with
+    more than one `--prompt` the old code silently took `rows[0]`. It must refuse, before any case
+    runs, rather than pick one implicitly."""
+    case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=4, category="brute_force", escalate=True),
+        labeler_note="human-labeled v2 case for the multi-prompt --write-baseline refusal test.",
+        labeled_by="human",
+        labeled_at=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+    golden_path = tmp_path / "v2.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    baseline_path = tmp_path / "baseline.json"
+
+    fake = FakeLLMClient([_verdict_json(4), _verdict_json(4)])
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--prompt",
+            "triage-v4",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--write-baseline",
+            "--baseline",
+            str(baseline_path),
+        ],
+        llm=fake,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("error: config_error:")
+    assert "exactly one --prompt" in lines[0]
+    assert not baseline_path.exists()  # refused before writing anything
+    assert list(output_dir.glob("*.json")) == []  # refused before any case ran
+
+
+# --- whole-branch fix wave M10: the GATE line shows whether the run's config matched the baseline -
+
+
+def _write_gate_baseline(baseline_path: Path, *, prompt_version_in_config: str) -> None:
+    write_baseline(
+        baseline_path,
+        metrics=_placeholder_metrics(
+            severity_exact=1.0, critical_recall=1.0, cost_mean_usd=Decimal("0.000100")
+        ),
+        git_sha="baseline0",
+        prompt_version="triage-v1",
+        model_config={
+            "model": "fake-model",
+            "judge_model": "",
+            "replay_strict": False,
+            "judge": False,
+            "strong_model": "",
+            "prompt_version": prompt_version_in_config,
+        },
+        now=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+
+
+def _run_gate(tmp_path: Path, baseline_path: Path) -> None:
+    case = GoldenCase(
+        alert=_alert("alert1.json"),
+        label=GoldenLabel(severity=4, category="brute_force", escalate=True),
+        labeler_note="critical-severity case for the GATE config-marker test.",
+    )
+    golden_path = tmp_path / "golden.jsonl"
+    golden_path.write_text(case.model_dump_json() + "\n")
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    fake = FakeLLMClient([_verdict_json(4)])
+    rc = main(
+        [
+            "--golden",
+            str(golden_path),
+            "--prompt",
+            "triage-v1",
+            "--concurrency",
+            "1",
+            "--output-dir",
+            str(output_dir),
+            "--gate",
+            "--baseline",
+            str(baseline_path),
+        ],
+        llm=fake,
+    )
+    assert rc == 0
+
+
+def test_gate_line_shows_config_match_marker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M10 (whole-branch review): when this run's config equals the baseline's, the GATE line
+    says so — the PRD §7.4 cost condition is live."""
+    baseline_path = tmp_path / "baseline.json"
+    _write_gate_baseline(baseline_path, prompt_version_in_config="triage-v1")  # == this run's
+
+    _run_gate(tmp_path, baseline_path)
+
+    captured = capsys.readouterr()
+    assert "GATE: PASS config=match" in captured.out
+
+
+def test_gate_line_shows_config_changed_marker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M10 (whole-branch review): when the config drifted from the baseline's, the GATE line
+    flags it (the cost condition is silently disabled by design, PRD §7.4) so the dead condition
+    is visible."""
+    baseline_path = tmp_path / "baseline.json"
+    _write_gate_baseline(baseline_path, prompt_version_in_config="other-prompt")  # != this run's
+
+    _run_gate(tmp_path, baseline_path)
+
+    captured = capsys.readouterr()
+    assert "config=CHANGED (cost condition disabled)" in captured.out

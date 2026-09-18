@@ -128,8 +128,13 @@ def evaluate_gate(
     tripped: list[str] = []
     details: dict[str, str] = {}
 
-    severity_limit = baseline.metrics.severity_exact - settings.eval_gate_severity_drop_points / 100
-    if metrics.severity_exact < severity_limit:
+    # M1 (whole-branch review): compute the drop limit in `Decimal`, not binary float — the float
+    # `baseline - drop_points / 100` tripped spuriously for some sub-0.50 baselines at an exact
+    # 3.0-point drop (0.03 has no exact float representation). CONVENTIONS.md §7 forbids that drift.
+    severity_limit = Decimal(str(baseline.metrics.severity_exact)) - Decimal(
+        settings.eval_gate_severity_drop_points
+    ) / Decimal(100)
+    if Decimal(str(metrics.severity_exact)) < severity_limit:
         tripped.append("severity_exact_drop")
         details["severity_exact_drop"] = (
             f"baseline={baseline.metrics.severity_exact} run={metrics.severity_exact} "

@@ -239,6 +239,11 @@ def test_row_from_artifact_rebuilds_a_row(tmp_path: Path) -> None:
         "started_at": "2026-09-20T12:34:56+00:00",
         "metrics": metrics_payload(metrics),
         "golden": "evals/golden/v2.jsonl",
+        # R52 (whole-branch fix wave, finding I1): the per-run JSON now carries the strong-tier id,
+        # so a `--from-artifact` row's `models` cell shows the `→strong` marker a live `--publish`
+        # row does -- rather than reading `gpt-4o-mini` beside `gpt-4o-mini→gpt-5.4` rows for the
+        # same config, permanently, in the append-only table.
+        "strong_model": "gpt-5.4",
         "cases": [],
     }
     artifact = tmp_path / "20260920T123456Z-triage-v4.json"
@@ -251,8 +256,29 @@ def test_row_from_artifact_rebuilds_a_row(tmp_path: Path) -> None:
     assert published.row.model == "gpt-4o-mini"
     assert published.row.metrics == metrics  # round-tripped via metrics_from_payload
     assert published.git_sha == "1a2b3c4"
-    assert published.models == "gpt-4o-mini"  # no strong-model info in the per-run JSON (R46)
+    assert published.models == "gpt-4o-mini→gpt-5.4"  # R52: strong tier read back from the JSON
     assert published.date == date(2026, 9, 20)
+
+
+def test_row_from_artifact_pre_r52_artifact_has_no_strong_marker(tmp_path: Path) -> None:
+    """R52 (finding I1): a pre-R52 artifact has no `"strong_model"` key, so `row_from_artifact`
+    reads it via `.get(..., "")` and publishes the bare model id -- it must NOT raise, so already
+    -written nightly artifacts stay publishable."""
+    payload = {
+        "prompt_version": "triage-v4",
+        "model": "gpt-4o-mini",
+        "git_sha": "1a2b3c4",
+        "started_at": "2026-09-20T12:34:56+00:00",
+        "metrics": metrics_payload(_sample_metrics()),
+        "golden": "evals/golden/v2.jsonl",
+        "cases": [],
+    }
+    artifact = tmp_path / "20260920T123456Z-triage-v4-pre-r52.json"
+    artifact.write_text(json.dumps(payload))
+
+    published = row_from_artifact(artifact)
+
+    assert published.models == "gpt-4o-mini"  # the `.get` fallback, no `→strong` marker
 
 
 def test_row_from_artifact_refuses_non_v2(tmp_path: Path) -> None:

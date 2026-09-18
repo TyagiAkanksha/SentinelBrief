@@ -169,6 +169,7 @@ from evals.publish import (
     RESULTS_PATH,
     append_result_row,
     metrics_payload,
+    models_cell,
     render_row,
     row_from_artifact,
     write_eval_run_row,
@@ -527,12 +528,21 @@ async def _run_all(
         if args.gate:
             try:
                 baseline = load_baseline(args.baseline)
-            except ValueError:
+            except ValueError as e:
+                # M2 (whole-branch review): include the `ValueError` detail so a corrupt (vs
+                # merely missing) baseline is diagnosable from the one stderr line, without a
+                # traceback.
                 return fail(
                     "config_error",
-                    f"no baseline at {args.baseline} — write one from a real v2 run with "
+                    f"no baseline at {args.baseline}: {e} — write one from a real v2 run with "
                     "--write-baseline",
                 )
+
+        # t05 M2 (whole-branch review): a baseline records exactly ONE prompt's row (PRD §7.4);
+        # with more than one `--prompt` the old code silently took `rows[0]`. Refuse up front,
+        # before any case runs, so the choice is never made implicitly.
+        if args.write_baseline and len(args.prompt) > 1:
+            return fail("config_error", "--write-baseline takes exactly one --prompt")
 
         model: str = args.model if args.model is not None else settings.cheap_model
         strong_model: str | None = (
@@ -747,6 +757,10 @@ async def _run_all(
                 # R47: which golden set produced this run -- `--from-artifact`'s v2-only refusal
                 # (`evals.publish.row_from_artifact`) reads this field back.
                 "golden": str(args.golden),
+                # R52: the strong-tier id, read back by `row_from_artifact` so a `--from-artifact`
+                # row's `models` cell carries the `→strong` marker a live `--publish` row does
+                # (finding I1). `""` when two-tier routing is off, exactly like `models_cell`.
+                "strong_model": strong_model or "",
             }
             filename = f"{started_at.strftime('%Y%m%dT%H%M%SZ')}-{prompt_version}.json"
             try:
@@ -779,9 +793,12 @@ async def _run_all(
             if args.publish:
                 # m7 task-06: --database-url already wrote the eval_runs row above (task-04,
                 # ruling R35) -- --publish never writes it again, it only appends the
-                # docs/results.md row. "models" mirrors the ruling's exact shape: the bare model
-                # id un-escalated, "<model>→<strong>" (U+2192) when two-tier routing is active.
-                models = f"{model}→{strong_model}" if strong_model else model
+                # docs/results.md row. "models" mirrors the ruling's exact shape via the shared
+                # `models_cell` helper (ruling R52): the bare model id un-escalated,
+                # "<model>→<strong>" (U+2192) when two-tier routing is active -- the same cell
+                # `row_from_artifact` builds, so a live row and a `--from-artifact` row for the
+                # same config never disagree (finding I1).
+                models = models_cell(model, strong_model or "")
                 line = render_row(rows[-1], date=started_at.date(), git_sha=git_sha, models=models)
                 try:
                     append_result_row(RESULTS_PATH, line)
@@ -858,14 +875,22 @@ async def _run_all(
                 gate_result = evaluate_gate(
                     row.metrics, baseline, run_model_config=config, settings=settings
                 )
+                # M10 (whole-branch review): show whether this run's config matched the baseline's
+                # -- the PRD §7.4 cost condition only applies while they match, so a silently-dead
+                # cost condition (config drifted from the baseline) is now visible on the line.
+                config_marker = (
+                    "config=match"
+                    if config == baseline.model_config
+                    else "config=CHANGED (cost condition disabled)"
+                )
                 if gate_result.tripped:
                     gate_failed = True
                     conditions = " ".join(
                         f"{name}={gate_result.details[name]}" for name in gate_result.tripped
                     )
-                    print(f"GATE: FAIL {conditions}")
+                    print(f"GATE: FAIL {conditions} {config_marker}")
                 else:
-                    print("GATE: PASS")
+                    print(f"GATE: PASS {config_marker}")
             if gate_failed:
                 return 1
 

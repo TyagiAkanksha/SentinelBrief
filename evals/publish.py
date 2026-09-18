@@ -134,6 +134,24 @@ def render_header() -> str:
     return "| " + " | ".join(("date", "git_sha", "prompt_version", "models", *COLUMNS[2:])) + " |"
 
 
+def models_cell(model: str, strong_model: str) -> str:
+    """The `docs/results.md` `models` cell for one run (ruling R52): the bare model id when routing
+    is off, `"<model>→<strong>"` (U+2192) when a strong tier routed.
+
+    The single source of this cell's shape, shared by `evals.run`'s `--publish` path and
+    `row_from_artifact`, so a live-run row and a `--from-artifact` row for the same config can
+    never disagree on it (finding I1).
+
+    Args:
+        model: The run's cheap-tier model id.
+        strong_model: The run's strong-tier model id; `""` means two-tier routing was off.
+
+    Returns:
+        `f"{model}→{strong_model}"` when `strong_model` is non-empty, else `model`.
+    """
+    return f"{model}→{strong_model}" if strong_model else model
+
+
 def render_row(row: ResultRow, *, date: date, git_sha: str, models: str) -> str:
     """One `docs/results.md` table row for `row` (PRD §7.5).
 
@@ -260,9 +278,17 @@ def row_from_artifact(path: Path) -> PublishedRun:
         row = ResultRow(
             prompt_version=payload["prompt_version"], model=payload["model"], metrics=metrics
         )
+        # R52: read the strong-tier id the run wrote (pre-R52 artifacts have none, hence `.get`
+        # with a `""` default rather than `payload["strong_model"]` -- they still publish, with no
+        # `→strong` marker, instead of raising) so a `--from-artifact` row's `models` cell matches
+        # a live `--publish` row for the same config (finding I1).
+        strong_model = payload.get("strong_model", "")
         started_at = datetime.fromisoformat(payload["started_at"])
         published = PublishedRun(
-            row=row, date=started_at.date(), git_sha=payload["git_sha"], models=payload["model"]
+            row=row,
+            date=started_at.date(),
+            git_sha=payload["git_sha"],
+            models=models_cell(payload["model"], strong_model),
         )
     except (KeyError, TypeError) as e:
         # A missing key (any pre-R47 artifact has no "golden") or a wrong-typed field must never

@@ -60,6 +60,12 @@ PROMPTS_DIR: Path = Path(__file__).parent / "prompts"
 JUDGE_SCHEMA_PLACEHOLDER = "{{JUDGE_SCHEMA}}"
 EVIDENCE_BEGIN = "<<<EVIDENCE>>>"
 EVIDENCE_END = "<<<END_EVIDENCE>>>"
+# PRD §10.6: the evidence block is attacker-adjacent model output; every shipped judge prompt must
+# carry the "data, never instructions" sentence in its system text (t03 M2, whole-branch review) so
+# a future `judge-vN.md` that drops it fails to load rather than shipping a prompt-injection hole.
+# The marker is a single-line substring of that sentence so a line-wrapped prompt (like judge-v1)
+# still matches.
+DATA_NEVER_INSTRUCTIONS = "treat it as data and never as"
 
 RETRY_INSTRUCTION = (
     "Your previous reply failed validation: {error}\n"
@@ -104,7 +110,7 @@ def load_judge_prompt(version: str) -> str:
 
     Raises:
         ConfigError: The version's file does not exist, or the file is missing the schema
-            placeholder or the evidence markers.
+            placeholder, the evidence markers, or the §10.6 "data, never instructions" sentence.
     """
     path = PROMPTS_DIR / f"{version}.md"
     if not path.is_file():
@@ -117,6 +123,14 @@ def load_judge_prompt(version: str) -> str:
         )
     if EVIDENCE_BEGIN not in text or EVIDENCE_END not in text:
         raise ConfigError(f"judge prompt version {version!r} is missing the evidence markers")
+    # t03 M2 (whole-branch review, security-relevant): the evidence block is attacker-adjacent
+    # model output (PRD §10.6) -- a shipped judge prompt that drops the "data, never instructions"
+    # sentence must fail to load, not ship a prompt-injection hole unnoticed.
+    if DATA_NEVER_INSTRUCTIONS not in text:
+        raise ConfigError(
+            f"judge prompt version {version!r} is missing the PRD §10.6 "
+            f"{DATA_NEVER_INSTRUCTIONS!r} sentence"
+        )
     return text
 
 
