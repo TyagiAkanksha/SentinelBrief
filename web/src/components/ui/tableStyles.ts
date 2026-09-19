@@ -16,7 +16,7 @@ export const TABLE_ELEMENT =
 
 /** Header cell: faint, small, upper-case labels with the bottom rule. */
 export const TABLE_HEAD_CELL =
-  "border-b border-border px-3 py-2 text-xs font-medium tracking-wide text-faint uppercase";
+  "border-b border-border px-3 py-2 text-xs font-medium tracking-wide text-muted uppercase";
 
 /** Visible caption used as a table title (CostTable/DistributionTable). */
 export const TABLE_CAPTION = "caption-top pb-2 text-left text-sm font-medium text-text";
