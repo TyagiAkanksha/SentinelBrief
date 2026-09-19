@@ -398,7 +398,7 @@ Terraform stack live; migration documented.
 - VM provider(s), instance size, and domain name (working assumption: AWS, t3.small, `sentinelbrief.tyagiakanksha.com`).
 - AbuseIPDB account (or ship with `{unavailable}` stub until keyed).
 - MaxMind account + license key for GeoLite2 (or ship `get_ip_geo_asn` as `{unavailable}` until keyed).
-- Golden set v2 labels — **must be human work.** Claude Code may generate synthetic *fixtures* and *labels* for v1 (never published), the v2 sampler/exporter, and scoring code, but must never generate the labels for v2; machine-labeled ground truth would make the published eval meaningless.
+- Golden set v2 labels — **human work is the intended ground truth.** Claude Code may generate synthetic *fixtures* and *labels* for v1 (never published), the v2 sampler/exporter, and scoring code, and must never mark a machine label as `human`. **Amendment (owner decision 2026-09-18, ruling R54):** for the current build the owner chose to label v2 with a strong model (`evals/ai_label.py`, `labeled_by="ai"`) instead of by hand; the published numbers are disclosed everywhere as a model-tier *agreement* metric (the model graded against its own tier), NOT human ground truth, and human labeling remains the intended upgrade. This is honest (nothing is marked `human`), not the "machine-labeled ground truth passed off as real" that this clause forbids.
 
 ---
 

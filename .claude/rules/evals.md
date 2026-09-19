@@ -6,9 +6,14 @@ paths: evals/**, fixtures/**, docs/results.md
 
 - **Golden v1 numbers are never published** (PRD §7.1). They may appear in the ledger and in
   task reports, never in `docs/results.md`, the README, or a commit message.
-- **Golden v2 labels are human work** (PRD §13). Claude may write the stratified sampler, the
-  export format, the loader, the scorer, the judge, and the CI gate — and may never write, edit,
-  "correct", or infer a v2 label or `labeler_note`. If a task seems to require one, stop.
+- **Golden v2 label provenance is explicit and never faked** (PRD §13, ruling R54). Two honest
+  paths exist: `"human"` — written ONLY by `evals.label_tool` (a person labels blind), the default
+  and intended ground truth; and `"ai"` — written ONLY by `evals.ai_label` (a strong model labels
+  each session), used for the current published run by owner decision (2026-09-18) and disclosed
+  everywhere the numbers appear as a model-tier agreement metric, not human ground truth. Claude
+  may write the sampler, exporter, loader, scorer, judge, CI gate, and the `"ai"` labeler — and
+  may NEVER mark a machine label `"human"`, nor silently upgrade `"ai"`→`"human"`, nor hand-edit a
+  label. An unlabeled (`None`) v2 row is still rejected by `evals.run`. If unsure, stop and ask.
 - v1 fixtures and labels are synthetic and may be authored here (use `/cowrie-fixture`); every
   row cites the PRD §6.6 rubric row in `labeler_note`, and every v1 injection case is tagged
   `"injection"`.

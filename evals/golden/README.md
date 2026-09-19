@@ -11,7 +11,7 @@ by `evals.golden.load_golden` into `GoldenCase` objects.
 - Machine-authored rows **and** labels — PRD §13 explicitly allows this for v1: "Claude Code may
   generate synthetic fixtures and labels for v1 (never published)".
 - **v1 numbers are never published.** They exist only to develop and smoke-test the pipeline and
-  scoring code (`evals/scoring.py`, `evals/run.py`) before a real, human-labeled dataset exists.
+  scoring code (`evals/scoring.py`, `evals/run.py`) before a labeled v2 dataset exists. v2 rows carry `labeled_by` = `"human"` (a person, via `evals.label_tool`) or `"ai"` (a strong model, via `evals.ai_label` — the current published run, disclosed in `docs/results.md` as a model-tier agreement metric, not human ground truth).
   Do not put a v1 metric in `docs/results.md`, the top-level README, or a commit message.
 - Coverage: at least 3 rows per PRD §6.6 severity band (1-5); every `VerdictCategory` used at
   least once; every row with `severity >= 4` has `escalate: true` (enforced by

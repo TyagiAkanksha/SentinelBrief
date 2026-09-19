@@ -202,10 +202,14 @@ scored, carrying the full metrics blob and the run's effective model configurati
 
 ### Evals — labeling v2
 
-Golden set v2 labels are human work (PRD §13): `python -m evals.sample` draws a stratified,
-verdict-blind candidate file from the live database, and `python -m evals.label_tool label`
-walks it one case at a time, appending `labeled_by: "human"` rows to `evals/golden/v2.jsonl` from
-typed input only — nothing under `evals/` can mint a label programmatically. The rubric, the
+Golden set v2 can be labeled two ways, both honestly recorded in each row's `labeled_by`. The
+intended path is **human**: `python -m evals.sample` draws a stratified, verdict-blind candidate
+file from the live database, and `python -m evals.label_tool label` walks it one case at a time,
+appending `labeled_by: "human"` rows from typed input only. For the current published run the
+owner chose the **AI-labeled** path (2026-09-18): `python -m evals.ai_label` labels each candidate
+with a strong model, writing `labeled_by: "ai"` — so the results measure the cheap tier against
+strong-tier labels (a model-tier agreement metric, disclosed in `docs/results.md`), not human
+ground truth. The two provenances never mix silently; the rubric, the
 seven categories (including the `brute_force`-vs-`reconnaissance` tie-break) and the full
 labeling workflow, including the 10 % re-review a week later, are in
 [`docs/labeling-guide.md`](docs/labeling-guide.md).

@@ -5,9 +5,7 @@ This guide is the ONE place the PRD §6.6 rubric, the seven `VerdictCategory` na
 for word on the tie-break and name for name on the categories, with `worker/prompts/triage-v4.md`
 (the active prompt the model reads) and the `/cowrie-fixture` skill (used to author synthetic v1
 rows) — `tests/test_taxonomy_agreement.py` pins that agreement. Nothing in this document is
-optional: golden set v2 labels are human work (PRD §13), and the label tool
-(`evals/label_tool.py`) enforces it mechanically, but the label itself is only as good as the
-judgment applied here.
+optional. This rubric governs the human labeler (`evals/label_tool.py`, `labeled_by="human"`) AND the strong-model AI labeler (`evals/ai_label.py`, `labeled_by="ai"`, used for the current published run by owner decision 2026-09-18 and disclosed as a model-tier agreement metric). A label is only as good as the judgment — human or model — applied against these definitions.
 
 ## The severity rubric (PRD §6.6 — ground truth definition)
 
