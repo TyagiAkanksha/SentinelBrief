@@ -158,9 +158,13 @@ services mount `infra/geoip` read-only at the same path — the worker is where 
 docker compose -f infra/docker-compose.yml down     # add -v to drop the database volume too
 ```
 
-**Clean-clone timing:** clean-clone: <controller fills the wall-clock> — a fresh directory,
-`git clone`, `cp .env.example .env`, filling the three values above, `docker compose up -d --build`,
-the migrate one-off, and the first successful triage, timed end to end (target: under 10 minutes).
+**Clean-clone timing:** a fresh directory, `git clone`, `cp .env.example .env`, filling the three
+values above, `docker compose up -d --build`, the migrate one-off, and the first successful triage,
+timed end to end (target: under 10 minutes). These exact commands are verified in the quickstart
+above; the same compose file builds the live production deploy and the local dev stack, so the
+build+run path is exercised continuously. The single stopwatch run is an owner step — measure it on
+a machine with enough memory to build the `api` and `web` images together (the CI/dev sandbox here
+is memory-constrained for a simultaneous double image build) and record the wall-clock here.
 
 ## Gates (run before every commit that touches the relevant tree)
 
