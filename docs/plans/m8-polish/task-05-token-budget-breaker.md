@@ -17,8 +17,9 @@ re-attempts after the UTC-midnight reset (the counter key is date-scoped and exp
 successful call the counter is incremented by that call's `input+output` tokens. `0` = unlimited
 (dev default). `StatsOut` gains `budget_exhausted: bool` (true when today's counter ≥ budget and
 budget>0) and `tokens_today`/`daily_token_budget`; the dashboard shows a banner when exhausted. The
-nightly `--no-judge` flag (added in M7) is REVERTED here — with the budget breaker live, the nightly
-can judge again (capped by the breaker); update `.github/workflows/nightly-eval.yml` and its pin.
+nightly `--no-judge` flag (added in M7) is REVERTED here — the nightly can judge again; its spend is
+bounded by the FIXED golden-set size (~$1.5/run), NOT by the worker's daily token breaker (which
+guards `worker/triage.py`, not the eval harness — corrected at the m8b whole-repo review, finding I1).
 
 ## Context (read ONLY these)
 - `PRD.md` §10.3, §10. `docs/plans/m8-polish.md` Global Constraints. `.claude/rules/worker.md`.
@@ -41,7 +42,7 @@ class StatsOut: ...; budget_exhausted: bool; tokens_today: int; daily_token_budg
 The ARQ retry classification must treat `BudgetExceededError` as retryable (like `LLMCallError`) so the job re-queues with backoff and the alert stays `pending`; it must NOT count against the terminal-`failed` path.
 
 ## Folds these deferred findings
-- Re-enable the judge in the nightly workflow (revert M7's `--no-judge`), since the breaker now caps spend; update `tests/test_nightly_*` if any pins the flag (none should — the shape pin matches a substring; removing `--no-judge` keeps it green).
+- Re-enable the judge in the nightly workflow (revert M7's `--no-judge`); its cost is bounded by the fixed golden size (~$1.5/run), NOT the worker breaker (I1 correction); update `tests/test_nightly_*` if any pins the flag (none should — the shape pin matches a substring).
 - t03 M9 (owner cost awareness) is resolved by this task existing.
 
 ## Steps (TDD outline)
@@ -52,4 +53,4 @@ The ARQ retry classification must treat `BudgetExceededError` as retryable (like
 With `DAILY_TOKEN_BUDGET` set low on the dev stack: post alerts → they stay `pending` (not failed), `/stats` shows the banner and `budget_exhausted:true`; raise the budget / next UTC day → they triage. `docker compose` acceptance walk in the ledger.
 
 ## Acceptance
-No LLM call proceeds once the day's budget is exhausted; exhausted alerts stay `pending` and resume after reset; the breaker is a Setting (`0`=unlimited); stats + banner reflect it; the nightly judges again under the cap.
+No LLM call proceeds once the day's budget is exhausted; exhausted alerts stay `pending` and resume after reset; the breaker is a Setting (`0`=unlimited); stats + banner reflect it; the nightly judges again (spend bounded by the fixed golden size, not the worker breaker).
