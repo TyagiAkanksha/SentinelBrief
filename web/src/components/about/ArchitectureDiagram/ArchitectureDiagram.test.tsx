@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
 import { ArchitectureDiagram } from "@/components/about/ArchitectureDiagram";
 
@@ -18,23 +18,31 @@ describe("ArchitectureDiagram", () => {
     expect(caption?.textContent).toMatch(/dashboard/i);
   });
 
-  it("hides the ASCII art from assistive technology", () => {
-    const { container } = render(<ArchitectureDiagram />);
+  it("renders the labelled architecture nodes", () => {
+    render(<ArchitectureDiagram />);
 
-    const pre = container.querySelector("pre");
-    expect(pre).not.toBeNull();
-    expect(pre?.getAttribute("aria-hidden")).toBe("true");
-    expect(pre?.textContent).toContain("Cowrie");
-    expect(pre?.textContent).toContain("PostgreSQL");
-    expect(pre?.textContent).toContain("ARQ");
+    expect(screen.getByText("Cowrie SSH honeypot")).toBeInTheDocument();
+    expect(screen.getByText("API")).toBeInTheDocument();
+    expect(screen.getByText("Redis")).toBeInTheDocument();
+    expect(screen.getByText("PostgreSQL")).toBeInTheDocument();
+    expect(screen.getByText("ARQ worker")).toBeInTheDocument();
+    expect(screen.getByText("Next.js dashboard")).toBeInTheDocument();
+  });
+
+  it("exposes the whole diagram to assistive tech as one labelled image", () => {
+    render(<ArchitectureDiagram />);
+
+    const diagram = screen.getByRole("img");
+    const label = diagram.getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/honeypot/i);
+    expect(label).toMatch(/worker/i);
+    expect(label).toMatch(/dashboard/i);
   });
 
   it("wraps the diagram in a horizontally scrollable container", () => {
     const { container } = render(<ArchitectureDiagram />);
 
-    const pre = container.querySelector("pre");
-    const parent = pre?.parentElement;
-    expect(parent).not.toBeNull();
-    expect(parent?.className).toContain("overflow-x-auto");
+    const diagram = container.querySelector('[role="img"]');
+    expect(diagram?.parentElement?.className).toContain("overflow-x-auto");
   });
 });

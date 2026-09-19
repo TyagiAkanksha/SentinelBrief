@@ -8,7 +8,14 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Stat } from "@/components/ui/Stat";
 import { ApiError, getJson } from "@/lib/api/server";
-import { formatCount, formatLatency, formatPercent, formatUsd, formatUtc } from "@/lib/format";
+import {
+  formatCount,
+  formatLatency,
+  formatPercent,
+  formatTokens,
+  formatUsd,
+  formatUtc,
+} from "@/lib/format";
 import { categoryRows, escalationRate, severityRows, triagedCount, volumeRows } from "@/lib/stats";
 import type { StatsOut } from "@/types/api";
 
@@ -42,6 +49,18 @@ export default async function StatsPage(): Promise<JSX.Element> {
 
   const triaged = triagedCount(stats);
 
+  // Daily token-budget circuit breaker (PRD §10.3 / M8b): 0 means no cap. The hint surfaces the
+  // breaker so the stats grid showcases it alongside the eight-card layout.
+  const budgetUncapped = stats.daily_token_budget === 0;
+  const budgetValue = budgetUncapped
+    ? "Unlimited"
+    : `${formatTokens(stats.tokens_today)} / ${formatTokens(stats.daily_token_budget)}`;
+  const budgetHint = budgetUncapped
+    ? "No daily cap configured"
+    : stats.budget_exhausted
+      ? "Exhausted — triage paused"
+      : "Tokens used today";
+
   return (
     <section className="space-y-6">
       <PageHeader title="Stats" subtitle="Live triage metrics — updated as new sessions arrive" />
@@ -65,6 +84,7 @@ export default async function StatsPage(): Promise<JSX.Element> {
           label="Last alert"
           value={stats.last_alert_at === null ? "—" : formatUtc(stats.last_alert_at)}
         />
+        <Stat label="Daily budget" value={budgetValue} hint={budgetHint} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

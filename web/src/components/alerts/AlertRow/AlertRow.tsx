@@ -19,23 +19,27 @@ export function AlertRow({ alert, now }: AlertRowProps) {
       </td>
       <td>{alert.verdict ? <Badge category={alert.verdict.category} /> : "—"}</td>
       <td className="whitespace-nowrap">
-        <CountryFlag code={alert.country} />
-        <Link
-          href={`/alerts/${alert.id}`}
-          className="font-mono text-accent underline decoration-transparent underline-offset-2 transition-colors hover:decoration-current"
-        >
-          {alert.src_ip}
-        </Link>
+        <span className="inline-flex items-center gap-1.5">
+          <CountryFlag code={alert.country} />
+          <Link
+            href={`/alerts/${alert.id}`}
+            className="font-mono text-accent underline decoration-transparent underline-offset-2 transition-colors hover:decoration-current"
+          >
+            {alert.src_ip}
+          </Link>
+        </span>
       </td>
       <td className="text-muted">{alert.sensor}</td>
       <td className="text-muted">
-        {alert.verdict
-          ? alert.verdict.reasoning_excerpt
-          : alert.status === "pending"
-            ? "awaiting triage"
-            : "triage failed — no verdict"}
+        <span className="line-clamp-2">
+          {alert.verdict
+            ? alert.verdict.reasoning_excerpt
+            : alert.status === "pending"
+              ? "awaiting triage"
+              : "triage failed — no verdict"}
+        </span>
       </td>
-      <td className="whitespace-nowrap text-muted">
+      <td className="whitespace-nowrap text-right text-muted tabular-nums">
         <time dateTime={alert.received_at} title={formatUtc(alert.received_at)}>
           {formatAge(alert.received_at, now)}
         </time>
