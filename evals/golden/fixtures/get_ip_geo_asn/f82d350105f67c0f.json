@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "120.203.161.202"
+  },
+  "result": {
+    "asn": 56045,
+    "country": "CN",
+    "ip": "120.203.161.202",
+    "org": "China Mobile communications corporation"
+  },
+  "tool": "get_ip_geo_asn"
+}

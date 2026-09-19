@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "185.247.137.81"
+  },
+  "result": {
+    "asn": 211298,
+    "country": "GB",
+    "ip": "185.247.137.81",
+    "org": "Driftnet Ltd"
+  },
+  "tool": "get_ip_geo_asn"
+}

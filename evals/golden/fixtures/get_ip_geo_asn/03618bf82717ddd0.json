@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "195.211.136.242"
+  },
+  "result": {
+    "asn": 43967,
+    "country": "UA",
+    "ip": "195.211.136.242",
+    "org": "Teremky Lan Isp LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

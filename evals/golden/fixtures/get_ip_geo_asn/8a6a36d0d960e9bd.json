@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "195.62.34.23"
+  },
+  "result": {
+    "asn": 199901,
+    "country": "RU",
+    "ip": "195.62.34.23",
+    "org": "LLC Telecommunication company GEPARD"
+  },
+  "tool": "get_ip_geo_asn"
+}

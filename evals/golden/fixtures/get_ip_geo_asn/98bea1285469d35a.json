@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "191.102.248.14"
+  },
+  "result": {
+    "asn": 262934,
+    "country": "AR",
+    "ip": "191.102.248.14",
+    "org": "IP*RED"
+  },
+  "tool": "get_ip_geo_asn"
+}

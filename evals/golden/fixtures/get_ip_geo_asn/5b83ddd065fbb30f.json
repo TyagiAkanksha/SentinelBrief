@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "154.74.9.0"
+  },
+  "result": {
+    "asn": 37035,
+    "country": "TZ",
+    "ip": "154.74.9.0",
+    "org": "MIC TANZANIA LTD"
+  },
+  "tool": "get_ip_geo_asn"
+}

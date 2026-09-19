@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "195.178.110.217"
+  },
+  "result": {
+    "asn": 48090,
+    "country": "BG",
+    "ip": "195.178.110.217",
+    "org": "Techoff Srv Limited"
+  },
+  "tool": "get_ip_geo_asn"
+}

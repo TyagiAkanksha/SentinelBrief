@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "103.190.40.117"
+  },
+  "result": {
+    "asn": 139922,
+    "country": "NP",
+    "ip": "103.190.40.117",
+    "org": "DISH MEDIA NETWORK PUBLIC LIMITED"
+  },
+  "tool": "get_ip_geo_asn"
+}

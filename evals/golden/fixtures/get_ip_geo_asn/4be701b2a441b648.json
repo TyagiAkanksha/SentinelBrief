@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "92.241.36.235"
+  },
+  "result": {
+    "asn": 9038,
+    "country": "JO",
+    "ip": "92.241.36.235",
+    "org": "Al Bahrainia al Urdunia Liltaknia Wa Alitisalat Plc. Co"
+  },
+  "tool": "get_ip_geo_asn"
+}

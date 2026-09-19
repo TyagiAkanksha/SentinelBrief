@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "39.37.150.59"
+  },
+  "result": {
+    "asn": 17557,
+    "country": "PK",
+    "ip": "39.37.150.59",
+    "org": "Pakistan Telecommunication Company Limited"
+  },
+  "tool": "get_ip_geo_asn"
+}

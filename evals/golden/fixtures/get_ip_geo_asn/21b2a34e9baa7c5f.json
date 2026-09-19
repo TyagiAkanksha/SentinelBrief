@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "37.230.158.85"
+  },
+  "result": {
+    "asn": 206385,
+    "country": "RU",
+    "ip": "37.230.158.85",
+    "org": "Ooo spetstelecom-yug"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "103.121.6.135"
+  },
+  "result": {
+    "asn": 151048,
+    "country": "PK",
+    "ip": "103.121.6.135",
+    "org": "Win Broadband (Pvt) Ltd"
+  },
+  "tool": "get_ip_geo_asn"
+}

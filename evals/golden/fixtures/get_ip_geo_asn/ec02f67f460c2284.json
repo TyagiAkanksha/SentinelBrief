@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.239.211.179"
+  },
+  "result": {
+    "asn": 266857,
+    "country": "CL",
+    "ip": "45.239.211.179",
+    "org": "SERVICIOS DE TELECOMUNICACIONES FULLTV LIMITADA"
+  },
+  "tool": "get_ip_geo_asn"
+}

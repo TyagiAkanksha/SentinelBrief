@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "47.225.137.91"
+  },
+  "result": {
+    "asn": 20115,
+    "country": "US",
+    "ip": "47.225.137.91",
+    "org": "Charter Communications LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

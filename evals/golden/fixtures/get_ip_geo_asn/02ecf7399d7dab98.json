@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "84.54.70.34"
+  },
+  "result": {
+    "asn": 8193,
+    "country": "UZ",
+    "ip": "84.54.70.34",
+    "org": "Uzbektelekom Joint Stock Company"
+  },
+  "tool": "get_ip_geo_asn"
+}

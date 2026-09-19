@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "160.250.128.93"
+  },
+  "result": {
+    "asn": 150895,
+    "country": "VN",
+    "ip": "160.250.128.93",
+    "org": "EZ TECHNOLOGY COMPANY LIMITED"
+  },
+  "tool": "get_ip_geo_asn"
+}

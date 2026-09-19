@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "38.172.170.110"
+  },
+  "result": {
+    "asn": 270026,
+    "country": "VE",
+    "ip": "38.172.170.110",
+    "org": "RED SERVITEL, CA"
+  },
+  "tool": "get_ip_geo_asn"
+}

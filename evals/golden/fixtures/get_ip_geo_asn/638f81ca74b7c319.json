@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "113.211.212.157"
+  },
+  "result": {
+    "asn": 9534,
+    "country": "MY",
+    "ip": "113.211.212.157",
+    "org": "Binariang Berhad"
+  },
+  "tool": "get_ip_geo_asn"
+}

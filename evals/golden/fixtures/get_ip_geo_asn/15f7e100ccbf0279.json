@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "185.157.121.166"
+  },
+  "result": {
+    "asn": 50012,
+    "country": "UA",
+    "ip": "185.157.121.166",
+    "org": "LLC best-link"
+  },
+  "tool": "get_ip_geo_asn"
+}

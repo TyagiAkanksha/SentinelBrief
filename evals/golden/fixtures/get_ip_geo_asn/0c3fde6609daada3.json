@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "193.32.162.84"
+  },
+  "result": {
+    "asn": 47890,
+    "country": "RO",
+    "ip": "193.32.162.84",
+    "org": "Unmanaged Ltd"
+  },
+  "tool": "get_ip_geo_asn"
+}

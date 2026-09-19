@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "212.47.128.180"
+  },
+  "result": {
+    "asn": 8814,
+    "country": "AZ",
+    "ip": "212.47.128.180",
+    "org": "Aztelekom LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

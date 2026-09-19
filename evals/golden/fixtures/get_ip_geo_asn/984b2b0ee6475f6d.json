@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "185.75.238.180"
+  },
+  "result": {
+    "asn": 24651,
+    "country": "LV",
+    "ip": "185.75.238.180",
+    "org": "Jsc Balticom"
+  },
+  "tool": "get_ip_geo_asn"
+}

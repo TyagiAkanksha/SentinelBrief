@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "218.12.225.180"
+  },
+  "result": {
+    "asn": 4837,
+    "country": "CN",
+    "ip": "218.12.225.180",
+    "org": "CHINA UNICOM China169 Backbone"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "198.235.24.8"
+  },
+  "result": {
+    "asn": 396982,
+    "country": "US",
+    "ip": "198.235.24.8",
+    "org": "Google LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

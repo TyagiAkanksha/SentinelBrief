@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "142.93.82.46"
+  },
+  "result": {
+    "asn": 14061,
+    "country": "US",
+    "ip": "142.93.82.46",
+    "org": "DigitalOcean, LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

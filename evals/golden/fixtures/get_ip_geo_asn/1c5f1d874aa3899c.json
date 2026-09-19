@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "51.171.53.124"
+  },
+  "result": {
+    "asn": 5466,
+    "country": "IE",
+    "ip": "51.171.53.124",
+    "org": "Eir Broadband"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "207.98.174.85"
+  },
+  "result": {
+    "asn": 12083,
+    "country": "US",
+    "ip": "207.98.174.85",
+    "org": "WideOpenWest Finance LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "178.150.68.110"
+  },
+  "result": {
+    "asn": 13188,
+    "country": "UA",
+    "ip": "178.150.68.110",
+    "org": "Content Delivery Network Ltd"
+  },
+  "tool": "get_ip_geo_asn"
+}

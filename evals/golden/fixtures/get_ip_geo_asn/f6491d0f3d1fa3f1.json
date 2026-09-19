@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "31.41.67.25"
+  },
+  "result": {
+    "asn": 50648,
+    "country": "UA",
+    "ip": "31.41.67.25",
+    "org": "PE UAinet"
+  },
+  "tool": "get_ip_geo_asn"
+}

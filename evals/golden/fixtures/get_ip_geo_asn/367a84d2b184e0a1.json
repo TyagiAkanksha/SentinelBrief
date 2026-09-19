@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "117.89.254.46"
+  },
+  "result": {
+    "asn": 134756,
+    "country": "CN",
+    "ip": "117.89.254.46",
+    "org": "CHINANET Nanjing Jishan IDC network"
+  },
+  "tool": "get_ip_geo_asn"
+}

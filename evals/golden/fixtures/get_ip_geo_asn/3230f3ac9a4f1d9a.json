@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "206.135.72.9"
+  },
+  "result": {
+    "asn": 28458,
+    "country": "MX",
+    "ip": "206.135.72.9",
+    "org": "IENTC S DE RL DE CV"
+  },
+  "tool": "get_ip_geo_asn"
+}

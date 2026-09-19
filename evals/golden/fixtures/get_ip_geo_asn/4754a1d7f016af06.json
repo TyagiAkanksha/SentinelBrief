@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "186.58.116.206"
+  },
+  "result": {
+    "asn": 22927,
+    "country": "AR",
+    "ip": "186.58.116.206",
+    "org": "Telefonica de Argentina"
+  },
+  "tool": "get_ip_geo_asn"
+}

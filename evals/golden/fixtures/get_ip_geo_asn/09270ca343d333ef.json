@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "190.226.27.75"
+  },
+  "result": {
+    "asn": 7303,
+    "country": "AR",
+    "ip": "190.226.27.75",
+    "org": "Telecom Argentina S.A."
+  },
+  "tool": "get_ip_geo_asn"
+}

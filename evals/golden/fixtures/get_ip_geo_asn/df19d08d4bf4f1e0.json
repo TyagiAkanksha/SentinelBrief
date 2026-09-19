@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "93.158.90.12"
+  },
+  "result": {
+    "asn": 12552,
+    "country": "SE",
+    "ip": "93.158.90.12",
+    "org": "GlobalConnect AB"
+  },
+  "tool": "get_ip_geo_asn"
+}

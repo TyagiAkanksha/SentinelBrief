@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "14.255.187.76"
+  },
+  "result": {
+    "asn": 45899,
+    "country": "VN",
+    "ip": "14.255.187.76",
+    "org": "VNPT Corp"
+  },
+  "tool": "get_ip_geo_asn"
+}

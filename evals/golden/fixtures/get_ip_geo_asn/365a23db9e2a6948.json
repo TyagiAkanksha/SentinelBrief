@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.178.195.210"
+  },
+  "result": {
+    "asn": 267900,
+    "country": "AR",
+    "ip": "45.178.195.210",
+    "org": "ESTABLECIMIENTO CASCADA BLANCA S.A"
+  },
+  "tool": "get_ip_geo_asn"
+}

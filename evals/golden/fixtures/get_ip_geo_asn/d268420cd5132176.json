@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "105.214.72.135"
+  },
+  "result": {
+    "asn": 16637,
+    "country": "ZA",
+    "ip": "105.214.72.135",
+    "org": "MTN SA"
+  },
+  "tool": "get_ip_geo_asn"
+}

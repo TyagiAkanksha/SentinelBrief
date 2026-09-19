@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.137.136.20"
+  },
+  "result": {
+    "asn": 267708,
+    "country": "CO",
+    "ip": "45.137.136.20",
+    "org": "SP SISTEMAS PALACIOS LTDA"
+  },
+  "tool": "get_ip_geo_asn"
+}

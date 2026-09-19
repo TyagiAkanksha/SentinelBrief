@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "196.171.77.233"
+  },
+  "result": {
+    "asn": 24691,
+    "country": "TG",
+    "ip": "196.171.77.233",
+    "org": "IDDQD-AS"
+  },
+  "tool": "get_ip_geo_asn"
+}

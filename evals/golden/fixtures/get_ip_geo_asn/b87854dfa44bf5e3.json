@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "176.106.227.15"
+  },
+  "result": {
+    "asn": 215423,
+    "country": "IL",
+    "ip": "176.106.227.15",
+    "org": "Fifth Genertion New Age Ltd"
+  },
+  "tool": "get_ip_geo_asn"
+}

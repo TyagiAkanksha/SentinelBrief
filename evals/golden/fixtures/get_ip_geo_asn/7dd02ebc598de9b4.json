@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "138.219.18.241"
+  },
+  "result": {
+    "asn": 263814,
+    "country": "AR",
+    "ip": "138.219.18.241",
+    "org": "COOPERATIVA TELEFONICA DE SERVICIO PUBLICO Y COMUNICACIONES DE VILLA DEL TOTORAL LIMITADA"
+  },
+  "tool": "get_ip_geo_asn"
+}

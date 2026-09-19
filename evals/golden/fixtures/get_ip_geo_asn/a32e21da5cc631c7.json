@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "102.158.153.27"
+  },
+  "result": {
+    "asn": 37705,
+    "country": "TN",
+    "ip": "102.158.153.27",
+    "org": "TOPNET"
+  },
+  "tool": "get_ip_geo_asn"
+}

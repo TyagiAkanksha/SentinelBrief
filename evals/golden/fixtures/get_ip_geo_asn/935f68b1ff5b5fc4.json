@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "93.140.17.21"
+  },
+  "result": {
+    "asn": 5391,
+    "country": "HR",
+    "ip": "93.140.17.21",
+    "org": "Hrvatski Telekom d.d."
+  },
+  "tool": "get_ip_geo_asn"
+}

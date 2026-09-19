@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "91.225.162.194"
+  },
+  "result": {
+    "asn": 56400,
+    "country": "UA",
+    "ip": "91.225.162.194",
+    "org": "SPD Chernega Aleksandr Anatolevich"
+  },
+  "tool": "get_ip_geo_asn"
+}

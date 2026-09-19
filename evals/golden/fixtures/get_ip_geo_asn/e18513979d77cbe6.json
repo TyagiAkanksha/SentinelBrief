@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "31.128.179.166"
+  },
+  "result": {
+    "asn": 44019,
+    "country": "UA",
+    "ip": "31.128.179.166",
+    "org": "Spetsnet LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

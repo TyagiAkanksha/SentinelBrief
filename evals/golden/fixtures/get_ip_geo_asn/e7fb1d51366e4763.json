@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "201.246.7.246"
+  },
+  "result": {
+    "asn": 7418,
+    "country": "CL",
+    "ip": "201.246.7.246",
+    "org": "TELEFONICA CHILE S.A."
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "200.86.254.135"
+  },
+  "result": {
+    "asn": 22047,
+    "country": "CL",
+    "ip": "200.86.254.135",
+    "org": "VTR BANDA ANCHA S.A."
+  },
+  "tool": "get_ip_geo_asn"
+}

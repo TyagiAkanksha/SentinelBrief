@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "18.218.118.203"
+  },
+  "result": {
+    "asn": 16509,
+    "country": "US",
+    "ip": "18.218.118.203",
+    "org": "Amazon.com, Inc."
+  },
+  "tool": "get_ip_geo_asn"
+}

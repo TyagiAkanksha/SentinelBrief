@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "31.43.42.156"
+  },
+  "result": {
+    "asn": 50581,
+    "country": "UA",
+    "ip": "31.43.42.156",
+    "org": "Ukrainian Telecommunication Group LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

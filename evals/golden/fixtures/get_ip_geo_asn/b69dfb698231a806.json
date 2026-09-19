@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "213.230.87.6"
+  },
+  "result": {
+    "asn": 8193,
+    "country": "UZ",
+    "ip": "213.230.87.6",
+    "org": "Uzbektelekom Joint Stock Company"
+  },
+  "tool": "get_ip_geo_asn"
+}

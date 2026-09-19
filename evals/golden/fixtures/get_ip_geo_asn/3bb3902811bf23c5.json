@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "100.11.243.100"
+  },
+  "result": {
+    "asn": 701,
+    "country": "US",
+    "ip": "100.11.243.100",
+    "org": "Verizon Business"
+  },
+  "tool": "get_ip_geo_asn"
+}

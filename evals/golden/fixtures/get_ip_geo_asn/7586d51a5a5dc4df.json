@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "67.86.31.96"
+  },
+  "result": {
+    "asn": 6128,
+    "country": "US",
+    "ip": "67.86.31.96",
+    "org": "Cablevision Systems Corp."
+  },
+  "tool": "get_ip_geo_asn"
+}

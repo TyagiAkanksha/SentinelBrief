@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "102.210.19.71"
+  },
+  "result": {
+    "asn": 29571,
+    "country": "CI",
+    "ip": "102.210.19.71",
+    "org": "Orange C\u00f4te d'Ivoire"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "52.190.221.86"
+  },
+  "result": {
+    "asn": 8075,
+    "country": "US",
+    "ip": "52.190.221.86",
+    "org": "Microsoft Corporation"
+  },
+  "tool": "get_ip_geo_asn"
+}
