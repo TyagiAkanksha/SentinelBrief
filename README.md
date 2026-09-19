@@ -5,8 +5,11 @@ self-hosted SSH honeypot (Cowrie), lets a model gather context through tool call
 analysts a ranked, explained queue instead of raw JSON — with a published evaluation harness
 measuring how well it does.
 
-**Status:** M6 complete — Phase-1 deploy live at `https://sentinelbrief.tyagiakanksha.com` triaging real Cowrie traffic (48 h soak passed 2026-09-14); M7 (eval hardening) next. The build plan
-lives in [`docs/plans/`](docs/plans/README.md); the spec is
+**Status:** M7 (eval hardening) complete — the nightly gate runs against real golden-set v2 results
+(`docs/results.md`). Phase-1 deploy live at `https://sentinelbrief.tyagiakanksha.com` triaging real
+Cowrie traffic (48 h soak passed 2026-09-14). M8 (live dashboard with SSE updates, `/stats`/`/about`,
+per-IP rate limiting, admin-gated capped retriage, a daily token-budget breaker, and the dark/light
+UI below) is in progress. The build plan lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
 [![nightly-eval](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml/badge.svg)](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml)
@@ -19,13 +22,24 @@ A nightly job replays the golden-set v2 harness and fails the build on a PRD §7
    tools (IP reputation, geo/ASN, alert history, session commands, asset info), and returns a
    structured **verdict** — severity 1–5, category, confidence, reasoning, recommended action.
    Low-confidence or high-severity verdicts are re-run on a stronger model.
-3. A public, read-only dashboard shows the queue and, per alert, the full tool-call trace.
+3. A public, read-only dashboard (dark/light, a theme toggle in the header) shows the queue with
+   live updates over SSE (falls back to 30 s polling), a `/stats` page (volume over time, severity
+   and category distribution, cost/alert trend, p95 latency, escalation rate), an `/about` page for
+   a 60-second read, and the full tool-call trace per alert.
 4. An evaluation harness scores every prompt/model change against a labeled golden set and
    publishes the numbers — including the ones that got worse — to [`docs/results.md`](docs/results.md).
    The current v2 labels are model-generated (disclosed there as a model-tier agreement metric, not
    human ground truth).
+5. Operational guardrails: a per-IP rate limiter on every public `GET`, an admin-token-gated
+   retriage endpoint capped at a global daily count, and a daily token-budget circuit breaker that
+   leaves alerts `pending` and shows a dashboard banner once tripped.
 
 The human always decides. The system never blocks, quarantines, or responds automatically.
+
+**What it does not do** (PRD §1.4 non-goals): no multi-source connectors (one source — our own
+Cowrie honeypot); no automated response (blocking IPs, isolating hosts); no multi-tenancy, user
+accounts, or billing; no pgvector/semantic search (historical lookup is exact-match SQL); no
+real-time fine-tuning or feedback loops; no mobile app.
 
 ## Architecture
 
@@ -144,6 +158,14 @@ services mount `infra/geoip` read-only at the same path — the worker is where 
 docker compose -f infra/docker-compose.yml down     # add -v to drop the database volume too
 ```
 
+**Clean-clone timing:** a fresh directory, `git clone`, `cp .env.example .env`, filling the three
+values above, `docker compose up -d --build`, the migrate one-off, and the first successful triage,
+timed end to end (target: under 10 minutes). These exact commands are verified in the quickstart
+above; the same compose file builds the live production deploy and the local dev stack, so the
+build+run path is exercised continuously. The single stopwatch run is an owner step — measure it on
+a machine with enough memory to build the `api` and `web` images together (the CI/dev sandbox here
+is memory-constrained for a simultaneous double image build) and record the wall-clock here.
+
 ## Gates (run before every commit that touches the relevant tree)
 
 Python (repo root):
@@ -159,7 +181,7 @@ uv run ruff check --no-cache .
 uv run ruff format --check .
 uv run mypy --no-incremental
 uv run lint-imports
-uv run pytest -q
+uv run pytest -q --cov=api --cov=worker --cov=core --cov=evals --cov=sentinelbrief_shipper --cov-fail-under=90
 ```
 
 Frontend:

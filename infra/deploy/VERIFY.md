@@ -485,10 +485,125 @@ _(VERIFY check 10, 2026-09-12.)_
 
 ## 11. Placeholders from M8
 
-Rate limits from two real client IPs plus a forged-`X-Forwarded-For` check that stays `429`
-after bucket exhaustion; SSE (`GET /api/v1/stream`) arriving unbuffered through the domain. Both
-land at M8 — recorded at M8, not here.
+SSE (`GET /api/v1/stream`) arriving unbuffered through the domain. Lands at M8 — recorded at M8,
+not here. (The rate-limit/forged-XFF check that used to live in this slot moved to §12, below,
+once the M8b limiter and its private-IP exemption existed to check.)
 
 ```text
 (recorded at M8)
 ```
+
+## 12. Rate limiter (two real IPs + forged XFF) and retriage walk (M8b)
+
+**Run at the M8b deploy (owner).** Not yet executed — the M8b rate-limiter (`api/deps.py::
+rate_limit`) and retriage route (`POST /api/v1/admin/retriage/{alert_id}`) merged after this
+document's other checks were captured (VERIFY run 1, 2026-09-12). Run every command below fresh
+at the M8b deploy and paste the real output into the `text` blocks, replacing the placeholders.
+
+Since m8b review finding I2 (`api/deps.py::rate_limit`, ruling R-M8b-7), the limiter exempts
+loopback/RFC-1918-private/link-local peers — the server-rendered dashboard's own
+web-container-to-api calls — and only counts a real PUBLIC client IP, so §12a/§12b below must be
+driven from two vantage points that actually reach `$API` over the public internet (e.g. your
+workstation and a phone hotspot, or two different hosts), never from inside the compose network.
+
+### 12a. Two real IPs get independent buckets
+
+`PUBLIC_RATE_LIMIT_PER_MIN` is `60` by default (`.env.example`) — from vantage point #1, send one
+more than that in under a minute:
+
+```sh
+for i in $(seq 1 61); do curl -s -o /dev/null -w '%{http_code}\n' $API/api/v1/alerts; done | sort | uniq -c
+```
+
+Expected: 60 lines of `200`, then `429` for the 61st — from vantage point #1 only.
+
+```text
+(not yet run — M8b deploy)
+```
+
+_(placeholder — see the note above.)_
+
+From vantage point #2, in the same minute:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' $API/api/v1/alerts
+```
+
+Expected: `200` — vantage point #2's bucket is independent of #1's already-exhausted one.
+
+```text
+(not yet run — M8b deploy)
+```
+
+_(placeholder — see the note above.)_
+
+### 12b. A forged X-Forwarded-For never mints a second bucket
+
+From vantage point #1, still inside its exhausted minute, with a forged header:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 1.2.3.4' $API/api/v1/alerts
+```
+
+Expected: `429` — the forged header changes nothing; Caddy overwrites `X-Forwarded-For` before the
+api ever sees it (PRD §10.10), and the limiter keys on the real peer address, never a header.
+
+```text
+(not yet run — M8b deploy)
+```
+
+_(placeholder — see the note above.)_
+
+### 12c. Retriage: 401 / 202 / 429
+
+Export the deployed `ADMIN_TOKEN` in your own shell — never paste the real value into this file —
+and pick a `triaged`/`failed` alert's id from `$API/api/v1/alerts`:
+
+```sh
+ALERT_ID=<a triaged or failed alert's id from $API/api/v1/alerts>
+```
+
+No token:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/api/v1/admin/retriage/$ALERT_ID
+```
+
+Expected: `401`.
+
+```text
+(not yet run — M8b deploy)
+```
+
+_(placeholder — see the note above.)_
+
+Valid token, on the alert picked above:
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" $API/api/v1/admin/retriage/$ALERT_ID
+```
+
+Expected: `202 {"id": "...", "status": "pending", "retriaged": true}`, and — a little later — a
+fresh verdict for that alert (worker log + `$API/api/v1/alerts/$ALERT_ID` back to `triaged`).
+
+```text
+(not yet run — M8b deploy)
+```
+
+_(placeholder — see the note above.)_
+
+`RETRIAGE_PER_DAY` is `20` by default (`.env.example`), one GLOBAL counter for the whole day, not
+per-admin (`tests/test_retriage_global_cap.py`). Once 20 valid retriages have been made today
+(including the one above), the 21st:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $ADMIN_TOKEN" $API/api/v1/admin/retriage/<any other eligible alert id>
+```
+
+Expected: `429`.
+
+```text
+(not yet run — M8b deploy)
+```
+
+_(placeholder — see the note above.)_

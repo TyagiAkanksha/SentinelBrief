@@ -500,6 +500,12 @@ async def test_get_stats_returns_stats_out(
         "latency_p50_ms",
         "latency_p95_ms",
         "last_alert_at",
+        # m8b task-05 (pinned-file conflict, implementer-report-flagged): the daily token-budget
+        # circuit breaker's read surface, always present on the wire (fail-open when Redis is
+        # unwired, `tests/test_stats_budget.py::test_stats_fails_open_when_redis_is_unwired`).
+        "budget_exhausted",
+        "tokens_today",
+        "daily_token_budget",
     }
     assert body["total_alerts"] == 2
 

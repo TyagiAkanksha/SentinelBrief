@@ -95,6 +95,7 @@ Tasks 1–3 are M8a (briefs written 2026-09-12); tasks 4–7 are M8b (briefs at 
 | 5 | Daily token-budget circuit breaker in the worker + `budget_exhausted` in stats + dashboard banner | `m8-polish/task-05-token-budget-breaker.md` | task-02 (M8b) |
 | 6 | README final (architecture, quickstart, results link, deployment pointer); clean-clone <10 min proof; `.env.example` final pass | `m8-polish/task-06-readme-clean-clone.md` | tasks 1–5 (M8b) |
 | 7 | Whole-repo review (strongest model) with the full Minors ledger; remediation plan if opted in | `m8-polish/task-07-whole-repo-review.md` | task-06 (M8b) |
+| 8 | UI polish: portfolio token system, app shell + light/dark toggle, PageHeader, DataTable restyle | `m8-polish/task-08-ui-polish.md` | task-05 (M8b) | 
 
 Order: 1 → 2 → 3 (M8a), then 4 → 5 → 6 → 7 (M8b). Rationale: the M8a three run sequentially
 because tasks 2 and 3 both edit the primary nav in `web/src/app/layout.tsx` and both regenerate
@@ -120,3 +121,5 @@ approved, browser pass done; the PR into `main` waits for `m6` to merge, then th
 (regenerate both baselines, add `--cov=sentinelbrief_shipper`, bump both prod image tags at deploy).
 M8b planned — briefs 04–07 pending at the M7 gate; M8b inherits the deferred Minors N1–N4, t01 M9,
 t02 M4 and the FRONTEND-CONVENTIONS §3 wording from the M8a final review.
+
+M8b **started 2026-09-19** on `feat/m8b-polish` (cut from `main` at tag `m7`, 750df6d): briefs 04–07 placed; ledger `.superpowers/sdd/m8-polish/progress.md` (shared with M8a). M8b inherits the deferred Minors N1–N4, t01 M9, t02 M4 and the FRONTEND-CONVENTIONS §3 wording from the M8a final review, plus the M7 whole-branch deferred set (`.superpowers/sdd/m7-eval-hardening/whole-branch-deferred.md`). task-05 re-enables the nightly judge (reverting M7's `--no-judge`) once the budget breaker lands.

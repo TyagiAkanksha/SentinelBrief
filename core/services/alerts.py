@@ -8,11 +8,12 @@ import uuid
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.errors import NotFoundError
+from core.errors import ConflictError, NotFoundError
 from core.models import AlertRow, AlertStatus
 from core.schemas.alert import SessionAlert
 
@@ -121,6 +122,63 @@ async def get_alert_for_update(session: AsyncSession, alert_id: uuid.UUID) -> Al
     if row is None:
         raise NotFoundError(f"alert {alert_id} not found")
     return row
+
+
+async def get_alert_for_retriage_update(
+    session: AsyncSession, alert_id: uuid.UUID, *, lock_timeout_ms: int
+) -> AlertRow:
+    """Return the `AlertRow` with `alert_id`, locked with `SELECT ... FOR UPDATE` under a bounded
+    `SET LOCAL lock_timeout` — the m8b task-04 retriage route's own lock, distinct from
+    `get_alert_for_update` above (which blocks indefinitely for the triage pipeline's own
+    idempotency lock, m5 task-04).
+
+    `lock_timeout_ms` is always an app-configured `int` (`Settings.retriage_lock_timeout_ms`,
+    never attacker-controlled), so it is interpolated directly into the `SET LOCAL` statement —
+    Postgres's `SET` grammar does not accept a bound parameter here.
+
+    Args:
+        session: The request-scoped `AsyncSession`.
+        alert_id: The alert's primary key.
+        lock_timeout_ms: How long to wait for the row lock before giving up, in milliseconds.
+
+    Returns:
+        The matching `AlertRow`, locked for update.
+
+    Raises:
+        NotFoundError: When no row with `alert_id` exists.
+        ConflictError: When another transaction holds the row lock past `lock_timeout_ms`
+            (Postgres `lock_not_available`, surfaced by the driver as an `OperationalError`).
+    """
+    await session.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'"))
+    try:
+        row = (
+            await session.execute(
+                select(AlertRow)
+                .where(AlertRow.id == alert_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+    except OperationalError as exc:
+        raise ConflictError(f"alert {alert_id} is locked by another request") from exc
+    if row is None:
+        raise NotFoundError(f"alert {alert_id} not found")
+    return row
+
+
+async def flip_alert_to_pending(session: AsyncSession, row: AlertRow) -> None:
+    """Flip an already row-locked `AlertRow` to `pending`, flushing but never committing
+    (CONVENTIONS.md §3) — the m8b task-04 retriage route's own write.
+
+    The caller (`api/routes/admin.py::retriage_alert`) commits explicitly before enqueueing
+    (spine M5-a: the row must be durable before a worker can pick the job up).
+
+    Args:
+        session: The request-scoped `AsyncSession`.
+        row: The `AlertRow` returned by `get_alert_for_retriage_update`, already locked.
+    """
+    row.status = "pending"
+    await session.flush()
 
 
 async def set_alert_status(session: AsyncSession, alert_id: uuid.UUID, status: AlertStatus) -> None:

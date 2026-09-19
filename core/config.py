@@ -101,6 +101,22 @@ class Settings(BaseSettings):
     Caddyfile's `request_body { max_size 2MB }` (task-03) is the outer, on-the-wire bound; this
     is the api's own defence so an unauthenticated client can never make it buffer an unbounded
     body before the signature is even checked."""
+    admin_token: SecretStr = SecretStr("")
+    """Bearer token `POST /api/v1/admin/retriage/{alert_id}` requires (PRD §8, m8b task-04).
+    SECRET. Empty (the default) means the route always answers `401` — never fail-open."""
+    retriage_per_day: Annotated[int, Field(ge=1)] = 20
+    """Global cap on `POST /api/v1/admin/retriage/{alert_id}` calls per UTC day, across ALL
+    admins, tracked by one Redis counter keyed on the UTC date (m8b task-04). The daily cap is
+    checked BEFORE any DB work, so a caller past the cap never even names a real alert id."""
+    public_rate_limit_per_min: Annotated[int, Field(ge=0)] = 60
+    """Per-client-IP request cap on the public GET routes (`/alerts`, `/alerts/{id}`, `/stats`,
+    `/stream`), a rolling one-minute Redis fixed-window counter (PRD §8, §10.10, m8b task-04).
+    `0` disables the limiter. The bucket key is the ASGI peer address only — `X-Forwarded-For` is
+    never read (Caddy overwrites it and the api is never host-published)."""
+    retriage_lock_timeout_ms: Annotated[int, Field(ge=1)] = 3000
+    """`SET LOCAL lock_timeout` retriage's row lock waits before giving up, in milliseconds (m8b
+    task-04, the M5 task-04 deferral). A row another transaction holds past this deadline answers
+    `409 conflict` instead of blocking the request indefinitely."""
     cors_origins: str = "http://localhost:3000"
     alerts_list_cache_ttl_s: int = 15
     stats_cache_ttl_s: int = 60
@@ -160,6 +176,11 @@ class Settings(BaseSettings):
     tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6
     """Hard cap on tool-call turns per alert before a tool-less verdict is forced (PRD §6.3, m4
     task-06). Never a literal in `worker/triage.py`."""
+    daily_token_budget: Annotated[int, Field(ge=0)] = 0
+    """Daily cap on total (input + output) LLM tokens across every call, checked BEFORE each one
+    (PRD §10.3, from M8): `0` (the dev default) is unlimited and never blocks.
+    `worker/budget.py::check_and_would_exceed` reads this, never a literal; `StatsOut
+    .budget_exhausted` mirrors the exact same `>=` threshold for the dashboard banner."""
     triage_job_max_tries: Annotated[int, Field(ge=1)] = 3
     """Total attempts per triage job — the first run plus retries — before the alert is marked
     `failed` (PRD §6.2, m5 task-02). `worker/retry.py::decide_retry` reads this, never a literal."""

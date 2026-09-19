@@ -149,11 +149,45 @@ class RateLimitedError(SentinelBriefError):
 
     code = "rate_limited"
 
+    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+        """Record how many seconds until the caller may retry, when known.
+
+        Args:
+            message: Human-readable description of what went wrong.
+            retry_after: Seconds until the caller may retry, or `None` when no specific delay is
+                known (`api/errors.py` then omits the `Retry-After` response header).
+        """
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 class QueueUnavailableError(SentinelBriefError):
     """Raised when the ARQ triage queue (Redis) cannot be reached (m5 task-01)."""
 
     code = "queue_unavailable"
+
+
+class BudgetExceededError(SentinelBriefError):
+    """Raised when the daily token budget (`Settings.daily_token_budget`) is already exhausted,
+    BEFORE an LLM call is made (PRD §10.3; m8b task-05). Retryable: `worker/jobs.py
+    ::triage_alert_job` defers the job (the alert stays `pending`) instead of routing it through
+    `worker/retry.py::decide_retry`'s family-blind terminal-`failed` path (controller ruling
+    R-M8b-3) — a budget-exceeded try never consumes the normal retry budget.
+    """
+
+    code = "budget_exceeded"
+
+    def __init__(self, message: str, *, tokens_today: int, budget: int) -> None:
+        """Record today's counter and the configured budget at the moment the call was blocked.
+
+        Args:
+            message: Human-readable description of what went wrong.
+            tokens_today: The day's token counter's value when the call was blocked.
+            budget: The configured `daily_token_budget` that was reached.
+        """
+        super().__init__(message)
+        self.tokens_today = tokens_today
+        self.budget = budget
 
 
 class StreamUnavailableError(SentinelBriefError):

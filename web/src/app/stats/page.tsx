@@ -1,9 +1,11 @@
 import type { JSX } from "react";
 
+import { BudgetBanner } from "@/components/alerts/BudgetBanner";
 import { CostTable } from "@/components/stats/CostTable";
 import { DistributionTable } from "@/components/stats/DistributionTable";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Stat } from "@/components/ui/Stat";
 import { ApiError, getJson } from "@/lib/api/server";
 import { formatCount, formatLatency, formatPercent, formatUsd, formatUtc } from "@/lib/format";
@@ -41,9 +43,10 @@ export default async function StatsPage(): Promise<JSX.Element> {
   const triaged = triagedCount(stats);
 
   return (
-    <section>
-      <h1 className="text-lg font-semibold">Stats</h1>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <section className="space-y-6">
+      <PageHeader title="Stats" subtitle="Live triage metrics — updated as new sessions arrive" />
+      <BudgetBanner budgetExhausted={stats.budget_exhausted ?? false} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total alerts" value={formatCount(stats.total_alerts)} />
         <Stat label="Triaged" value={formatCount(triaged)} />
         <Stat
@@ -64,25 +67,27 @@ export default async function StatsPage(): Promise<JSX.Element> {
         />
       </div>
 
-      <DistributionTable
-        caption="Alerts per day"
-        labelHeader="Day"
-        rows={volumeRows(stats)}
-        emptyMessage="No volume data yet"
-      />
-      <DistributionTable
-        caption="Severity distribution"
-        labelHeader="Severity"
-        rows={severityRows(stats)}
-        emptyMessage="No severity data yet"
-      />
-      <DistributionTable
-        caption="Category distribution"
-        labelHeader="Category"
-        rows={categoryRows(stats)}
-        emptyMessage="No category data yet"
-      />
-      <CostTable rows={stats.cost_by_day} emptyMessage="No cost data yet" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <DistributionTable
+          caption="Alerts per day"
+          labelHeader="Day"
+          rows={volumeRows(stats)}
+          emptyMessage="No volume data yet"
+        />
+        <DistributionTable
+          caption="Severity distribution"
+          labelHeader="Severity"
+          rows={severityRows(stats)}
+          emptyMessage="No severity data yet"
+        />
+        <DistributionTable
+          caption="Category distribution"
+          labelHeader="Category"
+          rows={categoryRows(stats)}
+          emptyMessage="No category data yet"
+        />
+        <CostTable rows={stats.cost_by_day} emptyMessage="No cost data yet" />
+      </div>
     </section>
   );
 }

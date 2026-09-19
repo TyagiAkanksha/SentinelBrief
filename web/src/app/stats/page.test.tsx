@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 
@@ -52,6 +50,13 @@ function makeStats(overrides: Partial<StatsOut> = {}): StatsOut {
     cost_by_day: [
       { day: "2026-09-01", alerts: 6, cost_usd: "0.000684", mean_cost_usd: "0.000114" },
     ],
+    // m8b task-05 (pinned-file conflict, implementer-report-flagged): the daily token-budget
+    // circuit breaker's read surface — non-optional on the generated `StatsOut` type because
+    // `openapi-typescript`'s `defaultNonNullable` treats every defaulted wire field as always
+    // present, regardless of the object literal used by any one caller's `overrides`.
+    budget_exhausted: false,
+    tokens_today: 0,
+    daily_token_budget: 0,
     ...overrides,
   };
 }
@@ -131,14 +136,6 @@ describe("StatsPage", () => {
   });
 });
 
-describe("primary nav", () => {
-  it("links to Stats from the primary nav", () => {
-    // Rendering the full `<html>` `RootLayout` document inside jsdom produces nesting warnings
-    // (dispatch note); asserting on the source text is the accepted alternative here.
-    const layoutPath = path.join(process.cwd(), "src", "app", "layout.tsx");
-    const source = readFileSync(layoutPath, "utf-8");
-
-    expect(source).toMatch(/<Link\s+href="\/stats">\s*Stats\s*<\/Link>/);
-    expect(source.indexOf('href="/alerts"')).toBeLessThan(source.indexOf('href="/stats"'));
-  });
-});
+// The former "primary nav" source-text check here (t02 M4 / M8a review Q3) is retired: the
+// primary nav is now the render-tested `PrimaryNav` component
+// (`web/src/components/ui/PrimaryNav/PrimaryNav.test.tsx`), used by `layout.tsx`.

@@ -32,15 +32,20 @@ jobs:
           python-version: "3.12"
 
       - name: nightly gate — strict-replay v2 golden set
-        # --no-judge until M8 ships the daily token-budget breaker: the gate conditions (PRD §7.4:
-        # severity_exact drop, critical_recall, cost_rise) do not use judge metrics, so skipping the
-        # strong-model judge keeps this recurring automated run from spending ~200 gpt-5.4 calls a
-        # night with no budget cap. Manual --publish runs keep the judge on. Re-enable here at M8.
+        # The judge is back on (m8b task-05 reverts M7's --no-judge). Correction (m8b review I1):
+        # the daily token-budget circuit breaker (DAILY_TOKEN_BUDGET, worker/budget.py) guards
+        # worker/triage.py — production triage — only; evals/run.py builds its TriagePipeline
+        # with no redis/budget wired, evals/judge.py calls the LLM directly with no budget check,
+        # and this runner has no Redis anyway, so the breaker never runs here. The nightly's real
+        # cost bound is the fixed golden-set size (n=252, judge + triage ≈ $1.5/run, once
+        # nightly, ≈ $45/month), with the provider's hard monthly cap (PRD §10.3) as the backstop
+        # — an accepted recurring cost, not one the breaker caps. Set --no-judge below if the
+        # owner prefers to drop it on cost grounds instead.
         env:
           PROMPT_VERSION_INPUT: ${{ inputs.prompt_version }}
         run: |
           TRIAGE_PROMPT_VERSION="${PROMPT_VERSION_INPUT:-$TRIAGE_PROMPT_VERSION}"
-          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results --no-judge --tool-fixtures evals/golden/fixtures
+          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results --tool-fixtures evals/golden/fixtures
 
       - uses: actions/upload-artifact@v4
         if: always()

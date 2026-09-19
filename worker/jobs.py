@@ -23,6 +23,15 @@ Every job log line carries ids, counters, `reason=` and `chain=` (exception clas
 NEVER `exc_info`/a traceback and NEVER the exception's own message text. Either could render
 attacker-derived data (a `pydantic.ValidationError` over `alerts.raw`, or SQLAlchemy's
 `[parameters: …]`) straight into the log (PRD §10.6; ruling R9/I1-a).
+
+`BudgetExceededError` (PRD §10.3, from M8) is a DEFER, never a failure — controller ruling
+R-M8b-3: it is caught in its own clause, ahead of the generic `except Exception`, and never
+reaches `worker/retry.py::decide_retry`'s family-blind terminal-`failed` policy at ANY try count,
+including the last one. The alert stays `pending` and the job re-raises `arq.worker.Retry`,
+deferred until the next UTC midnight (`_seconds_until_next_utc_day`) — the counter's own reset
+moment (`worker/budget.py::budget_key`) — rather than the short exponential backoff genuine LLM
+failures get, so a budget-exhausted retry almost always lands after the counter has cleared
+instead of retrying uselessly against the same exhausted day.
 """
 
 from __future__ import annotations
@@ -31,13 +40,14 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Mapping
+from datetime import UTC, datetime, time, timedelta
 from typing import Any, Literal
 
 from arq.worker import Retry
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Settings
-from core.errors import NotFoundError, SentinelBriefError
+from core.errors import BudgetExceededError, NotFoundError, SentinelBriefError
 from core.services.alerts import set_alert_status
 from worker.publish import publish_verdict_created
 from worker.retry import decide_retry
@@ -48,6 +58,25 @@ logger = logging.getLogger(__name__)
 JobResult = Literal["triaged", "failed", "skipped", "missing"]
 """`"skipped"` is minted by task-04 (FOR UPDATE skip on a concurrently-claimed alert); declared
 now so the type alias never changes shape underneath callers."""
+
+
+def _seconds_until_next_utc_day(*, now: datetime | None = None) -> float:
+    """Seconds from `now` (default: the current UTC time) until the next UTC midnight.
+
+    The daily token counter's own reset moment (`worker/budget.py::budget_key` is scoped to
+    `datetime.now(UTC).date()`), so a budget-deferred retry lands after the counter has almost
+    certainly cleared rather than retrying uselessly against the same exhausted day.
+
+    Args:
+        now: The clock to compute from; `None` (default) reads the real current UTC time.
+
+    Returns:
+        The number of seconds until the next UTC midnight, always `> 0`.
+    """
+    current = now or datetime.now(UTC)
+    next_day = current.date() + timedelta(days=1)
+    midnight = datetime.combine(next_day, time.min, tzinfo=UTC)
+    return (midnight - current).total_seconds()
 
 
 def _exc_chain(exc: BaseException) -> str:
@@ -100,6 +129,19 @@ async def triage_alert_job(ctx: Mapping[str, Any], alert_id: str) -> JobResult:
     except NotFoundError:
         logger.warning("triage job: alert not found alert_id=%s job_id=%s", alert_id, job_id)
         return "missing"
+    except BudgetExceededError as exc:  # R-M8b-3: defer, never decide_retry/terminal-failed
+        defer_s = _seconds_until_next_utc_day()
+        logger.warning(
+            "triage job deferred: daily token budget exhausted alert_id=%s job_id=%s try=%d "
+            "tokens_today=%d budget=%d defer_s=%.0f",
+            alert_id,
+            job_id,
+            job_try,
+            exc.tokens_today,
+            exc.budget,
+            defer_s,
+        )
+        raise Retry(defer=defer_s) from exc
     except Exception as exc:  # the documented third CONVENTIONS.md §4 carve-out (m5 task-02)
         return await _handle_attempt_failure(
             exc,

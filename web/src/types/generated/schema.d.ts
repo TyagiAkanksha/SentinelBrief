@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/admin/retriage/{alert_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retriage Alert
+         * @description Flip a `triaged`/`failed` alert back to `pending` and re-enqueue it for triage.
+         */
+        post: operations["retriage_alert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/alerts": {
         parameters: {
             query?: never;
@@ -332,6 +352,25 @@ export interface components {
             total: number;
         };
         /**
+         * RetriageResponse
+         * @description The `POST /api/v1/admin/retriage/{alert_id}` response body: the alert's id, its new
+         *     status (always `"pending"`), and `retriaged=True`.
+         */
+        RetriageResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Retriaged */
+            retriaged: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "triaged" | "failed";
+        };
+        /**
          * SessionAlert
          * @description The `raw` alert payload: one Cowrie session's events, ordered, plus the envelope fields.
          */
@@ -357,6 +396,11 @@ export interface components {
          * @description The dashboard stats view (PRD §8): volume by day, distributions, cost, and latency.
          */
         StatsOut: {
+            /**
+             * Budget Exhausted
+             * @default false
+             */
+            budget_exhausted: boolean;
             /** By Category */
             by_category: {
                 [key: string]: number;
@@ -375,6 +419,11 @@ export interface components {
             cost_mean_usd: string;
             /** Cost Total Usd */
             cost_total_usd: string;
+            /**
+             * Daily Token Budget
+             * @default 0
+             */
+            daily_token_budget: number;
             /** Escalated Count */
             escalated_count: number;
             /** Last Alert At */
@@ -383,6 +432,11 @@ export interface components {
             latency_p50_ms: number;
             /** Latency P95 Ms */
             latency_p95_ms: number;
+            /**
+             * Tokens Today
+             * @default 0
+             */
+            tokens_today: number;
             /** Total Alerts */
             total_alerts: number;
             /** Volume By Day */
@@ -488,6 +542,91 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    retriage_alert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetriageResponse"];
+                };
+            };
+            /** @description Missing or invalid admin bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No alert with this id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The alert is not triaged/failed, or its row is locked by another request past RETRIAGE_LOCK_TIMEOUT_MS. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid alert_id. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The global daily retriage cap (RETRIAGE_PER_DAY) is reached. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The retriage counter/queue is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     list_alerts: {
         parameters: {
             query?: {

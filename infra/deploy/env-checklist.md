@@ -47,7 +47,10 @@ unless the production compose file pins something else).
 | `WORKER_HEALTH_CHECK_INTERVAL_S` | N | default | `15` seconds (`.env.example` default). |
 | `INGEST_HMAC_SECRET` | **Y** | `.env` (SSM) | Shared secret with the honeypot host's shipper. Generate: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`. |
 | `INGEST_MAX_BODY_BYTES` | N | default | `2000000` bytes — equals Caddy's `request_body { max_size 2MB }`, which is enforced first, on wire bytes (`.env.example` default). |
-| `ADMIN_TOKEN` | **Y** | `.env` (SSM `/sentinelbrief/ADMIN_TOKEN`) | Bearer token for `POST /api/v1/alerts/{id}/retriage` (PRD §8, from M8); generate as `INGEST_HMAC_SECRET`; fetched now so the M8 release needs no new parameter. |
+| `ADMIN_TOKEN` | **Y** | `.env` (SSM `/sentinelbrief/ADMIN_TOKEN`) | Bearer token for `POST /api/v1/admin/retriage/{alert_id}` (PRD §8, from M8); generate as `INGEST_HMAC_SECRET`; fetched now so the M8 release needs no new parameter. |
+| `RETRIAGE_PER_DAY` | N | default | `20` (`.env.example` default) — global daily retriage cap, tracked in Redis (PRD §8, from M8). |
+| `PUBLIC_RATE_LIMIT_PER_MIN` | N | default | `60` (`.env.example` default) — per-IP request cap on the public GET routes, in-app with Redis counters (PRD §8, §10.10, from M8). |
+| `RETRIAGE_LOCK_TIMEOUT_MS` | N | default | `3000` milliseconds (`.env.example` default) — `SET LOCAL lock_timeout` retriage's row lock waits before answering `409 conflict` (from M8). |
 | `CORS_ORIGINS` | N — **pinned**, `api` only | compose (pinned) | `https://sentinelbrief.tyagiakanksha.com` — no wildcard, ever, in a deployed environment. |
 | `ALERTS_LIST_CACHE_TTL_S` | N | default | `15` seconds (`.env.example` default). |
 | `STATS_CACHE_TTL_S` | N | default | `60` seconds (`.env.example` default). |
@@ -70,6 +73,7 @@ unless the production compose file pins something else).
 | `ABUSEIPDB_QUOTA_BACKOFF_S` | N | default | `900` seconds (`.env.example` default). |
 | `ALERT_HISTORY_MAX_WINDOW_HOURS` | N | default | `720` hours (`.env.example` default). |
 | `TOOL_LOOP_MAX_ITER` | N | default | `6` (`.env.example` default). |
+| `DAILY_TOKEN_BUDGET` | N | default | `0` (`.env.example` default, unlimited) — daily cap on total LLM tokens across every call, checked before each one; `0 = unlimited` (PRD §10.3, from M8). |
 | `TRIAGE_JOB_MAX_TRIES` | N | default | `3` (`.env.example` default). |
 | `TRIAGE_JOB_BACKOFF_BASE_S` | N | default | `2` seconds (`.env.example` default). |
 | `TRIAGE_JOB_BACKOFF_MAX_S` | N | default | `60` seconds (`.env.example` default). |

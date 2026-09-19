@@ -2,15 +2,19 @@ import type { JSX } from "react";
 import Link from "next/link";
 
 import { ArchitectureDiagram } from "@/components/about/ArchitectureDiagram";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { PRD_URL, REPO_URL, RESULTS_URL } from "@/lib/site";
 
 export const metadata = { title: "About — SentinelBrief" };
 
+const LINK_CLASS =
+  "text-accent underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current";
+
 export default function AboutPage(): JSX.Element {
   return (
-    <section>
-      <h1 className="text-lg font-semibold">About SentinelBrief</h1>
-      <div className="max-w-prose space-y-3">
+    <section className="space-y-6">
+      <PageHeader title="About SentinelBrief" />
+      <div className="max-w-prose space-y-4 leading-relaxed text-muted">
         <p>
           SentinelBrief triages honeypot alerts with a large language model. A Cowrie SSH honeypot
           on an isolated host records every session an attacker opens against it, a shipper posts
@@ -40,29 +44,24 @@ export default function AboutPage(): JSX.Element {
       </div>
       <ArchitectureDiagram />
       <nav aria-label="Project links">
-        <ul>
+        <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <li>
-            <a
-              href={RESULTS_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="text-accent underline"
-            >
+            <a href={RESULTS_URL} target="_blank" rel="noreferrer" className={LINK_CLASS}>
               Evaluation results
             </a>
           </li>
           <li>
-            <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-accent underline">
+            <a href={REPO_URL} target="_blank" rel="noreferrer" className={LINK_CLASS}>
               Source code
             </a>
           </li>
           <li>
-            <a href={PRD_URL} target="_blank" rel="noreferrer" className="text-accent underline">
+            <a href={PRD_URL} target="_blank" rel="noreferrer" className={LINK_CLASS}>
               Product spec
             </a>
           </li>
           <li>
-            <Link href="/alerts" className="text-accent underline">
+            <Link href="/alerts" className={LINK_CLASS}>
               Live alert queue
             </Link>
           </li>

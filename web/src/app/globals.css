@@ -1,24 +1,106 @@
 @import "tailwindcss";
 
-@theme {
-  --color-bg: #0b0f14;
-  --color-surface: #131a22;
-  --color-border: #24303d;
-  --color-text: #e6edf3;
-  --color-muted: #8b98a5;
-  --color-accent: #58a6ff;
-  --color-sev-1: #6e7681;
-  --color-sev-2: #3fb950;
-  --color-sev-3: #d29922;
-  --color-sev-4: #f0883e;
-  --color-sev-5: #f85149;
+/* next-themes stamps data-theme on <html>; make Tailwind's dark: variant follow it
+   (so the theme toggle's sun/moon icons switch by CSS, no mounted state, no flicker). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ---------------------------------------------------------------------------
+   Palette — raw vars per theme, mapped to the --color-* names in @theme below.
+   Light is a GitHub-primer-like sibling; dark keeps the shipped SentinelBrief
+   palette. Names the components already use (border←line, text←fg) are preserved.
+--------------------------------------------------------------------------- */
+:root {
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --surface-2: #eef1f4;
+  --line: #d0d7de;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --faint: #818b98;
+  --accent: #0969da;
+  --accent-strong: #0550ae;
+  --accent-soft: rgba(9, 105, 218, 0.08);
+  --ring: rgba(9, 105, 218, 0.4);
+  --sev-1: #6e7781;
+  --sev-2: #1a7f37;
+  --sev-3: #9a6700;
+  --sev-4: #bc4c00;
+  --sev-5: #cf222e;
+  --radius: 0.5rem;
+}
+
+[data-theme="dark"] {
+  --bg: #0b0f14;
+  --surface: #131a22;
+  --surface-2: #1b232d;
+  --line: #24303d;
+  --fg: #e6edf3;
+  --muted: #8b98a5;
+  --faint: #6e7681;
+  --accent: #58a6ff;
+  --accent-strong: #79b8ff;
+  --accent-soft: rgba(88, 166, 255, 0.12);
+  --ring: rgba(88, 166, 255, 0.5);
+  --sev-1: #6e7681;
+  --sev-2: #3fb950;
+  --sev-3: #d29922;
+  --sev-4: #f0883e;
+  --sev-5: #f85149;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--line);
+  --color-text: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-ring: var(--ring);
+  --color-sev-1: var(--sev-1);
+  --color-sev-2: var(--sev-2);
+  --color-sev-3: var(--sev-3);
+  --color-sev-4: var(--sev-4);
+  --color-sev-5: var(--sev-5);
   --font-sans: ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-display: var(--font-quicksand), ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
   body {
     @apply bg-bg text-text font-sans;
     font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    transition:
+      background-color 200ms ease,
+      color 200ms ease;
+  }
+
+  a {
+    @apply text-accent transition-colors;
+  }
+
+  a:hover {
+    @apply text-accent-strong;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--bg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body {
+    transition: none;
   }
 }

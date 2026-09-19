@@ -147,6 +147,20 @@ class StatsOut(BaseModel):
     latency_p95_ms: int
     last_alert_at: datetime | None
     cost_by_day: list[DayCost]
+    # Defaulted (not required, m8b task-05): a required field here would make every generated
+    # `web/` `StatsOut` property non-optional, breaking the earlier (m3/m8a) pinned dashboard
+    # fixtures that construct a `StatsOut` literal without these three. `get_stats` always sets
+    # real, computed values regardless of the default.
+    budget_exhausted: bool = False
+    """`True` when today's token counter is `>= daily_token_budget` and the budget is not `0`
+    (unlimited); PRD §10.3, from M8. Mirrors `worker/budget.py::check_and_would_exceed`'s exact
+    `>=` threshold."""
+    tokens_today: int = 0
+    """Today's daily token-budget counter (PRD §10.3, from M8); `0` when Redis is unwired or the
+    counter has never been written today (fail-open read, `core.budget.read_tokens_today`)."""
+    daily_token_budget: int = 0
+    """The configured `Settings.daily_token_budget` at read time (PRD §10.3, from M8); `0` means
+    unlimited."""
 
 
 class ListFilters(BaseModel):
