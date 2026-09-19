@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "95.238.119.89"
+  },
+  "result": {
+    "asn": 3269,
+    "country": "IT",
+    "ip": "95.238.119.89",
+    "org": "TIM"
+  },
+  "tool": "get_ip_geo_asn"
+}

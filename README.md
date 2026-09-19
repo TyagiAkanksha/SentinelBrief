@@ -9,6 +9,9 @@ measuring how well it does.
 lives in [`docs/plans/`](docs/plans/README.md); the spec is
 [`PRD.md`](PRD.md).
 
+[![nightly-eval](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml/badge.svg)](https://github.com/TyagiAkanksha/SentinelBrief/actions/workflows/nightly-eval.yml)
+A nightly job replays the golden-set v2 harness and fails the build on a PRD §7.4 regression against the committed baseline (`docs/results.md` § Gate). The gate is proven to bite: a deliberately worsened prompt (`triage-v5-worse`, inverted severity rubric, kept on the never-merged `proof/m7-worsened-prompt` branch) fails it on severity_exact (1.00 → 0.04) and critical_recall (1.00 → 0.00) — see the `triage-v5-worse` row in the results table.
+
 ## What it does
 
 1. The honeypot's log shipper posts one HMAC-signed alert per attacker session.
@@ -17,8 +20,10 @@ lives in [`docs/plans/`](docs/plans/README.md); the spec is
    structured **verdict** — severity 1–5, category, confidence, reasoning, recommended action.
    Low-confidence or high-severity verdicts are re-run on a stronger model.
 3. A public, read-only dashboard shows the queue and, per alert, the full tool-call trace.
-4. An evaluation harness scores every prompt/model change against a hand-labeled golden set and
+4. An evaluation harness scores every prompt/model change against a labeled golden set and
    publishes the numbers — including the ones that got worse — to [`docs/results.md`](docs/results.md).
+   The current v2 labels are model-generated (disclosed there as a model-tier agreement metric, not
+   human ground truth).
 
 The human always decides. The system never blocks, quarantines, or responds automatically.
 
@@ -177,11 +182,41 @@ uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --p
 
 Each `--prompt` value runs the full pipeline over the golden set and produces one comparable row
 in the printed table; the full per-case results land as JSON under `evals/results/` (gitignored).
-Golden set v1 is synthetic and its numbers are never published; v2 is real, hand-labeled honeypot
-traffic and is the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*.
+Golden set v1 is synthetic and its numbers are never published; v2 is real honeypot traffic and is
+the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*. The current v2
+rows are AI-labeled (`labeled_by="ai"`), disclosed there as a model-tier agreement metric, not human
+ground truth; human labeling remains the intended upgrade.
 `--strong-model` wires the same two-tier routing (PRD §6.4) into the run, defaulting to
 `STRONG_MODEL`; the printed table's `escalation_rate` column reports the fraction of cases each
 run escalated to the strong model.
+
+Metrics computed on every run (PRD §7.3; `evals/scoring.py`):
+
+- Severity exact-match % and within-±1 %.
+- Per-severity precision/recall, a 5×6 confusion matrix, and category confusion (per-run JSON;
+  not results-table columns).
+- Macro-F1 over severity bands with labeled support.
+- Critical recall (labeled severity ≥ 4) — the security-relevant number.
+- Escalation precision/recall, escalation rate to the strong model, category accuracy.
+- Cost (mean/p95/total USD) and latency (p50/p95 ms).
+- LLM-as-judge reasoning quality (mean, % scoring ≤2) and injection-tagged pass rate, when judged.
+
+`--database-url URL [--schema NAME]` additionally writes one `eval_runs` row per `--prompt` value
+scored, carrying the full metrics blob and the run's effective model configuration.
+
+### Evals — labeling v2
+
+Golden set v2 can be labeled two ways, both honestly recorded in each row's `labeled_by`. The
+intended path is **human**: `python -m evals.sample` draws a stratified, verdict-blind candidate
+file from the live database, and `python -m evals.label_tool label` walks it one case at a time,
+appending `labeled_by: "human"` rows from typed input only. For the current published run the
+owner chose the **AI-labeled** path (2026-09-18): `python -m evals.ai_label` labels each candidate
+with a strong model, writing `labeled_by: "ai"` — so the results measure the cheap tier against
+strong-tier labels (a model-tier agreement metric, disclosed in `docs/results.md`), not human
+ground truth. The two provenances never mix silently; the rubric, the
+seven categories (including the `brute_force`-vs-`reconnaissance` tie-break) and the full
+labeling workflow, including the 10 % re-review a week later, are in
+[`docs/labeling-guide.md`](docs/labeling-guide.md).
 
 ## Deployment
 

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "91.231.89.126"
+  },
+  "result": {
+    "asn": 213412,
+    "country": "FR",
+    "ip": "91.231.89.126",
+    "org": "ONYPHE SAS"
+  },
+  "tool": "get_ip_geo_asn"
+}

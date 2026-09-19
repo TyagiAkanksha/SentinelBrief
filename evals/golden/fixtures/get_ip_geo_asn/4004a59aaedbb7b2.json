@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "74.0.48.57"
+  },
+  "result": {
+    "asn": 40662,
+    "country": "NL",
+    "ip": "74.0.48.57",
+    "org": "Layer7 Technologies Inc"
+  },
+  "tool": "get_ip_geo_asn"
+}

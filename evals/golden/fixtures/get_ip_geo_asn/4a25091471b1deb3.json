@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "102.30.34.24"
+  },
+  "result": {
+    "asn": 327934,
+    "country": "TN",
+    "ip": "102.30.34.24",
+    "org": "SOCIETE NATIONALE DES TELECOMMUNICATIONS (Tunisie Telecom)"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "140.213.39.154"
+  },
+  "result": {
+    "asn": 24203,
+    "country": "ID",
+    "ip": "140.213.39.154",
+    "org": "PT XL Axiata"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -4,7 +4,10 @@
     {
       "Sid": "SsmReadSentinelbriefParams",
       "Effect": "Allow",
-      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
       "Resource": "arn:aws:ssm:us-east-1:181040156847:parameter/sentinelbrief/*"
     },
     {
@@ -13,7 +16,9 @@
       "Action": "kms:Decrypt",
       "Resource": "arn:aws:kms:us-east-1:181040156847:key/*",
       "Condition": {
-        "StringEquals": { "kms:ViaService": "ssm.us-east-1.amazonaws.com" }
+        "StringEquals": {
+          "kms:ViaService": "ssm.us-east-1.amazonaws.com"
+        }
       }
     },
     {
@@ -33,6 +38,22 @@
       "Effect": "Allow",
       "Action": "s3:ListBucket",
       "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847"
+    },
+    {
+      "Sid": "GoldenPrefixReadIn",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847/golden/in/*"
+    },
+    {
+      "Sid": "GoldenPrefixWriteOut",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::sentinelbrief-backups-181040156847/golden/out/*"
     }
   ]
 }

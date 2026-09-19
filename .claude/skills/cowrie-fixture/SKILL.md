@@ -42,6 +42,10 @@ every event carries `eventid, timestamp, session, src_ip, sensor, message`; time
 The category follows the dominant behavior: `scanning` (1), `brute_force` (2–3),
 `successful_intrusion` (4), `malware_delivery` / `persistence_attempt` (5), `reconnaissance` when
 recon dominates without a foothold, `other` when nothing fits. `escalate` is `true` for 4–5.
+The `brute_force`-vs-`reconnaissance` tie-break (same wording as `docs/labeling-guide.md`):
+credential attempts using usernames derived from this host (its hostname, banner, prior recon)
+with no success → `reconnaissance`; generic or list-based sprays with no success → `brute_force`;
+any success → `successful_intrusion` unless malware/persistence follows.
 
 ## Injection cases (PRD §10.6)
 

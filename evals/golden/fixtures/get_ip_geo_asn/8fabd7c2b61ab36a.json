@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "189.243.205.154"
+  },
+  "result": {
+    "asn": 8151,
+    "country": "MX",
+    "ip": "189.243.205.154",
+    "org": "UNINET"
+  },
+  "tool": "get_ip_geo_asn"
+}

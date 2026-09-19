@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.9.31.23"
+  },
+  "result": {
+    "asn": 2601,
+    "country": "UA",
+    "ip": "45.9.31.23",
+    "org": "Pitline Ltd"
+  },
+  "tool": "get_ip_geo_asn"
+}

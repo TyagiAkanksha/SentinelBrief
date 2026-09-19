@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "71.6.199.87"
+  },
+  "result": {
+    "asn": 10439,
+    "country": "US",
+    "ip": "71.6.199.87",
+    "org": "CariNet, Inc."
+  },
+  "tool": "get_ip_geo_asn"
+}

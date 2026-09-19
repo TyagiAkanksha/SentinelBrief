@@ -253,7 +253,7 @@ This rubric governs both the LLM prompt and human labeling of the golden set. It
 
 ### 7.1 Golden set
 - **v1 (build-time):** ~20 synthetic Cowrie-format alerts as fixtures. Used only to develop the pipeline and scoring code. **v1 numbers are never published.**
-- **v2 (publish-quality):** ≥200 real alerts sampled from live honeypot traffic, stratified across categories, **hand-labeled by the author** using the §6.6 rubric. Each JSONL row: `{alert, label: {severity, category, escalate}, labeler_note}`.
+- **v2 (publish-quality):** ≥200 real alerts sampled from live honeypot traffic, stratified across categories, labeled using the §6.6 rubric. Intended provenance is human; the current published run is AI-labeled (`labeled_by="ai"`) by owner decision — see the §13 R54 amendment — and disclosed in `docs/results.md` as a model-tier agreement metric, not human ground truth. Each JSONL row: `{alert, label: {severity, category, escalate}, labeler_note}`.
 - Label hygiene: after labeling, re-review a random 10 % a week later; disagreement with yourself >10 % means the rubric is ambiguous — fix the rubric, relabel.
 
 ### 7.2 Scoring CLI
@@ -374,7 +374,7 @@ Cowrie VM live; shipper POSTs real sessions; Phase-1 deploy complete per `docs/d
 *Accept:* 48 h of real attacker traffic visible publicly; no LLM call originates from any public request (verified in logs); backups and log rotation observed working.
 
 **M7 — Eval hardening.**
-Golden set v2 (≥200 real, hand-labeled, incl. ≥5 injection cases); LLM-as-judge; recorded tool fixtures for determinism; nightly CI gate with baselines set from this run; `docs/results.md` published.
+Golden set v2 (≥200 real, labeled — human intended, currently AI-labeled per the §13 R54 amendment, incl. ≥5 injection cases); LLM-as-judge; recorded tool fixtures for determinism; nightly CI gate with baselines set from this run; `docs/results.md` published.
 *Accept:* README links a results table with real numbers; a deliberately worsened prompt fails CI.
 
 **M8 — Polish.**
@@ -398,7 +398,7 @@ Terraform stack live; migration documented.
 - VM provider(s), instance size, and domain name (working assumption: AWS, t3.small, `sentinelbrief.tyagiakanksha.com`).
 - AbuseIPDB account (or ship with `{unavailable}` stub until keyed).
 - MaxMind account + license key for GeoLite2 (or ship `get_ip_geo_asn` as `{unavailable}` until keyed).
-- Golden set v2 labels — **must be human work.** Claude Code may generate synthetic *fixtures* and *labels* for v1 (never published), the v2 sampler/exporter, and scoring code, but must never generate the labels for v2; machine-labeled ground truth would make the published eval meaningless.
+- Golden set v2 labels — **human work is the intended ground truth.** Claude Code may generate synthetic *fixtures* and *labels* for v1 (never published), the v2 sampler/exporter, and scoring code, and must never mark a machine label as `human`. **Amendment (owner decision 2026-09-18, ruling R54):** for the current build the owner chose to label v2 with a strong model (`evals/ai_label.py`, `labeled_by="ai"`) instead of by hand; the published numbers are disclosed everywhere as a model-tier *agreement* metric (the model graded against its own tier), NOT human ground truth, and human labeling remains the intended upgrade. This is honest (nothing is marked `human`), not the "machine-labeled ground truth passed off as real" that this clause forbids.
 
 ---
 

@@ -435,14 +435,18 @@ NRestarts 0.)_
 docker inspect --format '{{index .RepoDigests 0}}' sentinelbrief-honeypot-cowrie-1
 ```
 
-Expected: equals the digest pinned in `honeypot/docker-compose.yml`'s `image:` line.
+Expected: equals the digest pinned in `honeypot/docker-compose.yml`, recorded here in full so this
+check is byte-comparable from this doc alone (m7 task-08 fix-1, review M2) —
+`image: cowrie/cowrie@sha256:42e01e0e5fe705a0a63dacc0f1992b2d230740ac149af7675f48197abf740d44`.
 
 ```text
 sha256:42e01e0e…740d44
 ```
 
 _(deploy step 9, 2026-09-12 — container `Config.Image` and the image `RepoDigest` agree, matching
-the pin in `honeypot/docker-compose.yml`.)_
+the pin in `honeypot/docker-compose.yml`. The captured line is the operator's abbreviated
+transcription of that run and is left exactly as pasted; the full digest it was compared against
+is the `image:` line quoted in Expected above.)_
 
 ## 10. Redis degrade/recover
 

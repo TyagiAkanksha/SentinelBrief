@@ -53,7 +53,29 @@ M0–M6 Global Constraints apply verbatim (branch `feat/m7-eval-hardening`). Add
   before the author labels a single v2 row. The judge's input is the summary and tool results,
   never raw `reasoning` from another run (t4 I1).
 
-## Tasks (briefs written at the M6 gate)
+### Lessons folded from the M6 and M8a gates (2026-09-14)
+
+- **Verify every IAM or permission claim with `aws iam simulate-principal-policy` before it enters a
+  doc, a brief or a ledger line.** M6's "SSM core only ⇒ cannot read a parameter" premise was false
+  (the managed policy allows `ssm:GetParameter` on `*`); every agent inherited it. A claim about what
+  a role can do is a measurement, never an inference.
+- Every fenced command in an owner-run runbook is executed as written or annotated "cannot run
+  here: <why>"; runbook guards assert per fenced block, not whole-file text (M6 re-review N1).
+- Agents' mutation self-checks run in an rsync scratch copy that excludes `node_modules/.next/.venv`,
+  never in the tracked tree; no install inside a copy (an M8a scratch install rewrote the host's
+  `web/node_modules` links).
+- Source-text assertions in web tests resolve paths from `process.cwd()`, never
+  `new URL(..., import.meta.url)` under jsdom (M8a R20).
+- A pinned fixture that makes a correct implementation ambiguous is a pin defect: amend the fixture
+  by approval, never route around it in the UI (M8a R21). A brief that specifies structure without
+  the dashboard's link/heading/measure treatment ships an unstyled page (M8a R25).
+- The v2 sampler needs its own query (M6 PC4): `scripts/check_real_sessions.py`'s report query is
+  read-only diagnostics and must not be reused as the sampling frame.
+- `--cov=sentinelbrief_shipper` is part of the canonical gate from M6 on.
+- Task-08 carries the M6 gate's DEFER-TO-M7 bundle; it can run in parallel with task-01 (no shared
+  files) and MUST land before the honeypot shipper is touched by anything else.
+
+## Tasks (briefs written 2026-09-14, at the M6 gate)
 
 | # | Task | File | Depends on |
 |---|------|------|-----------|
@@ -64,8 +86,9 @@ M0–M6 Global Constraints apply verbatim (branch `feat/m7-eval-hardening`). Add
 | 5 | Nightly workflow + `--gate` + `baseline.json` recorded from the first full v2 run | `m7-eval-hardening/task-05-nightly-gate-baselines.md` | tasks 3–4 |
 | 6 | `docs/results.md` publication from `evals.run`; README results link; three runs across two prompts | `m7-eval-hardening/task-06-results-publication.md` | task-5 |
 | 7 | Proof: a deliberately worsened prompt version fails the nightly gate (kept on a branch, never merged) | `m7-eval-hardening/task-07-worsened-prompt-proof.md` | task-5 |
+| 8 | M6 carry-over: shipper v0.2 hardening bundle, per-fence runbook guard, `_safe_name`, digest exemption; the new shipper shipped to the honeypot | `m7-eval-hardening/task-08-m6-carry-over.md` | M6 tag (parallel with task-01) |
 
-Order: 1 → (author labels ≥200 cases — calendar time, not agent time) → 2 → (3, 4) → 5 → (6, 7).
+Order: (1, 8) → (author labels ≥200 cases — calendar time, not agent time) → 2 → (3, 4) → 5 → (6, 7).
 Rationale: nothing downstream is meaningful before human labels exist; determinism precedes
 metrics; baselines precede the gate; publication and the negative proof close the milestone.
 
@@ -81,4 +104,4 @@ metrics; baselines precede the gate; publication and the negative proof close th
 
 ## Status
 
-planned — briefs pending (written at the M6 gate).
+briefs written 2026-09-14 at the M6 gate (`m7-eval-hardening/task-01` … `task-08`; the seven drafted at the M6 briefing plus the carry-over task); branch `feat/m7-eval-hardening` cut from `main` at tag `m6` (1650cdb). Task-01 (the sampler + label tool) starts first; the author's labeling is calendar time.

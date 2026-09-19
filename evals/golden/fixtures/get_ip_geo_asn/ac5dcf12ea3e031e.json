@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "31.146.64.60"
+  },
+  "result": {
+    "asn": 35805,
+    "country": "GE",
+    "ip": "31.146.64.60",
+    "org": "JSC Silknet"
+  },
+  "tool": "get_ip_geo_asn"
+}

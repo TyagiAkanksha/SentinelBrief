@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "159.146.55.244"
+  },
+  "result": {
+    "asn": 12735,
+    "country": "TR",
+    "ip": "159.146.55.244",
+    "org": "TurkNet Iletisim Hizmetleri A.S."
+  },
+  "tool": "get_ip_geo_asn"
+}

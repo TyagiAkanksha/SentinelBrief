@@ -53,6 +53,7 @@ from evals.scoring import percentile
 
 _SAFE_NAME_MAX_LEN = 64
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_.:*-]")
+_EMPHASIS_RUN = re.compile(r"([*_])\1+")
 _MAX_INVALID_IDS_SHOWN = 20
 """The invalid-row bullet lists at most this many ids, then `… and N more` (m6 task-06 fix-2
 N5) — a broadly-drifted large sample must never produce one unbounded line of UUIDs."""
@@ -66,8 +67,11 @@ def _safe_name(name: str) -> str:
     but a future Cowrie plugin could (m6 task-06 fix-1 M6); this never touches a *value*. `*` is
     allowed (m6 task-06 fix-2 N3) because `_first_loc_key` uses it to normalize an integer list
     index (e.g. `events.*.timestamp`) — that marker must survive this sanitization pass too.
+    Finally, a RUN of 2+ `*` or `_` collapses to a single marker (m7 task-08, M6 final review t06
+    N6): both characters have to stay allowed for the two reasons above, but `**bold**` must
+    render as a defanged literal in the report table, never as live markdown emphasis.
     """
-    return _UNSAFE_NAME_CHARS.sub("?", name[:_SAFE_NAME_MAX_LEN])
+    return _EMPHASIS_RUN.sub(r"\1", _UNSAFE_NAME_CHARS.sub("?", name[:_SAFE_NAME_MAX_LEN]))
 
 
 def _first_loc_key(exc: ValidationError) -> str:

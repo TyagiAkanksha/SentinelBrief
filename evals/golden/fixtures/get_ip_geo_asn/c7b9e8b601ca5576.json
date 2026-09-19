@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "20.118.28.21"
+  },
+  "result": {
+    "asn": 8075,
+    "country": "US",
+    "ip": "20.118.28.21",
+    "org": "Microsoft Corporation"
+  },
+  "tool": "get_ip_geo_asn"
+}

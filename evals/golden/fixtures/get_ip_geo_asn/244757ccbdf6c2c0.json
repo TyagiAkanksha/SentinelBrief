@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "83.188.236.89"
+  },
+  "result": {
+    "asn": 1257,
+    "country": "SE",
+    "ip": "83.188.236.89",
+    "org": "Tele2 SWIPnet"
+  },
+  "tool": "get_ip_geo_asn"
+}

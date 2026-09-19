@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "211.235.49.147"
+  },
+  "result": {
+    "asn": 9976,
+    "country": "KR",
+    "ip": "211.235.49.147",
+    "org": "Namincheon Brodcasting Co., Ltd."
+  },
+  "tool": "get_ip_geo_asn"
+}

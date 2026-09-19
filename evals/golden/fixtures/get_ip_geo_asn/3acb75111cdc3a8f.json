@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "46.16.228.182"
+  },
+  "result": {
+    "asn": 44391,
+    "country": "RU",
+    "ip": "46.16.228.182",
+    "org": "JSC Elektrosvyaz"
+  },
+  "tool": "get_ip_geo_asn"
+}

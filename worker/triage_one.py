@@ -117,7 +117,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
             {
                 "verdict": outcome.verdict.model_dump(),
                 "model": outcome.model,
-                "model_primary": outcome.model_primary or outcome.model,
+                "model_primary": outcome.effective_model_primary,
                 "escalated_model": outcome.escalated_model,
                 "prompt_version": outcome.prompt_version,
                 "input_tokens": outcome.input_tokens,

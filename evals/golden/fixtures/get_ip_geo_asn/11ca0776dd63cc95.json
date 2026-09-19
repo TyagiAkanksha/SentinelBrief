@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "197.95.52.139"
+  },
+  "result": {
+    "asn": 20011,
+    "country": "ZA",
+    "ip": "197.95.52.139",
+    "org": "Dimension Data"
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -61,6 +61,17 @@ _SECRET_PATTERNS = {
     "40-plus-char-hex-run": re.compile(r"\b[0-9a-f]{40,}\b"),
 }
 
+# m7 task-08 fix-1 (M6 final review M6, pinned-edit approved; narrowed here per fix-1 review M1):
+# a `sha256:<64 hex>` image digest on an `image:` line (e.g. `honeypot/docker-compose.yml`'s
+# `image: cowrie/cowrie@sha256:...`) is a public, documented artifact reference, not a secret --
+# stripped from the scanned text before the patterns above run, so `infra/deploy/VERIFY.md` can
+# record the digest in full instead of the truncated `sha256:42e01e0e...740d44` form the review
+# flagged. Narrower than round 1's `(?<!sha256:)` lookbehind, which exempted ANY 40+-hex run
+# after the literal `sha256:` anywhere in the scanned tree -- e.g. an
+# `INGEST_HMAC_SECRET=sha256:<64 hex>` line would have wrongly passed. This pattern requires the
+# `image: ...@sha256:` shape specifically.
+_IMAGE_DIGEST_RE = re.compile(r"image: [^\n]*@sha256:[0-9a-f]{64}")
+
 # Steps 0-12 of the walkthrough: a numeric prefix present either as a markdown heading
 # (`## 4. App host`) or as a bold-numbered list line (`4. **App host**` -- the shape the brief's
 # own Produces block uses verbatim, e.g. task-05 lines 76, 85, 94, ...).
@@ -226,7 +237,9 @@ def test_deploy_docs_carry_no_value_shaped_secret() -> None:
 
     hits: list[str] = []
     for path in sorted(scanned):
-        text = path.read_text()
+        # m7 task-08 fix-1 (review M1): strip a genuine `image: ...@sha256:<64 hex>` occurrence
+        # before scanning, rather than exempting any `sha256:`-prefixed hex run everywhere.
+        text = _IMAGE_DIGEST_RE.sub("", path.read_text())
         for name, pattern in _SECRET_PATTERNS.items():
             if pattern.search(text):
                 # Never print the matched value itself (.claude/rules/infra.md), only its
@@ -234,6 +247,27 @@ def test_deploy_docs_carry_no_value_shaped_secret() -> None:
                 hits.append(f"{path}: {name}")
     assert not hits, (
         "value-shaped secret pattern(s) found (file: pattern name only):\n" + "\n".join(hits)
+    )
+
+    # The exemption itself, pinned directly (the scanned set above never reads
+    # honeypot/docker-compose.yml -- see this test's own docstring -- so a fixture line is the
+    # only way to pin it here; m7 task-08 fix-1).
+    digest_line = "    image: cowrie/cowrie@sha256:" + "ab" * 32
+    assert not _SECRET_PATTERNS["40-plus-char-hex-run"].search(
+        _IMAGE_DIGEST_RE.sub("", digest_line)
+    ), "the image-digest exemption must strip a genuine `image: ...@sha256:<64 hex>` line"
+
+    bare_hex_line = "token=" + "a" * 40
+    assert _SECRET_PATTERNS["40-plus-char-hex-run"].search(bare_hex_line), (
+        "a bare 40+ hex run with no `image:` prefix must still trip the pattern"
+    )
+
+    narrow_miss_line = "INGEST_HMAC_SECRET=sha256:" + "cd" * 32
+    assert _SECRET_PATTERNS["40-plus-char-hex-run"].search(
+        _IMAGE_DIGEST_RE.sub("", narrow_miss_line)
+    ), (
+        "a sha256:-prefixed value that is NOT on an `image:` line must still fail the scan "
+        "(fix-1 M1: round 1's lookbehind exemption was too broad)"
     )
 
 

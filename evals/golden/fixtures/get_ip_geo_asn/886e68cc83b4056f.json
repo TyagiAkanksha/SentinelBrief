@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "181.45.46.167"
+  },
+  "result": {
+    "asn": 27747,
+    "country": "AR",
+    "ip": "181.45.46.167",
+    "org": "Telecentro S.A."
+  },
+  "tool": "get_ip_geo_asn"
+}

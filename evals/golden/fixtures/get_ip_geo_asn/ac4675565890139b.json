@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "213.243.210.226"
+  },
+  "result": {
+    "asn": 29050,
+    "country": "IT",
+    "ip": "213.243.210.226",
+    "org": "Terrecablate Reti e Servizi S.R.L."
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "139.19.117.130"
+  },
+  "result": {
+    "asn": 680,
+    "country": "DE",
+    "ip": "139.19.117.130",
+    "org": "Verein zur Foerderung eines Deutschen Forschungsnetzes e.V."
+  },
+  "tool": "get_ip_geo_asn"
+}

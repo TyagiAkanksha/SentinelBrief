@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "181.55.22.206"
+  },
+  "result": {
+    "asn": 10620,
+    "country": "CO",
+    "ip": "181.55.22.206",
+    "org": "Telmex Colombia S.A."
+  },
+  "tool": "get_ip_geo_asn"
+}

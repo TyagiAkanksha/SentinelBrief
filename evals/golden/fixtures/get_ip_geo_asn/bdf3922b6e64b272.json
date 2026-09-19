@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "200.119.222.209"
+  },
+  "result": {
+    "asn": 25620,
+    "country": "BO",
+    "ip": "200.119.222.209",
+    "org": "COTAS LTDA."
+  },
+  "tool": "get_ip_geo_asn"
+}

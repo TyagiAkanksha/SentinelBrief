@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "202.36.117.148"
+  },
+  "result": {
+    "asn": 152634,
+    "country": "MM",
+    "ip": "202.36.117.148",
+    "org": "Goal Link ISP"
+  },
+  "tool": "get_ip_geo_asn"
+}

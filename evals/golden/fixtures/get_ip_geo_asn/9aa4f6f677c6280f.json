@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "208.104.31.154"
+  },
+  "result": {
+    "asn": 14615,
+    "country": "US",
+    "ip": "208.104.31.154",
+    "org": "Comporium, Inc"
+  },
+  "tool": "get_ip_geo_asn"
+}

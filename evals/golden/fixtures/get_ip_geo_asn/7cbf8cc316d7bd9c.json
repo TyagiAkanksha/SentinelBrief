@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "176.103.27.20"
+  },
+  "result": {
+    "asn": 56812,
+    "country": "UA",
+    "ip": "176.103.27.20",
+    "org": "CHP Zarko Alexandr Ivanovich"
+  },
+  "tool": "get_ip_geo_asn"
+}

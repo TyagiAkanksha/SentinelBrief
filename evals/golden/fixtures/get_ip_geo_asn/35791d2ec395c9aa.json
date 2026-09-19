@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "116.49.140.178"
+  },
+  "result": {
+    "asn": 4760,
+    "country": "HK",
+    "ip": "116.49.140.178",
+    "org": "HKT Limited"
+  },
+  "tool": "get_ip_geo_asn"
+}

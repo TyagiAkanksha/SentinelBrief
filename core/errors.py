@@ -36,6 +36,20 @@ class ConfigError(SentinelBriefError):
     code = "config_error"
 
 
+class FixtureMissingError(ConfigError):
+    """Raised by `ReplayToolRecorder(strict=True)` when a v2 eval case has no recorded fixture
+    for a tool call it makes (m7 task-02, PRD §7.2/§13).
+
+    Subclasses `ConfigError` (ruling R24) rather than `SentinelBriefError` directly: this is a
+    worker/evals-only error — no route under `api/` ever raises or names it — so
+    `api/errors.py::status_for`'s MRO walk resolves it to `ConfigError`'s existing 500 mapping
+    without a new `STATUS_BY_ERROR` row, keeping the M2 invariant "every concrete error has a
+    mapped status" true for free.
+    """
+
+    code = "fixture_missing"
+
+
 class LLMCallError(SentinelBriefError):
     """Raised when the underlying LLM call itself fails (network, HTTP error, timeout)."""
 

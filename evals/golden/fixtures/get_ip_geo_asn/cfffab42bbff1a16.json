@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "183.171.191.225"
+  },
+  "result": {
+    "asn": 10030,
+    "country": "MY",
+    "ip": "183.171.191.225",
+    "org": "Celcom Axiata Berhad"
+  },
+  "tool": "get_ip_geo_asn"
+}

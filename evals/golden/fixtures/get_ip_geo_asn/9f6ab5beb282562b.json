@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "181.43.33.24"
+  },
+  "result": {
+    "asn": 27651,
+    "country": "CL",
+    "ip": "181.43.33.24",
+    "org": "ENTEL CHILE S.A."
+  },
+  "tool": "get_ip_geo_asn"
+}

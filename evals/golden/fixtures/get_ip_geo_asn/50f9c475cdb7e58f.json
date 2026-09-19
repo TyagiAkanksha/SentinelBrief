@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "91.237.200.2"
+  },
+  "result": {
+    "asn": 52040,
+    "country": "RU",
+    "ip": "91.237.200.2",
+    "org": "LLC MediaKvant"
+  },
+  "tool": "get_ip_geo_asn"
+}

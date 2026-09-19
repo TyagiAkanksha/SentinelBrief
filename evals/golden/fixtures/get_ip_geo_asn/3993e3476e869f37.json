@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.230.33.164"
+  },
+  "result": {
+    "asn": 266698,
+    "country": "CO",
+    "ip": "45.230.33.164",
+    "org": "INSITEL S.A.S."
+  },
+  "tool": "get_ip_geo_asn"
+}

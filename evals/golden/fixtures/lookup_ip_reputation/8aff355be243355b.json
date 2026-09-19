@@ -1,0 +1,13 @@
+{
+  "arguments": {
+    "ip": "143.105.215.135"
+  },
+  "result": {
+    "abuse_score": 33,
+    "cached": false,
+    "ip": "143.105.215.135",
+    "last_seen": "2026-09-15T13:04:26+00:00",
+    "reports": 6
+  },
+  "tool": "lookup_ip_reputation"
+}

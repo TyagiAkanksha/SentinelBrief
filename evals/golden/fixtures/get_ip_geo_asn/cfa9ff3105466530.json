@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "185.99.6.133"
+  },
+  "result": {
+    "asn": 50257,
+    "country": "RU",
+    "ip": "185.99.6.133",
+    "org": "JV A-Mobile Ltd."
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.41.104.183"
+  },
+  "result": {
+    "asn": 9988,
+    "country": "MM",
+    "ip": "45.41.104.183",
+    "org": "Myanma Posts and Telecommunications"
+  },
+  "tool": "get_ip_geo_asn"
+}

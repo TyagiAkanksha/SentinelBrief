@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "15.135.3.219"
+  },
+  "result": {
+    "asn": 16509,
+    "country": "AU",
+    "ip": "15.135.3.219",
+    "org": "Amazon.com, Inc."
+  },
+  "tool": "get_ip_geo_asn"
+}

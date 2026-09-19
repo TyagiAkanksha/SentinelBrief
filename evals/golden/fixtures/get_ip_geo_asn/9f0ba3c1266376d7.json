@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "24.205.26.28"
+  },
+  "result": {
+    "asn": 20115,
+    "country": "US",
+    "ip": "24.205.26.28",
+    "org": "Charter Communications LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}

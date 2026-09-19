@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "170.150.45.105"
+  },
+  "result": {
+    "asn": 264716,
+    "country": "AR",
+    "ip": "170.150.45.105",
+    "org": "Red Television SRL"
+  },
+  "tool": "get_ip_geo_asn"
+}

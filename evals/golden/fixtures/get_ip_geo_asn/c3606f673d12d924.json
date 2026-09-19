@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "38.137.177.195"
+  },
+  "result": {
+    "asn": 273155,
+    "country": "VE",
+    "ip": "38.137.177.195",
+    "org": "DATANET VZLA 2021, C.A"
+  },
+  "tool": "get_ip_geo_asn"
+}

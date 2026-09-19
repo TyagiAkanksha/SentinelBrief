@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "201.182.190.160"
+  },
+  "result": {
+    "asn": 265805,
+    "country": "AR",
+    "ip": "201.182.190.160",
+    "org": "COOPERATIVA DE OBRAS Y SERVICIOS PUBLICOS DE WHEELWRIGHT LIMITADA"
+  },
+  "tool": "get_ip_geo_asn"
+}

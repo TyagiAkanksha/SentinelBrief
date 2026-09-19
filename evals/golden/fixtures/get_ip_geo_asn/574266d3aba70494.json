@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "189.216.104.88"
+  },
+  "result": {
+    "asn": 28548,
+    "country": "MX",
+    "ip": "189.216.104.88",
+    "org": "Cablevision, S.A. de C.V."
+  },
+  "tool": "get_ip_geo_asn"
+}

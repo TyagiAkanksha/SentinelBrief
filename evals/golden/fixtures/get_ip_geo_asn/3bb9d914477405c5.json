@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "78.163.209.219"
+  },
+  "result": {
+    "asn": 9121,
+    "country": "TR",
+    "ip": "78.163.209.219",
+    "org": "Turk Telekom"
+  },
+  "tool": "get_ip_geo_asn"
+}

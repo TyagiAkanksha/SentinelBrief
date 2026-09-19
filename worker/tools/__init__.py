@@ -11,7 +11,9 @@ from worker.tools.base import Tool, ToolContext, spec_for, unavailable
 from worker.tools.geo_asn import GeoAsnTool, GeoReader, open_reader
 from worker.tools.ip_reputation import ABUSEIPDB_CHECK_URL, CACHE_KEY_PREFIX, IpReputationTool
 from worker.tools.recorder import (
+    DETERMINISTIC_REASONS,
     FIXTURE_KEY_CHARS,
+    STRICT_TOOL_NAMES,
     LiveToolRecorder,
     ReplayToolRecorder,
     ToolRecorder,
@@ -26,7 +28,9 @@ from worker.tools.wiring import TOOL_NAMES, build_registry
 __all__ = [
     "ABUSEIPDB_CHECK_URL",
     "CACHE_KEY_PREFIX",
+    "DETERMINISTIC_REASONS",
     "FIXTURE_KEY_CHARS",
+    "STRICT_TOOL_NAMES",
     "TOOL_NAMES",
     "AlertHistoryTool",
     "AssetInfoTool",

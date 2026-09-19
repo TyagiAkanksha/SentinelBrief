@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "45.229.84.66"
+  },
+  "result": {
+    "asn": 266705,
+    "country": "AR",
+    "ip": "45.229.84.66",
+    "org": "GABRIEL FRANCISCO ERBETTA Y MARIANO ANDRES CARRIZO RICHELET SOCIEDAD DE HECHO (TELNET SOLUC"
+  },
+  "tool": "get_ip_geo_asn"
+}

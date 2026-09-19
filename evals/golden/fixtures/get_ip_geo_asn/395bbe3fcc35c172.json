@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "189.216.27.146"
+  },
+  "result": {
+    "asn": 28555,
+    "country": "MX",
+    "ip": "189.216.27.146",
+    "org": "Cablemas Telecomunicaciones SA de CV"
+  },
+  "tool": "get_ip_geo_asn"
+}

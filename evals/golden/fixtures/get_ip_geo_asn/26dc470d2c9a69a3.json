@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "149.107.253.158"
+  },
+  "result": {
+    "asn": 272066,
+    "country": "AR",
+    "ip": "149.107.253.158",
+    "org": "FIBRAZUL INTERNET S.R.L."
+  },
+  "tool": "get_ip_geo_asn"
+}

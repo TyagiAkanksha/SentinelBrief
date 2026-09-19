@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "192.42.116.50"
+  },
+  "result": {
+    "asn": 215125,
+    "country": "NL",
+    "ip": "192.42.116.50",
+    "org": "Church of Cyberology"
+  },
+  "tool": "get_ip_geo_asn"
+}

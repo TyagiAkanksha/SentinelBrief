@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "27.155.92.28"
+  },
+  "result": {
+    "asn": 133774,
+    "country": "CN",
+    "ip": "27.155.92.28",
+    "org": "Fuzhou"
+  },
+  "tool": "get_ip_geo_asn"
+}

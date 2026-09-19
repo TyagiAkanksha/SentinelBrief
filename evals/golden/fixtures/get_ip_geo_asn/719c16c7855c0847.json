@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "91.203.237.120"
+  },
+  "result": {
+    "asn": 13296,
+    "country": "RU",
+    "ip": "91.203.237.120",
+    "org": "INNOR Ltd."
+  },
+  "tool": "get_ip_geo_asn"
+}

@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "129.222.203.80"
+  },
+  "result": {
+    "asn": 14593,
+    "country": "CO",
+    "ip": "129.222.203.80",
+    "org": "Space Exploration Technologies Corporation"
+  },
+  "tool": "get_ip_geo_asn"
+}

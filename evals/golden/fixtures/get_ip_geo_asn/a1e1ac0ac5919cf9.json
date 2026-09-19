@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "128.254.188.109"
+  },
+  "result": {
+    "asn": 64123,
+    "country": "AR",
+    "ip": "128.254.188.109",
+    "org": "DODOLINK INTERNACIONAL SRL"
+  },
+  "tool": "get_ip_geo_asn"
+}

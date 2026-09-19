@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "82.205.40.44"
+  },
+  "result": {
+    "asn": 12975,
+    "country": "PS",
+    "ip": "82.205.40.44",
+    "org": "Palestine Telecommunications Company (PALTEL)"
+  },
+  "tool": "get_ip_geo_asn"
+}

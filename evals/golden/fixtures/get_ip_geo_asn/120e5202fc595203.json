@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "5.37.99.210"
+  },
+  "result": {
+    "asn": 28885,
+    "country": "OM",
+    "ip": "5.37.99.210",
+    "org": "Oman Telecommunications Company (S.A.O.G)"
+  },
+  "tool": "get_ip_geo_asn"
+}

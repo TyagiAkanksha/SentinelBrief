@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "77.90.185.16"
+  },
+  "result": {
+    "asn": 213790,
+    "country": "DE",
+    "ip": "77.90.185.16",
+    "org": "Limited Network LTD"
+  },
+  "tool": "get_ip_geo_asn"
+}

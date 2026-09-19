@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "138.84.35.224"
+  },
+  "result": {
+    "asn": 14593,
+    "country": "CL",
+    "ip": "138.84.35.224",
+    "org": "Space Exploration Technologies Corporation"
+  },
+  "tool": "get_ip_geo_asn"
+}

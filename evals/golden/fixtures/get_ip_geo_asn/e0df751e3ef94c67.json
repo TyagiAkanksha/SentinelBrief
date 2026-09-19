@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "66.132.172.128"
+  },
+  "result": {
+    "asn": 398324,
+    "country": "US",
+    "ip": "66.132.172.128",
+    "org": "Censys, Inc."
+  },
+  "tool": "get_ip_geo_asn"
+}

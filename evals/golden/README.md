@@ -11,7 +11,7 @@ by `evals.golden.load_golden` into `GoldenCase` objects.
 - Machine-authored rows **and** labels — PRD §13 explicitly allows this for v1: "Claude Code may
   generate synthetic fixtures and labels for v1 (never published)".
 - **v1 numbers are never published.** They exist only to develop and smoke-test the pipeline and
-  scoring code (`evals/scoring.py`, `evals/run.py`) before a real, human-labeled dataset exists.
+  scoring code (`evals/scoring.py`, `evals/run.py`) before a labeled v2 dataset exists. v2 rows carry `labeled_by` = `"human"` (a person, via `evals.label_tool`) or `"ai"` (a strong model, via `evals.ai_label` — the current published run, disclosed in `docs/results.md` as a model-tier agreement metric, not human ground truth).
   Do not put a v1 metric in `docs/results.md`, the top-level README, or a commit message.
 - Coverage: at least 3 rows per PRD §6.6 severity band (1-5); every `VerdictCategory` used at
   least once; every row with `severity >= 4` has `escalate: true` (enforced by
@@ -64,11 +64,38 @@ the standard above (v1/v2 are immutable and stay as shipped). Because of this mi
 golden-v1 category-accuracy numbers measured under `triage-v1`/`triage-v2` carry this definition
 confound and should not be read as pure model signal.
 
-## v2 (future, M7)
+## v2 (M7)
 
-`v2.jsonl` will hold >=200 real alerts sampled from live honeypot traffic, stratified across
-categories, **hand-labeled by the author** using the §6.6 rubric (PRD §7.1, §13). Claude Code may
-write the stratified sampler, the export format, the loader, the scorer, the judge, and the CI
+`v2.jsonl` holds >=200 real alerts sampled from live honeypot traffic, stratified across
+categories, labeled using the §6.6 rubric (PRD §7.1, §13). Two honest provenances exist per row:
+`labeled_by="human"` (a person, via `evals.label_tool`) and `labeled_by="ai"` (a strong model, via
+`evals.ai_label`). **The committed v2.jsonl is AI-labeled** (owner decision 2026-09-18), disclosed
+in `docs/results.md` as a model-tier agreement metric, not human ground truth; the tooling for
+both paths is:
+
+- `python -m evals.sample` (`evals/sample.py`) reads the live database, stratifies by the cheap
+  verdict's category and by sensor/day, oversamples injection-candidate sessions, and writes a
+  verdict-blind candidate file (no `label`, `severity`, `category` or `reasoning` field anywhere
+  in it) — the author is never anchored by the model's own guess. The plain stratum name IS the
+  cheap model's category by value, so the file carries only `sampled.stratum_id` — an opaque
+  `sha256(f"{seed}:{stratum}")[:8]` token (`evals.candidates.stratum_id`) plus the `seed` itself —
+  never the category name in the clear (m7 task-01 fix-1 ruling R10).
+- `python -m evals.label_tool label` (`evals/label_tool.py`) is the ONLY place in the repo that
+  writes `labeled_by: "human"`; it renders each session for the author, records exactly what they
+  type, and is resumable. Nothing the tool shows the author is ever derived from `stratum_id` by
+  name — `render_case` never prints it. `rereview` draws a seeded 10 % re-review a week later,
+  re-prompting from the alert alone (never the first pass's category or note), and reports the
+  self-disagreement rate over the cases actually re-labeled (PRD §7.1: >10 % means the rubric is
+  ambiguous, not the labels).
+- `evals.golden.load_golden(path, require_human=True)` — applied automatically to any golden path
+  whose basename starts with `v2` (`evals.run.is_v2_golden`) — refuses to score a v2 file that
+  carries even one non-human row.
+- The rubric, the seven categories and the `brute_force`-vs-`reconnaissance` tie-break are fixed
+  once, before the first label, in [`../../docs/labeling-guide.md`](../../docs/labeling-guide.md)
+  — the same taxonomy the `/cowrie-fixture` skill and the active prompt use
+  (`tests/test_taxonomy_agreement.py` pins the agreement).
+
+Claude Code writes the sampler, the export format, the loader, the scorer, the judge and the CI
 gate for v2 — it must never write, edit, "correct", or infer a v2 label or `labeler_note`.
 
 ## Adding a row

@@ -35,6 +35,9 @@ class OpenSession:
     events: list[dict[str, Any]]
     last_seen: float
     has_connect: bool
+    dropped_events: int = 0
+    """Events cap 1 already dropped from `events` while the session was still open (M6 final
+    review, new M5) — `build_payload` adds them back into its `truncated_events` total."""
 
 
 @dataclass(frozen=True)
@@ -84,7 +87,8 @@ class SessionAssembler:
         Returns:
             `[payload]` once this line closes a session with a prior connect event; `[]`
             otherwise (including a malformed line, or a session closed with no prior connect —
-            both counted in `stats`, never shipped).
+            both counted in `stats`, never shipped). An open session never holds more than
+            `max_events` events: cap 1 is applied here, on every event, not only at close.
         """
         try:
             event = json.loads(line)
@@ -109,6 +113,13 @@ class SessionAssembler:
             self._sessions[session_id] = session
         session.events.append(event)
         session.last_seen = self._clock()
+        if len(session.events) > self._max_events:
+            # M6 final review, new M5: cap 1 applied INCREMENTALLY, so an attacker holding one
+            # session open and streaming commands cannot grow this list without bound on a
+            # 412 MB host. Dropping the second-newest event keeps exactly what `build_payload`'s
+            # cap 1 keeps — the first `max_events - 1` events plus the newest one.
+            del session.events[-2]
+            session.dropped_events += 1
 
         if event["eventid"] != CLOSED_EVENT:
             return []
@@ -134,8 +145,26 @@ class SessionAssembler:
             for session_id, session in self._sessions.items()
             if now - session.last_seen >= self._idle_flush_s
         ]
+        return self._flush(stale_ids)
+
+    def flush_all(self) -> list[bytes]:
+        """Ship (or drop) every open session, however recently it was active.
+
+        The shutdown flush (M6 final review row t02, M5 remainder): on SIGTERM/SIGINT `main`
+        calls this so a session still being accumulated lands in the spool instead of dying with
+        the process — `Restart=always` starts a fresh, empty assembler that could never recover
+        it.
+
+        Returns:
+            One payload per flushed session that has a connect event; a session without one is
+            dropped with the same WARNING `feed`/`flush_idle` use. Every session id is forgotten.
+        """
+        return self._flush(list(self._sessions))
+
+    def _flush(self, session_ids: list[str]) -> list[bytes]:
+        """Emit a payload for each named open session, dropping the ones with no connect event."""
         payloads: list[bytes] = []
-        for session_id in stale_ids:
+        for session_id in session_ids:
             session = self._sessions.pop(session_id)
             if not session.has_connect:
                 self._dropped_no_connect += 1
@@ -156,16 +185,19 @@ class SessionAssembler:
         Returns:
             `json.dumps(envelope, separators=(",", ":"), sort_keys=True,
             ensure_ascii=False).encode("utf-8")`. Cap 1 keeps `events[:max_events-1] +
-            [events[-1]]` when over `max_events`. Cap 2 then halves the kept events (always
-            keeping the first and last) until the serialized size — INCLUDING the `"shipper"`
-            key's own bytes, kept in the envelope throughout so cap 2 never undercounts it (M1,
-            review fix-1) — is at or under `max_payload_bytes`, or only 2 events remain (the
+            [events[-1]]` when over `max_events` — a session fed through `feed` is already at or
+            under that bound, and the events cap 1 dropped while it was still open
+            (`session.dropped_events`) still count toward `shipper.truncated_events`. Cap 2 then
+            halves the kept events (always keeping the first and last) until the serialized
+            size — INCLUDING the `"shipper"` key's own bytes, kept in the envelope throughout so
+            cap 2 never undercounts it (M1, review fix-1) — is at or under `max_payload_bytes`,
+            or only 2 events remain (the
             documented floor: below 2 events a payload can never validate as a `SessionAlert`,
             so the byte cap is advisory once the floor is hit — the final bytes may still exceed
             `max_payload_bytes` at exactly 2 events). `envelope["shipper"]` is present only when
             at least one event was dropped by either cap.
         """
-        total = len(session.events)
+        total = len(session.events) + session.dropped_events
         events = list(session.events)
         if len(events) > self._max_events:
             events = events[: self._max_events - 1] + [events[-1]]

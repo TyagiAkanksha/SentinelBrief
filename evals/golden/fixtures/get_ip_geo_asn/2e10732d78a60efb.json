@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "189.219.99.98"
+  },
+  "result": {
+    "asn": 265594,
+    "country": "MX",
+    "ip": "189.219.99.98",
+    "org": "Television Internacional, S.A. de C.V."
+  },
+  "tool": "get_ip_geo_asn"
+}

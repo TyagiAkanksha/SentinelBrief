@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "191.180.42.186"
+  },
+  "result": {
+    "asn": 28573,
+    "country": "BR",
+    "ip": "191.180.42.186",
+    "org": "Claro NXT Telecomunicacoes Ltda"
+  },
+  "tool": "get_ip_geo_asn"
+}

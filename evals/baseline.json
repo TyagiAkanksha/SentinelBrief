@@ -1,0 +1,175 @@
+{
+  "recorded_at": "2026-09-19T03:46:49.422993+00:00",
+  "git_sha": "b03bb16",
+  "prompt_version": "triage-v4",
+  "model_config": {
+    "model": "gpt-4o-mini",
+    "judge_model": "gpt-5.4",
+    "replay_strict": true,
+    "judge": false,
+    "strong_model": "gpt-5.4",
+    "prompt_version": "triage-v4"
+  },
+  "metrics": {
+    "n_cases": 252,
+    "n_failed": 0,
+    "severity_exact": 1.0,
+    "severity_within_one": 1.0,
+    "category_accuracy": 0.08333333333333333,
+    "escalate_precision": 1.0,
+    "escalate_recall": 1.0,
+    "critical_recall": 1.0,
+    "escalation_rate": 0.15476190476190477,
+    "cost_mean_usd": "0.001201",
+    "cost_p95_usd": "0.006272",
+    "cost_total_usd": "0.302718",
+    "latency_p50_ms": 1165,
+    "latency_p95_ms": 3987,
+    "per_severity": {
+      "1": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "support": 208
+      },
+      "2": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "support": 5
+      },
+      "3": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "support": 0
+      },
+      "4": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "support": 39
+      },
+      "5": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "support": 0
+      }
+    },
+    "confusion": [
+      [
+        208,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        5,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        39,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "category_confusion": {
+      "scanning": {
+        "scanning": 16,
+        "brute_force": 0,
+        "successful_intrusion": 0,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      },
+      "brute_force": {
+        "scanning": 0,
+        "brute_force": 5,
+        "successful_intrusion": 0,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      },
+      "successful_intrusion": {
+        "scanning": 0,
+        "brute_force": 0,
+        "successful_intrusion": 0,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      },
+      "malware_delivery": {
+        "scanning": 0,
+        "brute_force": 0,
+        "successful_intrusion": 0,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      },
+      "persistence_attempt": {
+        "scanning": 0,
+        "brute_force": 0,
+        "successful_intrusion": 0,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      },
+      "reconnaissance": {
+        "scanning": 0,
+        "brute_force": 0,
+        "successful_intrusion": 0,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      },
+      "other": {
+        "scanning": 192,
+        "brute_force": 0,
+        "successful_intrusion": 39,
+        "malware_delivery": 0,
+        "persistence_attempt": 0,
+        "reconnaissance": 0,
+        "other": 0,
+        "failed": 0
+      }
+    },
+    "sev_macro_f1": 1.0,
+    "judge_mean": null,
+    "judge_pct_le2": null,
+    "injection_pass_rate": 1.0,
+    "judge_cost_total_usd": "0"
+  }
+}

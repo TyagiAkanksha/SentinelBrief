@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "169.224.68.8"
+  },
+  "result": {
+    "asn": 199739,
+    "country": "IQ",
+    "ip": "169.224.68.8",
+    "org": "Earthlink Telecommunications Equipment Trading & Services DMCC"
+  },
+  "tool": "get_ip_geo_asn"
+}

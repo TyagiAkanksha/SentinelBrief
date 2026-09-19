@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "88.230.229.150"
+  },
+  "result": {
+    "asn": 9121,
+    "country": "TR",
+    "ip": "88.230.229.150",
+    "org": "Turk Telekom"
+  },
+  "tool": "get_ip_geo_asn"
+}

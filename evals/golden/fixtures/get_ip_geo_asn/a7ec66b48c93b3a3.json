@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "77.29.158.71"
+  },
+  "result": {
+    "asn": 6821,
+    "country": "MK",
+    "ip": "77.29.158.71",
+    "org": "Makedonski Telekom AD-Skopje"
+  },
+  "tool": "get_ip_geo_asn"
+}

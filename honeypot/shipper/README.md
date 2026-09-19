@@ -62,6 +62,8 @@ The env file above holds only the two required variables. Every other `SHIPPER_*
 | `SHIPPER_BACKOFF_MAX_S` | `300` | Cap on the retry delay. |
 | `SHIPPER_SPOOL_MAX_FILES` | `10000` | Disk-protection cap; the OLDEST spooled payload is dropped once exceeded. |
 | `SHIPPER_POLL_INTERVAL_S` | `1` | Sleep between polls when the log has no new complete line. |
+| `SHIPPER_READ_CHUNK_BYTES` | `8388608` | Max bytes per read from the log (8 MiB) — a cold start over a large backlog is read in chunks, never in one unbounded read. |
+| `SHIPPER_MAX_BATCH_LINES` | `2000` | Max complete lines one poll returns; the rest wait for the next poll, so a back-ship burst is paced. |
 
 Install and start the unit:
 
@@ -87,6 +89,24 @@ honeypot host this shows `shipper: delivered session_id=... status=202` lines �
 username, password, command, banner, URL, or the `SHIPPER_INGEST_URL`/secret value (the shipper
 never logs a payload field; `session_id` is the only per-session field it ever logs).
 
+## Residual guarantees
+
+"Never loses a closed session" (PRD §11) is a guarantee about the **spool**, and it starts the
+moment a session is assembled into a payload and written there: from that point a crash replays
+at most — the tail offset is committed only after the spool write, and the api dedups a replay by
+fingerprint into a `200`, never a re-triage. Two windows sit outside it, both deliberate:
+
+- **Sessions still open in memory.** Events for a session Cowrie has not closed live only in the
+  assembler until the close, the idle flush (`SHIPPER_IDLE_FLUSH_S`), or a graceful stop — SIGTERM
+  flushes every open session to the spool before exiting. A SIGKILL, an OOM or a power loss loses
+  them, with no bound on how long a session may stay open. The unit's `TimeoutStopSec=30` plus an
+  interruptible retry backoff are what keep the graceful path graceful.
+- **Two log rotations inside one poll.** The tailer holds one file descriptor and opens the new
+  `cowrie.json` only after draining the rotated one, so if `cowrie.json` were rotated twice
+  between polls the whole intermediate generation would be skipped. Cowrie rotates daily and
+  `SHIPPER_POLL_INTERVAL_S` is 1 second, so this window is theoretical; it is recorded rather than
+  coded around (m7 task-08 fix-1, review M3).
+
 ## What it never does
 
 - Reads `honeypot/data/lib` (attacker-downloaded artifacts) — only `data/log/cowrie.json`.
@@ -94,6 +114,8 @@ never logs a payload field; `session_id` is the only per-session field it ever l
   Cowrie-generated hex id, never attacker-controlled) and counters.
 - Retries a `401`/`413`/`422` — those are permanent rejections, dead-lettered under
   `/var/lib/sentinelbrief-shipper/spool/dead/` for the owner to inspect by hand.
+- Buffers a single log line past 4 × `SHIPPER_READ_CHUNK_BYTES` — such a line is dropped with a
+  count-only WARNING (never its content) and the next line is read normally.
 - Runs as root — the unit's `User=shipper`/`Group=shipper`, `NoNewPrivileges=true`,
   `ProtectSystem=strict` (read-only filesystem except its own `StateDirectory=`), `ProtectHome=true`.
 - Holds any secret but `INGEST_HMAC_SECRET` — no database URL, no LLM key, no AWS credentials.

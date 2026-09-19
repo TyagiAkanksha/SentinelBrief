@@ -12,12 +12,34 @@ ExecStart=/opt/sentinelbrief-shipper/.venv/bin/sentinelbrief-shipper
 StateDirectory=sentinelbrief-shipper
 Restart=always
 RestartSec=5
+# SIGTERM -> the loop finishes the current iteration and flushes every still-open session to the
+# spool. Both waits (retry backoff, poll interval) wait on the stop event itself, so a stop is
+# observed at once however large SHIPPER_BACKOFF_MAX_S is; 30 s therefore bounds a STUCK flush
+# (a hung disk write), not a scheduled wait — m7 task-08 fix-1, ruling R21.
+TimeoutStopSec=30
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 # The `-` prefix: a missing path must not fail namespace setup (status 226) into a restart loop.
 ReadOnlyPaths=-/opt/sentinelbrief-honeypot/data/log
 PrivateTmp=true
+# The shipper tails a file and makes one outbound HTTPS call — it needs no capability at all
+# (M6 final review M8). An empty set drops every one from the bounding set.
+CapabilityBoundingSet=
+# Ruling R20: the rest of the M6 review's free sandboxing set. None of these touches what the
+# shipper does (read one file, POST one body, write its StateDirectory).
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+# RestrictAddressFamilies is deliberately NOT set (R20, pinned by
+# tests/test_shipper_unit_file.py): glibc's getaddrinfo opens an AF_NETLINK socket to enumerate
+# local addresses, so a narrow AF_INET/AF_INET6 set risks a silent DNS regression on a host whose
+# whole job is one outbound HTTPS POST. If it is ever added, the correct value is
+# "AF_INET AF_INET6 AF_NETLINK AF_UNIX" (AF_UNIX for the journal), applied at an on-box sitting
+# with systemctl status plus a `delivered` line as the check.
 
 [Install]
 WantedBy=multi-user.target

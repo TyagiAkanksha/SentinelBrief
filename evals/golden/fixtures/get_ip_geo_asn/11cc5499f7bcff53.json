@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "77.239.124.213"
+  },
+  "result": {
+    "asn": 198364,
+    "country": "US",
+    "ip": "77.239.124.213",
+    "org": "Banatsync Srl"
+  },
+  "tool": "get_ip_geo_asn"
+}

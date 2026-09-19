@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "ip": "73.122.155.60"
+  },
+  "result": {
+    "asn": 7922,
+    "country": "US",
+    "ip": "73.122.155.60",
+    "org": "Comcast Cable Communications, LLC"
+  },
+  "tool": "get_ip_geo_asn"
+}
