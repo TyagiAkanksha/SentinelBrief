@@ -877,6 +877,9 @@ def test_run_requires_human_labels_for_v2_files(
     `.claude/rules/evals.md`). `evals.run` does not define `is_v2_golden` yet, so this test is RED
     at collection with `ImportError: cannot import name 'is_v2_golden' from 'evals.run'`.
     """
+    # Ruling R54 (2026-09-18): this pins that an UNLABELED v2 row (labeled_by is None) fails.
+    # A "human" OR "ai" label is accepted (the eval may run on an AI-labeled v2, disclosed
+    # as machine-labeled); only None is rejected. The docstring above predates R54.
     from evals.run import is_v2_golden
 
     assert is_v2_golden(Path("evals/golden/v2.jsonl")) is True

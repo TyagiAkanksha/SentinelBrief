@@ -608,12 +608,14 @@ async def _run_all(
         except (OSError, ValueError) as e:
             return fail("invalid_golden", str(e))
 
-        # Ruling R13 (review I5): only the "not human-labeled" condition is a config_error for a
-        # v2 golden file — a malformed row is caught above and stays invalid_golden either way.
+        # Ruling R13 (review I5) + R54: a v2 golden row must carry a deliberate provenance label —
+        # "human" (evals.label_tool) or "ai" (evals.ai_label, disclosed as machine-labeled); an
+        # UNLABELED row (labeled_by is None) is still a config_error, so a stray synthetic row can
+        # never be scored as v2 ground truth. A malformed row is caught above as invalid_golden.
         if is_v2_golden(args.golden):
             for row_number, case in enumerate(cases, start=1):
-                if case.labeled_by != "human":
-                    return fail("config_error", f"row {row_number} is not human-labeled (PRD §13)")
+                if case.labeled_by not in ("human", "ai"):
+                    return fail("config_error", f"row {row_number} is not labeled (PRD §13)")
         elif args.write_baseline:
             # m7 task-05 (PRD §7.4/§13): a baseline may only be recorded from a real v2 run.
             return fail(

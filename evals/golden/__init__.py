@@ -44,16 +44,20 @@ class GoldenLabel(BaseModel):
 class GoldenCase(BaseModel):
     """One labeled golden-set row: a session alert plus its ground-truth label (PRD §7.1).
 
-    `labeled_by`/`labeled_at` are v2-only provenance (PRD §13): every v2 row is written by
-    `evals.label_tool.prompt_label` with `labeled_by` set to the literal string `human`; v1 rows
-    (synthetic, authored via `/cowrie-fixture`) carry neither field, so both default to `None`.
+    `labeled_by`/`labeled_at` are v2-only provenance (PRD §13). Two honest provenances exist:
+    `"human"`, written ONLY by `evals.label_tool.prompt_label` (a person labels the session
+    blind); and `"ai"`, written ONLY by `evals.ai_label` (a strong model labels the session from
+    the §6.6 rubric — reproducible but NOT human ground truth; the results table and `/about`
+    disclose this and its self-grading limitation, owner decision 2026-09-18). v1 rows (synthetic,
+    authored via `/cowrie-fixture`) carry neither field, so both default to `None`. A row's
+    provenance is never silently upgraded: `"ai"` is never rewritten to `"human"`.
     """
 
     alert: SessionAlert
     label: GoldenLabel
     labeler_note: Annotated[str, Field(min_length=10)]
     tags: list[str] = []
-    labeled_by: Literal["human"] | None = None
+    labeled_by: Literal["human", "ai"] | None = None
     labeled_at: datetime | None = None
 
     @property
