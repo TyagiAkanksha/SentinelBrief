@@ -73,6 +73,7 @@ unless the production compose file pins something else).
 | `ABUSEIPDB_QUOTA_BACKOFF_S` | N | default | `900` seconds (`.env.example` default). |
 | `ALERT_HISTORY_MAX_WINDOW_HOURS` | N | default | `720` hours (`.env.example` default). |
 | `TOOL_LOOP_MAX_ITER` | N | default | `6` (`.env.example` default). |
+| `DAILY_TOKEN_BUDGET` | N | default | `0` (`.env.example` default, unlimited) — daily cap on total LLM tokens across every call, checked before each one; `0 = unlimited` (PRD §10.3, from M8). |
 | `TRIAGE_JOB_MAX_TRIES` | N | default | `3` (`.env.example` default). |
 | `TRIAGE_JOB_BACKOFF_BASE_S` | N | default | `2` seconds (`.env.example` default). |
 | `TRIAGE_JOB_BACKOFF_MAX_S` | N | default | `60` seconds (`.env.example` default). |

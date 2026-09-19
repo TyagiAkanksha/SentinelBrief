@@ -34,6 +34,12 @@ function makeStats(overrides: Partial<StatsOut> = {}): StatsOut {
     // `cost_by_day` is added to `StatsOut` by this same task (Interfaces, "Produces") — included
     // here so this fixture stays valid once the generated schema requires it.
     cost_by_day: [],
+    // m8b task-05 (pinned-file conflict, implementer-report-flagged): the daily token-budget
+    // circuit breaker's read surface, non-optional on the generated `StatsOut` type
+    // (`openapi-typescript`'s `defaultNonNullable`) — included so this fixture stays valid.
+    budget_exhausted: false,
+    tokens_today: 0,
+    daily_token_budget: 0,
     ...overrides,
   };
 }

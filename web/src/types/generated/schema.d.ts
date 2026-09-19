@@ -396,6 +396,11 @@ export interface components {
          * @description The dashboard stats view (PRD §8): volume by day, distributions, cost, and latency.
          */
         StatsOut: {
+            /**
+             * Budget Exhausted
+             * @default false
+             */
+            budget_exhausted: boolean;
             /** By Category */
             by_category: {
                 [key: string]: number;
@@ -414,6 +419,11 @@ export interface components {
             cost_mean_usd: string;
             /** Cost Total Usd */
             cost_total_usd: string;
+            /**
+             * Daily Token Budget
+             * @default 0
+             */
+            daily_token_budget: number;
             /** Escalated Count */
             escalated_count: number;
             /** Last Alert At */
@@ -422,6 +432,11 @@ export interface components {
             latency_p50_ms: number;
             /** Latency P95 Ms */
             latency_p95_ms: number;
+            /**
+             * Tokens Today
+             * @default 0
+             */
+            tokens_today: number;
             /** Total Alerts */
             total_alerts: number;
             /** Volume By Day */

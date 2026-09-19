@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { BudgetBanner } from "@/components/alerts/BudgetBanner";
 import { CostTable } from "@/components/stats/CostTable";
 import { DistributionTable } from "@/components/stats/DistributionTable";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -43,6 +44,7 @@ export default async function StatsPage(): Promise<JSX.Element> {
   return (
     <section>
       <h1 className="text-lg font-semibold">Stats</h1>
+      <BudgetBanner budgetExhausted={stats.budget_exhausted ?? false} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Total alerts" value={formatCount(stats.total_alerts)} />
         <Stat label="Triaged" value={formatCount(triaged)} />

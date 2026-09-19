@@ -52,6 +52,13 @@ function makeStats(overrides: Partial<StatsOut> = {}): StatsOut {
     cost_by_day: [
       { day: "2026-09-01", alerts: 6, cost_usd: "0.000684", mean_cost_usd: "0.000114" },
     ],
+    // m8b task-05 (pinned-file conflict, implementer-report-flagged): the daily token-budget
+    // circuit breaker's read surface — non-optional on the generated `StatsOut` type because
+    // `openapi-typescript`'s `defaultNonNullable` treats every defaulted wire field as always
+    // present, regardless of the object literal used by any one caller's `overrides`.
+    budget_exhausted: false,
+    tokens_today: 0,
+    daily_token_budget: 0,
     ...overrides,
   };
 }

@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.errors import (
+    BudgetExceededError,
     ConfigError,
     ConflictError,
     LengthRequiredError,
@@ -51,6 +52,13 @@ STATUS_BY_ERROR: Mapping[type[SentinelBriefError], int] = {
     StructuredOutputError: 502,
     QueueUnavailableError: 503,
     StreamUnavailableError: 503,
+    # `BudgetExceededError` is a worker/job-internal control-flow signal (PRD §10.3, m8b task-05):
+    # `worker/jobs.py::triage_alert_job` catches it and defers the job (controller ruling
+    # R-M8b-3) — it never propagates to any `api/` route. This row exists only so
+    # `status_for`'s MRO walk resolves it (`test_error_status_mapping.py
+    # ::test_every_concrete_error_has_a_status`'s "every concrete error has a mapped status"
+    # invariant); 503 mirrors `QueueUnavailableError`'s own "temporarily can't proceed" reasoning.
+    BudgetExceededError: 503,
 }
 
 

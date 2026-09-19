@@ -12,10 +12,12 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, cast, get_args
 
+from redis.asyncio import Redis
 from sqlalchemy import Date, Subquery, func, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.budget import read_tokens_today
 from core.models import AlertRow, AlertStatus, ToolCallRow, VerdictRow
 from core.schemas.alerts_read import (
     AlertDetail,
@@ -220,7 +222,9 @@ async def get_alert_detail(session: AsyncSession, alert_id: uuid.UUID) -> AlertD
     )
 
 
-async def get_stats(session: AsyncSession) -> StatsOut:
+async def get_stats(
+    session: AsyncSession, *, redis: Redis | None = None, daily_token_budget: int = 0
+) -> StatsOut:
     """The dashboard stats view (PRD §8): zero-filled on an empty database.
 
     `by_severity`/`by_category`/`escalated_count` use the latest verdict per alert (the same
@@ -231,8 +235,18 @@ async def get_stats(session: AsyncSession) -> StatsOut:
     `count(DISTINCT alerts.id)`, since the LEFT JOIN multiplies a retriaged alert's row by its
     verdict count.
 
+    `budget_exhausted`/`tokens_today` read the daily token-budget counter directly
+    (`core.budget.read_tokens_today`, never `worker.budget` — `core/` must not import `worker`,
+    import-linter) and fail OPEN: an unwired or unreachable `redis` answers `tokens_today=0`,
+    `budget_exhausted=False` rather than 500ing this public route (PRD §10.3, from M8; mirrors
+    `api/deps.py::rate_limit`'s own unwired-Redis fail-open contract, m8b task-04).
+
     Args:
         session: The request-scoped `AsyncSession`.
+        redis: The Redis client the daily token-budget counter is stored on, or `None` when
+            unwired.
+        daily_token_budget: The configured `Settings.daily_token_budget`; `0` means unlimited
+            (never exhausted, regardless of the counter).
 
     Returns:
         The whole-database `StatsOut`.
@@ -322,6 +336,9 @@ async def get_stats(session: AsyncSession) -> StatsOut:
         for day, alerts, cost_usd in cost_by_day_rows
     ]
 
+    tokens_today = await read_tokens_today(redis)
+    budget_exhausted = daily_token_budget > 0 and tokens_today >= daily_token_budget
+
     return StatsOut(
         total_alerts=total_alerts,
         by_status=by_status,
@@ -335,4 +352,7 @@ async def get_stats(session: AsyncSession) -> StatsOut:
         latency_p95_ms=latency_p95 if latency_p95 is not None else 0,
         last_alert_at=last_alert_at,
         cost_by_day=cost_by_day,
+        budget_exhausted=budget_exhausted,
+        tokens_today=tokens_today,
+        daily_token_budget=daily_token_budget,
     )

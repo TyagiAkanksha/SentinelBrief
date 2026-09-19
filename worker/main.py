@@ -68,7 +68,9 @@ async def startup(ctx: dict[str, Any]) -> None:
 
     cache = RedisTTLCache(ctx["redis"])
     llm = OpenAICompatibleLLMClient.from_settings(s)
-    ctx["pipeline"] = TriagePipeline.from_settings(s, llm=llm, http=ctx["http"], cache=cache)
+    ctx["pipeline"] = TriagePipeline.from_settings(
+        s, llm=llm, http=ctx["http"], cache=cache, redis=ctx["redis"]
+    )
     logger.info(
         "worker ready model=%s prompt=%s tools=%s",
         s.cheap_model,

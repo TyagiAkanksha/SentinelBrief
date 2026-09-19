@@ -52,16 +52,25 @@ from decimal import Decimal
 from typing import Any, Literal
 
 import httpx
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.budget import read_tokens_today
 from core.cache import TTLCache
 from core.config import Settings
-from core.errors import ConfigError, LLMCallError, StructuredOutputError, VerdictValidationError
+from core.errors import (
+    BudgetExceededError,
+    ConfigError,
+    LLMCallError,
+    StructuredOutputError,
+    VerdictValidationError,
+)
 from core.llm import ChatMessage, LLMClient, LLMResult, ToolCallTurn, tool_calls_message
 from core.models.alerts import AlertStatus
 from core.schemas.alert import SessionAlert
 from core.schemas.verdict import VERDICT_JSON_SCHEMA, Verdict
 from core.services.alerts import get_alert_for_update, set_alert_status
+from worker.budget import check_and_would_exceed, record_tokens
 from worker.outcome import ToolCallRecord, TriageOutcome
 from worker.prompts import build_messages, build_tool_result_message, load_prompt
 from worker.routing import should_escalate
@@ -150,6 +159,8 @@ class TriagePipeline:
         strong_model: str | None = None,
         escalate_severity_gte: int | None = None,
         escalate_confidence_lt: float | None = None,
+        redis: Redis | None = None,
+        daily_token_budget: int = 0,
     ) -> None:
         """Load the prompt template once so a missing/malformed version fails at construction.
 
@@ -171,6 +182,11 @@ class TriagePipeline:
             escalate_confidence_lt: Escalate when the cheap verdict's confidence is strictly
                 below this. Required together with `escalate_severity_gte` whenever
                 `strong_model` is given; otherwise ignored.
+            redis: The Redis client the daily token-budget counter is stored on (PRD §10.3, from
+                M8); `None` (default) fails OPEN — the budget check never blocks when no Redis is
+                wired, matching every other unwired-Redis seam in this codebase.
+            daily_token_budget: The daily token budget `run` checks before every LLM call;
+                `0` (default) is unlimited and never blocks.
 
         Raises:
             ValueError: `tools` is given with `tool_loop_max_iter` `None` or `< 1`; or
@@ -192,6 +208,8 @@ class TriagePipeline:
         self._strong_model = strong_model
         self._escalate_severity_gte = escalate_severity_gte
         self._escalate_confidence_lt = escalate_confidence_lt
+        self._redis = redis
+        self._daily_token_budget = daily_token_budget
 
     @classmethod
     def from_settings(
@@ -202,6 +220,7 @@ class TriagePipeline:
         recorder: ToolRecorder | None = None,
         cache: TTLCache | None = None,
         http: httpx.AsyncClient | None = None,
+        redis: Redis | None = None,
     ) -> TriagePipeline:
         """Build the five-tool pipeline (`worker.tools.wiring.build_registry`) from `Settings`.
 
@@ -209,8 +228,8 @@ class TriagePipeline:
         a pipeline at all).
 
         Args:
-            settings: The config surface to build the model, prompt version, registry and cap
-                from.
+            settings: The config surface to build the model, prompt version, registry, cap and
+                `daily_token_budget` from.
             llm: The LLM client to call.
             recorder: How tools are actually executed; defaults to `LiveToolRecorder()` — always
                 live, matching `worker.main`'s own use case.
@@ -220,6 +239,9 @@ class TriagePipeline:
                 request through (M4 task-06 fix-1 I4: the caller owns `aclose()` —
                 `worker/main.py::shutdown` is the owner); `None` lets `build_registry` build one
                 timed from `settings`.
+            redis: The Redis client the daily token-budget counter is stored on (PRD §10.3, from
+                M8; `worker/main.py::startup` passes ARQ's own connection pool); `None` fails
+                OPEN — the budget check never blocks when no Redis is wired.
 
         Returns:
             A `TriagePipeline` wired with every PRD §6.3 tool.
@@ -242,6 +264,8 @@ class TriagePipeline:
             strong_model=strong,
             escalate_severity_gte=settings.escalate_severity_gte,
             escalate_confidence_lt=settings.escalate_confidence_lt,
+            redis=redis,
+            daily_token_budget=settings.daily_token_budget,
         )
 
     @property
@@ -281,6 +305,10 @@ class TriagePipeline:
                 PRD §6.5 retry — on either tier. A strong-tier failure fails the attempt like any
                 other; there is no fallback to the cheap verdict.
             LLMCallError: The underlying LLM call failed (either tier); propagates unretried.
+            BudgetExceededError: Today's token counter already meets `daily_token_budget`, checked
+                immediately before this LLM call — raised before the call is made, so no tokens
+                are spent (PRD §10.3, from M8). `worker/jobs.py` defers the job on this; the alert
+                stays `pending`, never `failed`.
         """
         ctx = ToolContext(alert=alert, session=session, now=now or datetime.now(UTC))
         summary = summarize_session(alert)
@@ -288,6 +316,31 @@ class TriagePipeline:
 
         records: list[ToolCallRecord] = []
         totals = Totals()
+
+        async def _check_budget() -> None:
+            """Raise `BudgetExceededError` when today's counter already meets
+            `self._daily_token_budget` — called before every LLM call site (PRD §10.3, from M8).
+            A `None` `self._redis` or `self._daily_token_budget == 0` fails OPEN, never blocking.
+            """
+            if self._redis is None or self._daily_token_budget == 0:
+                return
+            if await check_and_would_exceed(self._redis, budget=self._daily_token_budget):
+                tokens_today = await read_tokens_today(self._redis)
+                raise BudgetExceededError(
+                    f"daily token budget exhausted: {tokens_today}/{self._daily_token_budget} "
+                    "tokens",
+                    tokens_today=tokens_today,
+                    budget=self._daily_token_budget,
+                )
+
+        async def _record_usage(result: LLMResult[Any] | ToolCallTurn) -> None:
+            """Fold one successful call's own `input_tokens + output_tokens` into today's
+            counter (PRD §10.3, from M8); a no-op when `self._redis` is `None`."""
+            if self._redis is None:
+                return
+            await record_tokens(
+                self._redis, tokens=result.usage.input_tokens + result.usage.output_tokens
+            )
 
         def _outcome(result: LLMResult[Verdict], *, model: str, retried: bool) -> TriageOutcome:
             """Add `result`'s own usage/cost/latency to the running totals and build the outcome.
@@ -323,6 +376,7 @@ class TriagePipeline:
                     "content": RETRY_INSTRUCTION.format(error=first_err.validation_error),
                 },
             ]
+            await _check_budget()
             try:
                 result = await self._llm.complete_structured(
                     messages=retry_messages, response_model=Verdict, model=model
@@ -333,6 +387,7 @@ class TriagePipeline:
                     attempts=2,
                     last_error=second_err.validation_error,
                 ) from second_err
+            await _record_usage(result)
             return _outcome(result, model=model, retried=True)
 
         async def _final(msgs: list[ChatMessage], *, model: str) -> TriageOutcome:
@@ -340,12 +395,14 @@ class TriagePipeline:
             strong pass (m5 task-03): one `complete_structured` call, retried once on
             `StructuredOutputError` (PRD §6.5).
             """
+            await _check_budget()
             try:
                 result = await self._llm.complete_structured(
                     messages=msgs, response_model=Verdict, model=model
                 )
             except StructuredOutputError as first_err:
                 return await _retry_once(msgs, first_err, model=model)
+            await _record_usage(result)
             return _outcome(result, model=model, retried=False)
 
         async def _cheap_pass() -> TriageOutcome:
@@ -358,6 +415,7 @@ class TriagePipeline:
                 assert self._tools is not None and self._tool_loop_max_iter is not None
                 seq = 0
                 for _turn in range(self._tool_loop_max_iter):
+                    await _check_budget()
                     try:
                         reply = await self._llm.complete_with_tools(
                             messages=messages,
@@ -368,6 +426,7 @@ class TriagePipeline:
                     except StructuredOutputError as first_err:
                         return await _retry_once(messages, first_err, model=self._model)
 
+                    await _record_usage(reply)
                     if isinstance(reply, LLMResult):
                         return _outcome(reply, model=self._model, retried=False)
 

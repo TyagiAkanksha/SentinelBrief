@@ -22,8 +22,9 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
+from redis.asyncio import Redis
 
-from api.deps import SessionDep, get_cache, get_settings
+from api.deps import SessionDep, get_cache, get_redis_optional, get_settings
 from core.cache import TTLCache
 from core.config import Settings
 from core.schemas.alerts_read import AlertDetail, AlertSummary, ListFilters, StatsOut
@@ -192,20 +193,25 @@ async def get_stats(
     session: SessionDep,
     settings: Settings = Depends(get_settings),
     cache: TTLCache = Depends(get_cache),
+    redis: Redis | None = Depends(get_redis_optional),
 ) -> Response:
     """The whole-database dashboard stats view, cached for `STATS_CACHE_TTL_S`.
     \f
     Args:
         request: The current request; used only for its path (the cache key).
         session: The request-scoped session (`SessionDep`).
-        settings: The app's `Settings`, for `stats_cache_ttl_s`.
+        settings: The app's `Settings`, for `stats_cache_ttl_s`/`daily_token_budget`.
         cache: The wired `TTLCache`.
+        redis: The app's Redis client, or `None` when unwired (`get_redis_optional` never 503s
+            this route — m8b task-05).
 
     Returns:
         A `StatsOut` JSON body, from the cache on a hit.
     """
 
     async def _produce() -> StatsOut:
-        return await get_stats_service(session)
+        return await get_stats_service(
+            session, redis=redis, daily_token_budget=settings.daily_token_budget
+        )
 
     return await _cached_json(request, cache, settings.stats_cache_ttl_s, _produce, {})

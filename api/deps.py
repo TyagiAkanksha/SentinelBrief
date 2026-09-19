@@ -162,6 +162,24 @@ def get_redis(request: Request) -> Redis:
 RedisDep = Annotated[Redis, Depends(get_redis)]
 
 
+def get_redis_optional(request: Request) -> Redis | None:
+    """Return the app's wired Redis client, or `None` when unwired — never raises.
+
+    Unlike `get_redis`/`RedisDep` (which 503s the SSE stream route on an unwired Redis),
+    `GET /api/v1/stats` must keep answering `200` with `budget_exhausted=False`/`tokens_today=0`
+    even when no Redis is wired (m8b task-05; mirrors `rate_limit`'s own fail-open-on-unwired-
+    Redis contract, m8b task-04).
+
+    Args:
+        request: The current request, used to reach `app.state.redis`.
+
+    Returns:
+        The wired `Redis` client, or `None`.
+    """
+    redis: Redis | None = request.app.state.redis
+    return redis
+
+
 async def require_signature(request: Request, settings: Settings = Depends(get_settings)) -> None:
     """Raise `SignatureError` unless the raw request body carries a valid `X-Signature`.
 

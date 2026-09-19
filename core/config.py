@@ -176,6 +176,11 @@ class Settings(BaseSettings):
     tool_loop_max_iter: Annotated[int, Field(ge=1)] = 6
     """Hard cap on tool-call turns per alert before a tool-less verdict is forced (PRD §6.3, m4
     task-06). Never a literal in `worker/triage.py`."""
+    daily_token_budget: Annotated[int, Field(ge=0)] = 0
+    """Daily cap on total (input + output) LLM tokens across every call, checked BEFORE each one
+    (PRD §10.3, from M8): `0` (the dev default) is unlimited and never blocks.
+    `worker/budget.py::check_and_would_exceed` reads this, never a literal; `StatsOut
+    .budget_exhausted` mirrors the exact same `>=` threshold for the dashboard banner."""
     triage_job_max_tries: Annotated[int, Field(ge=1)] = 3
     """Total attempts per triage job — the first run plus retries — before the alert is marked
     `failed` (PRD §6.2, m5 task-02). `worker/retry.py::decide_retry` reads this, never a literal."""
