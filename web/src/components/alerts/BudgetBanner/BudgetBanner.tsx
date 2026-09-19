@@ -9,7 +9,10 @@ export function BudgetBanner({ budgetExhausted }: BudgetBannerProps) {
   }
 
   return (
-    <p role="alert" className="text-sm font-semibold text-sev-5">
+    <p
+      role="alert"
+      className="rounded-(--radius) border border-sev-4/40 bg-sev-4/10 px-3 py-2 text-sm font-medium text-sev-4"
+    >
       Daily token budget exhausted — triage is paused until the counter resets.
     </p>
   );

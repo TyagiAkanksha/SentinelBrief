@@ -16,7 +16,7 @@ export function NavLink({ href, children }: NavLinkProps) {
   return (
     <Link
       href={href}
-      className="text-accent underline"
+      className="text-accent underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current aria-[current=page]:font-medium aria-[current=page]:decoration-current"
       aria-current={pathname === href ? "page" : undefined}
     >
       {children}

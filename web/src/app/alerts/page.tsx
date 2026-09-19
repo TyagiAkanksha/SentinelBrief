@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { AlertQueue } from "@/components/alerts/AlertQueue";
 import { AlertStreamRefresher } from "@/components/alerts/AlertStreamRefresher";
 import { FilterBar } from "@/components/alerts/FilterBar";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { pageHref, parseListQuery, toQueryString } from "@/lib/alerts-query";
 import type { SearchParams } from "@/lib/alerts-query";
 import { getJson } from "@/lib/api/server";
@@ -28,10 +29,11 @@ export default async function AlertsPage({
 
   return (
     <section>
-      <h1 className="text-lg font-semibold">Alert queue</h1>
-      <AlertStreamRefresher />
-      <FilterBar query={query} />
-      <AlertQueue page={page} error={error} now={now} hrefForPage={(p) => pageHref(query, p)} />
+      <PageHeader title="Alert queue" actions={<AlertStreamRefresher />} />
+      <div className="space-y-4">
+        <FilterBar query={query} />
+        <AlertQueue page={page} error={error} now={now} hrefForPage={(p) => pageHref(query, p)} />
+      </div>
     </section>
   );
 }

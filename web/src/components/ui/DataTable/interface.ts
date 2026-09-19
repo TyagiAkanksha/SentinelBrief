@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 
-export type Column = { key: string; header: string; className?: string };
+export type Column = {
+  key: string;
+  header: string;
+  className?: string;
+  align?: "left" | "right";
+};
 
 export type DataTableProps<Row> = {
   caption: string;
