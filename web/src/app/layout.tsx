@@ -4,9 +4,7 @@ import NextLink from "next/link";
 import { Quicksand } from "next/font/google";
 import { ShieldCheck } from "lucide-react";
 
-// Aliased to `Link` because that is what these nav entries are; `NavLink` adds the dashboard-wide
-// link treatment and `aria-current="page"` on top of `next/link` (review t03 M-links-wide).
-import { NavLink as Link } from "@/components/ui/NavLink";
+import { PrimaryNav } from "@/components/ui/PrimaryNav";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PRD_URL, REPO_URL } from "@/lib/site";
@@ -41,19 +39,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   SentinelBrief
                 </NextLink>
                 <div className="flex items-center gap-5 sm:gap-6">
-                  <nav aria-label="Primary">
-                    <ul className="flex items-center gap-4 text-sm sm:gap-6">
-                      <li>
-                        <Link href="/alerts">Alerts</Link>
-                      </li>
-                      <li>
-                        <Link href="/stats">Stats</Link>
-                      </li>
-                      <li>
-                        <Link href="/about">About</Link>
-                      </li>
-                    </ul>
-                  </nav>
+                  <PrimaryNav />
                   <ThemeToggle />
                 </div>
               </div>

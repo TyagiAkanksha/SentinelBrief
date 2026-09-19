@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
@@ -88,18 +86,6 @@ describe("AboutPage network access", () => {
   });
 });
 
-describe("primary nav", () => {
-  it("links to About from the primary nav", () => {
-    // Rendering the full `<html>` `RootLayout` document inside jsdom produces nesting warnings
-    // (dispatch note, precedent: web/src/app/stats/page.test.tsx); asserting on the source text
-    // is the accepted alternative here, resolved with `path.join(process.cwd(), ...)` rather than
-    // `new URL(..., import.meta.url)` per ruling R20 (jsdom's global `URL` does not resolve a
-    // relative path against a `file:` base).
-    const layoutPath = path.join(process.cwd(), "src", "app", "layout.tsx");
-    const source = readFileSync(layoutPath, "utf-8");
-
-    expect(source).toMatch(/<Link\s+href="\/about">\s*About\s*<\/Link>/);
-    expect(source.indexOf('href="/alerts"')).toBeLessThan(source.indexOf('href="/stats"'));
-    expect(source.indexOf('href="/stats"')).toBeLessThan(source.indexOf('href="/about"'));
-  });
-});
+// The former "primary nav" source-text check here (t02 M4 / M8a review Q3) is retired: the
+// primary nav is now the render-tested `PrimaryNav` component
+// (`web/src/components/ui/PrimaryNav/PrimaryNav.test.tsx`), used by `layout.tsx`.

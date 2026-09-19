@@ -44,9 +44,12 @@ read-only app with no login anywhere (PRD §9).
 
 - **Folder-per-component:** `<Name>/{Component.tsx, interface.ts, index.ts[, Component.test.tsx]}`;
   the barrel re-exports the component and its props type.
-- **Components are dumb.** They render props and raise events. Data fetching, SSE handling,
-  polling fallbacks and formatting decisions live in hooks (`src/hooks/`) or server components,
-  never inside a presentational component.
+- **Components are dumb.** They render props and raise events. Data fetching, SSE handling and
+  polling fallbacks live in hooks (`src/hooks/`) or server components, never inside a
+  presentational component. Formatting *logic* is centralized in `src/lib/format.ts`'s pure
+  helpers (`formatUsd`, `formatCount`, `formatUtc`, …); a presentational component (a table cell,
+  a stat card) calls one of these directly on the value it renders — the component never
+  reimplements rounding, locale or unit logic itself, it only calls the shared helper.
 - Pages under `src/app/` compose components; they do not define UI inline beyond layout.
 - Small files, one purpose. A component over ~150 lines is a split-smell.
 
