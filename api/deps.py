@@ -10,6 +10,7 @@ alias over `uuid.UUID`, never a `worker` type — the route layer only ever sees
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -203,14 +204,62 @@ async def require_signature(request: Request, settings: Settings = Depends(get_s
         raise SignatureError("missing or invalid signature")
 
 
+# Genuinely internal-only ranges (RFC 1918 private-use, loopback, link-local, IPv6 unique-local)
+# — deliberately NOT `ipaddress.IPv4Address.is_private`/`.is_reserved`: on this project's pinned
+# Python (3.12), `is_private` also covers the RFC 5737 documentation/TEST-NET ranges
+# (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), which is exactly the range
+# `tests/test_rate_limit.py` (pinned) uses to stand in for a real public client — using the broad
+# flag would wrongly exempt those fixtures too. A real compose-internal peer or `127.0.0.1` is
+# never a TEST-NET address, so this explicit, narrower list is both correct for the SSR-container
+# exemption (I2/R-M8b-7) and keeps the pinned public-IP tests genuinely rate-limited.
+_NON_PUBLIC_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def _is_non_public_client_ip(host: str) -> bool:
+    """`True` for a loopback/RFC-1918-private/link-local (or IPv6-equivalent) peer address.
+
+    A non-IP `host` (should never happen for a real ASGI peer, but is not guaranteed by the
+    type system) is treated as exempt too — allow, never limit, on anything this function cannot
+    positively classify as a real public IP.
+
+    Args:
+        host: `request.client.host` — the ASGI peer address.
+
+    Returns:
+        `True` when `host` is not a real public client IP.
+    """
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return any(ip in network for network in _NON_PUBLIC_NETWORKS)
+
+
 async def rate_limit(request: Request, settings: Settings = Depends(get_settings)) -> None:
     """Enforce the per-client-IP public GET rate limit (PRD §8, §10.10; m8b task-04, ruling
-    R-M8b-1).
+    R-M8b-1; the private-IP exemption is m8b review I2, ruling R-M8b-7).
 
     A Redis fixed-window counter keyed `f"rl:{client_ip}:{minute_bucket}"`, incremented and given
     a ~60 s expiry in one pipelined round trip. `client_ip` is the ASGI peer address
     (`request.client.host`) ONLY — `X-Forwarded-For` is never read, so a forged header can never
     mint a second bucket (Caddy overwrites it and the api is never host-published).
+
+    A peer whose address is loopback/RFC-1918-private/link-local (`_is_non_public_client_ip`) is
+    exempt — never counted, never limited. In production the server-rendered dashboard calls the
+    api from the web container over the compose-internal network with no `X-Forwarded-For`, so
+    without this exemption every visitor's page-load requests collapsed into the web container's
+    one bucket, creating a site-wide availability cliff (review finding I2). Only a real PUBLIC
+    peer address is ever counted; an internal peer can't be spoofed from outside the compose
+    network.
 
     Deliberately reads `request.app.state.redis` directly rather than depending on
     `api.deps.get_redis` (ruling R-M8b-1): `get_redis` raises `StreamUnavailableError` -> 503
@@ -235,6 +284,8 @@ async def rate_limit(request: Request, settings: Settings = Depends(get_settings
         return
     client = request.client
     if client is None:
+        return
+    if _is_non_public_client_ip(client.host):
         return
     now = time.time()
     minute_bucket = int(now) // 60
