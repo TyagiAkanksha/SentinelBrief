@@ -120,3 +120,5 @@ approved, browser pass done; the PR into `main` waits for `m6` to merge, then th
 (regenerate both baselines, add `--cov=sentinelbrief_shipper`, bump both prod image tags at deploy).
 M8b planned — briefs 04–07 pending at the M7 gate; M8b inherits the deferred Minors N1–N4, t01 M9,
 t02 M4 and the FRONTEND-CONVENTIONS §3 wording from the M8a final review.
+
+M8b **started 2026-09-19** on `feat/m8b-polish` (cut from `main` at tag `m7`, 750df6d): briefs 04–07 placed; ledger `.superpowers/sdd/m8-polish/progress.md` (shared with M8a). M8b inherits the deferred Minors N1–N4, t01 M9, t02 M4 and the FRONTEND-CONVENTIONS §3 wording from the M8a final review, plus the M7 whole-branch deferred set (`.superpowers/sdd/m7-eval-hardening/whole-branch-deferred.md`). task-05 re-enables the nightly judge (reverting M7's `--no-judge`) once the budget breaker lands.
