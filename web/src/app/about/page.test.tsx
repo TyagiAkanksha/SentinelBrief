@@ -66,6 +66,14 @@ describe("AboutPage", () => {
 
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
+
+  it("renders the sidebar tech-stack panel alongside the prose", () => {
+    render(<AboutPage />);
+
+    expect(screen.getByText("At a glance — tech stack")).toBeInTheDocument();
+    expect(screen.getByText("Caddy")).toBeInTheDocument();
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+  });
 });
 
 describe("AboutPage network access", () => {

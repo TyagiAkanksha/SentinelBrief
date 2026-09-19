@@ -23,6 +23,13 @@ export function DataTable<Row>({
       <div className={TABLE_SCROLL}>
         <table className={TABLE_ELEMENT}>
           <caption className="sr-only">{caption}</caption>
+          {/* Widths from each column.className size the whole column (header + body cells); align
+              stays on the <th> below. Without this, className landed on the <th> only. */}
+          <colgroup>
+            {columns.map((column) => (
+              <col key={column.key} className={column.className} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
               {columns.map((column) => {

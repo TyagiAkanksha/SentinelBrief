@@ -96,6 +96,12 @@ describe("StatsPage", () => {
     expect(screen.getByText("Last alert")).toBeInTheDocument();
     expect(screen.getByText(formatUtc("2026-09-06T00:57:00.000Z"))).toBeInTheDocument();
 
+    // Eighth card (UI polish 2): the daily token-budget breaker. The fixture leaves the budget at
+    // 0, so it reads "Unlimited".
+    expect(screen.getByText("Daily budget")).toBeInTheDocument();
+    expect(screen.getByText("Unlimited")).toBeInTheDocument();
+    expect(screen.getByText("No daily cap configured")).toBeInTheDocument();
+
     expect(screen.getByRole("table", { name: "Alerts per day" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Cost per day" })).toBeInTheDocument();
 
@@ -110,6 +116,19 @@ describe("StatsPage", () => {
     const categoryTable = screen.getByRole("table", { name: "Category distribution" });
     expect(within(categoryTable).getByText("Brute force")).toBeInTheDocument();
     expect(within(categoryTable).queryByText("Severity 1")).not.toBeInTheDocument();
+  });
+
+  it("shows tokens against a configured budget and the breaker hint when exhausted", async () => {
+    mockGetJson.mockResolvedValueOnce(
+      makeStats({ tokens_today: 1500, daily_token_budget: 2000, budget_exhausted: true }),
+    );
+
+    const element = await StatsPage();
+    render(element);
+
+    expect(screen.getByText("Daily budget")).toBeInTheDocument();
+    expect(screen.getByText("1,500 / 2,000")).toBeInTheDocument();
+    expect(screen.getByText("Exhausted — triage paused")).toBeInTheDocument();
   });
 
   it("renders the empty state when the database has no alerts", async () => {

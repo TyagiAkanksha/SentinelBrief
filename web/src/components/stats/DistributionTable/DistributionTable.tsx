@@ -50,11 +50,16 @@ export function DistributionTable({
                   <td className={CELL_NUMERIC}>{formatCount(row.count)}</td>
                   <td>
                     {formatPercent(row.share)}
-                    <div
-                      aria-hidden="true"
-                      className="mt-1 h-1 rounded-full bg-accent"
-                      style={{ width: `${row.bar}%` }}
-                    />
+                    {/* Track + fill. The percent text above carries the meaning; the fill is the
+                        decorative bar, so aria-hidden lives on it (the empty track announces
+                        nothing). */}
+                    <div className="mt-1 h-2 w-full rounded-full bg-surface-2">
+                      <div
+                        aria-hidden="true"
+                        className="h-2 rounded-full bg-accent"
+                        style={{ width: `${row.bar}%` }}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))
