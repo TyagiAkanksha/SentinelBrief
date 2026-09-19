@@ -95,6 +95,7 @@ Tasks 1–3 are M8a (briefs written 2026-09-12); tasks 4–7 are M8b (briefs at 
 | 5 | Daily token-budget circuit breaker in the worker + `budget_exhausted` in stats + dashboard banner | `m8-polish/task-05-token-budget-breaker.md` | task-02 (M8b) |
 | 6 | README final (architecture, quickstart, results link, deployment pointer); clean-clone <10 min proof; `.env.example` final pass | `m8-polish/task-06-readme-clean-clone.md` | tasks 1–5 (M8b) |
 | 7 | Whole-repo review (strongest model) with the full Minors ledger; remediation plan if opted in | `m8-polish/task-07-whole-repo-review.md` | task-06 (M8b) |
+| 8 | UI polish: portfolio token system, app shell + light/dark toggle, PageHeader, DataTable restyle | `m8-polish/task-08-ui-polish.md` | task-05 (M8b) | 
 
 Order: 1 → 2 → 3 (M8a), then 4 → 5 → 6 → 7 (M8b). Rationale: the M8a three run sequentially
 because tasks 2 and 3 both edit the primary nav in `web/src/app/layout.tsx` and both regenerate
