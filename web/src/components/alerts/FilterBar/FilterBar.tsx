@@ -70,7 +70,7 @@ export function FilterBar({ query }: FilterBarProps) {
         />
       </label>
       <input type="hidden" name="page_size" value={query.page_size} />
-      <div className="flex items-end gap-2">
+      <div className="flex items-end gap-2 sm:ml-auto">
         <Button type="submit" variant="primary">
           Apply
         </Button>
