@@ -103,7 +103,10 @@ async def _handle_sentinelbrief_error(request: Request, exc: Exception) -> JSONR
     message = str(exc) if status_code < 500 else GENERIC_MESSAGE
     if status_code >= 500:
         logger.error("sentinelbrief error code=%s status=%s message=%s", exc.code, status_code, exc)
-    return _envelope(status_code, exc.code, message)
+    response = _envelope(status_code, exc.code, message)
+    if isinstance(exc, RateLimitedError) and exc.retry_after is not None:
+        response.headers["Retry-After"] = str(exc.retry_after)
+    return response
 
 
 async def _handle_validation_error(request: Request, exc: Exception) -> JSONResponse:

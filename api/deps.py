@@ -9,12 +9,15 @@ alias over `uuid.UUID`, never a `worker` type — the route layer only ever sees
 
 from __future__ import annotations
 
+import hmac
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cache import TTLCache
@@ -22,6 +25,7 @@ from core.config import Settings
 from core.errors import (
     LengthRequiredError,
     PayloadTooLargeError,
+    RateLimitedError,
     SignatureError,
     StreamUnavailableError,
 )
@@ -179,3 +183,73 @@ async def require_signature(request: Request, settings: Settings = Depends(get_s
     header = request.headers.get(SIGNATURE_HEADER)
     if not verify_signature(settings.ingest_hmac_secret.get_secret_value(), body, header):
         raise SignatureError("missing or invalid signature")
+
+
+async def rate_limit(request: Request, settings: Settings = Depends(get_settings)) -> None:
+    """Enforce the per-client-IP public GET rate limit (PRD §8, §10.10; m8b task-04, ruling
+    R-M8b-1).
+
+    A Redis fixed-window counter keyed `f"rl:{client_ip}:{minute_bucket}"`, incremented and given
+    a ~60 s expiry in one pipelined round trip. `client_ip` is the ASGI peer address
+    (`request.client.host`) ONLY — `X-Forwarded-For` is never read, so a forged header can never
+    mint a second bucket (Caddy overwrites it and the api is never host-published).
+
+    Deliberately reads `request.app.state.redis` directly rather than depending on
+    `api.deps.get_redis` (ruling R-M8b-1): `get_redis` raises `StreamUnavailableError` -> 503
+    whenever Redis is unwired, which would 503 every DB-less/no-Redis test of the public read
+    router (`tests/test_read_routes.py`, pinned, never wires `redis=`). This function instead
+    treats "unwired" exactly like "unreachable": both fail OPEN (allow the request, no limiting),
+    never 500/503 a public GET.
+
+    Args:
+        request: The current request; used for `app.state.redis` and the peer address.
+        settings: The app's `Settings`, for `public_rate_limit_per_min`.
+
+    Raises:
+        RateLimitedError: When the bucket's count exceeds `public_rate_limit_per_min`, carrying
+            `retry_after` (seconds to the next minute boundary) — `api/errors.py` turns that into
+            a `Retry-After` response header.
+    """
+    if settings.public_rate_limit_per_min <= 0:
+        return
+    redis: Redis | None = request.app.state.redis
+    if redis is None:
+        return
+    client = request.client
+    if client is None:
+        return
+    now = time.time()
+    minute_bucket = int(now) // 60
+    key = f"rl:{client.host}:{minute_bucket}"
+    try:
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, 60)
+        count, _ = await pipe.execute()
+    except (RedisError, OSError):
+        return
+    if count > settings.public_rate_limit_per_min:
+        retry_after = 60 - int(now) % 60
+        raise RateLimitedError("public rate limit exceeded", retry_after=retry_after)
+
+
+async def require_admin_token(request: Request, settings: Settings = Depends(get_settings)) -> None:
+    """Raise `SignatureError` unless `Authorization: Bearer <ADMIN_TOKEN>` matches exactly (PRD
+    §10; m8b task-04).
+
+    An empty `settings.admin_token` (the default, unconfigured) always 401s, even against an
+    empty bearer — never fail-open just because both sides compare equal-empty. The comparison
+    itself is `hmac.compare_digest`, a constant-time compare over the two token strings.
+
+    Args:
+        request: The current request; only its `authorization` header is read.
+        settings: The app's `Settings`, for `admin_token`.
+
+    Raises:
+        SignatureError: When the header is missing, malformed, or does not carry the exact
+            configured bearer token (mapped to a 401 `unauthorized` envelope).
+    """
+    configured = settings.admin_token.get_secret_value()
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if not configured or scheme != "Bearer" or not hmac.compare_digest(token, configured):
+        raise SignatureError("missing or invalid admin token")

@@ -475,6 +475,36 @@
         "title": "PaginatedResponse[AlertSummary]",
         "type": "object"
       },
+      "RetriageResponse": {
+        "description": "The `POST /api/v1/admin/retriage/{alert_id}` response body: the alert's id, its new\nstatus (always `\"pending\"`), and `retriaged=True`.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "retriaged": {
+            "title": "Retriaged",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "triaged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "retriaged"
+        ],
+        "title": "RetriageResponse",
+        "type": "object"
+      },
       "SessionAlert": {
         "additionalProperties": true,
         "description": "The `raw` alert payload: one Cowrie session's events, ordered, plus the envelope fields.",
@@ -838,6 +868,107 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/retriage/{alert_id}": {
+      "post": {
+        "description": "Flip a `triaged`/`failed` alert back to `pending` and re-enqueue it for triage.",
+        "operationId": "retriage_alert",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alert_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Alert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetriageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid admin bearer token."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No alert with this id."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The alert is not triaged/failed, or its row is locked by another request past RETRIAGE_LOCK_TIMEOUT_MS."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid alert_id."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The global daily retriage cap (RETRIAGE_PER_DAY) is reached."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The retriage counter/queue is unavailable."
+          }
+        },
+        "summary": "Retriage Alert"
+      }
+    },
     "/api/v1/alerts": {
       "get": {
         "description": "Page the alert list, latest verdict per alert, cached for `ALERTS_LIST_CACHE_TTL_S`.",

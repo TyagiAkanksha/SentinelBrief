@@ -149,6 +149,17 @@ class RateLimitedError(SentinelBriefError):
 
     code = "rate_limited"
 
+    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+        """Record how many seconds until the caller may retry, when known.
+
+        Args:
+            message: Human-readable description of what went wrong.
+            retry_after: Seconds until the caller may retry, or `None` when no specific delay is
+                known (`api/errors.py` then omits the `Retry-After` response header).
+        """
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 class QueueUnavailableError(SentinelBriefError):
     """Raised when the ARQ triage queue (Redis) cannot be reached (m5 task-01)."""
