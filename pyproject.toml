@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2",
     "pydantic-settings",
-    "openai>=2",
+    "openai>=3.14.1",
     "httpx",
     "sqlalchemy[asyncio]>=2",
     "psycopg[binary]>=3",
