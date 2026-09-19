@@ -31,9 +31,15 @@ disables the cost condition by design). The baseline itself comes from the first
 golden set v2 (`evals.run --write-baseline`, m7 task-05) — it is recorded once, from a real run,
 and never invented ahead of that.
 
+## How a row gets here
+
+Rows are written only by the harness, never by hand: `evals.run --publish` (or `--from-artifact`) calls `evals.publish.append_result_row`, which refuses to write under a drifted header and only ever appends below the last row. To reproduce a row, run `evals.run` over `evals/golden/v2.jsonl` at that git sha with that prompt version.
+
 ## Runs
 
 | date | git_sha | prompt_version | models | n | failed | sev_exact | sev_±1 | category | esc_prec | esc_rec | critical_rec | escalation_rate | cost_mean | cost_p95 | cost_total | lat_p50 | lat_p95 | sev4_rec | sev5_rec | sev_macro_f1 | judge_mean | judge_pct_le2 | injection_pass_rate | judge_cost_total_usd |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-09-19 | a175598 | triage-v4 | gpt-4o-mini→gpt-5.4 | 252 | 0 | 1.00 | 1.00 | 0.08 | 1.00 | 1.00 | 1.00 | 0.15 | 0.001209 | 0.006310 | 0.304688 | 1115 | 3839 | 1.00 | 0.00 | 1.00 | 3.68 | 0.41 | 1.00 | 1.174403 |
+| 2026-09-19 | a175598 | triage-v3 | gpt-4o-mini→gpt-5.4 | 252 | 0 | 1.00 | 1.00 | 0.08 | 1.00 | 1.00 | 1.00 | 0.15 | 0.001388 | 0.006115 | 0.349686 | 2198 | 4232 | 1.00 | 0.00 | 1.00 | 4.25 | 0.25 | 1.00 | 1.255554 |
+| 2026-09-19 | a175598 | triage-v2 | gpt-4o-mini→gpt-5.4 | 252 | 0 | 1.00 | 1.00 | 0.39 | 1.00 | 1.00 | 1.00 | 0.31 | 0.002144 | 0.006960 | 0.540175 | 1227 | 4400 | 1.00 | 0.00 | 1.00 | 4.89 | 0.04 | 1.00 | 1.091685 |
 
-_No published runs yet — the first appears at M7._
