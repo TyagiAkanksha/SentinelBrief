@@ -40,7 +40,7 @@ jobs:
           PROMPT_VERSION_INPUT: ${{ inputs.prompt_version }}
         run: |
           TRIAGE_PROMPT_VERSION="${PROMPT_VERSION_INPUT:-$TRIAGE_PROMPT_VERSION}"
-          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results --no-judge
+          uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results --no-judge --tool-fixtures evals/golden/fixtures
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -20,8 +20,10 @@ A nightly job replays the golden-set v2 harness and fails the build on a PRD §7
    structured **verdict** — severity 1–5, category, confidence, reasoning, recommended action.
    Low-confidence or high-severity verdicts are re-run on a stronger model.
 3. A public, read-only dashboard shows the queue and, per alert, the full tool-call trace.
-4. An evaluation harness scores every prompt/model change against a hand-labeled golden set and
+4. An evaluation harness scores every prompt/model change against a labeled golden set and
    publishes the numbers — including the ones that got worse — to [`docs/results.md`](docs/results.md).
+   The current v2 labels are model-generated (disclosed there as a model-tier agreement metric, not
+   human ground truth).
 
 The human always decides. The system never blocks, quarantines, or responds automatically.
 
@@ -180,8 +182,10 @@ uv run python -m evals.run --golden evals/golden/v1.jsonl --prompt triage-v1 --p
 
 Each `--prompt` value runs the full pipeline over the golden set and produces one comparable row
 in the printed table; the full per-case results land as JSON under `evals/results/` (gitignored).
-Golden set v1 is synthetic and its numbers are never published; v2 is real, hand-labeled honeypot
-traffic and is the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*.
+Golden set v1 is synthetic and its numbers are never published; v2 is real honeypot traffic and is
+the only source of the numbers in [`docs/results.md`](docs/results.md) *(from M7)*. The current v2
+rows are AI-labeled (`labeled_by="ai"`), disclosed there as a model-tier agreement metric, not human
+ground truth; human labeling remains the intended upgrade.
 `--strong-model` wires the same two-tier routing (PRD §6.4) into the run, defaulting to
 `STRONG_MODEL`; the printed table's `escalation_rate` column reports the fraction of cases each
 run escalated to the strong model.

@@ -96,9 +96,9 @@ empty, and never raises a traceback:
     `--gate` given and `--baseline` is missing/invalid (before any case
         runs — the gate never invents one, PRD §7.4)                          config_error
     golden file missing/unreadable/invalid row (`load_golden` raises)         invalid_golden
-    a v2 golden file (`is_v2_golden`) carrying a non-human-labeled row
-        (PRD §13; ruling R13 — checked separately, AFTER a clean load, so a
-        malformed row on a v2 path still reports invalid_golden, not this)     config_error
+    a v2 golden file (`is_v2_golden`) carrying an UNLABELED row (labeled_by
+        is None; a "human" or "ai" label is accepted — ruling R54; checked
+        AFTER a clean load, so a malformed row still reports invalid_golden)    config_error
     `--write-baseline` given and the golden file is not v2-named
         (a baseline may only be recorded from a real v2 run, PRD §7.4/§13)     config_error
     `--write-baseline` given and `--baseline` already exists without
@@ -197,8 +197,8 @@ DEFAULT_TOOL_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixture
 def is_v2_golden(path: Path) -> bool:
     """Whether `path` is a v2 golden file (m7 task-01 Ruling R1: basename starts with `v2`).
 
-    A v2 golden path is loaded with `require_human=True` (PRD §13): a machine-authored row must
-    never be scored as ground truth. Shared with task-02's fixture-recording tooling.
+    A v2 golden path must carry a deliberate provenance label per row — `"human"` or `"ai"`
+    (ruling R54); an UNLABELED (None) row is rejected. Shared with task-02's fixture tooling.
 
     Args:
         path: The golden file path to classify.

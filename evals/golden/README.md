@@ -67,9 +67,11 @@ confound and should not be read as pure model signal.
 ## v2 (M7)
 
 `v2.jsonl` holds >=200 real alerts sampled from live honeypot traffic, stratified across
-categories, **hand-labeled by the author** using the §6.6 rubric (PRD §7.1, §13). It does not
-exist in this checkout until the author labels it — this repo ships the tooling, never the
-labels:
+categories, labeled using the §6.6 rubric (PRD §7.1, §13). Two honest provenances exist per row:
+`labeled_by="human"` (a person, via `evals.label_tool`) and `labeled_by="ai"` (a strong model, via
+`evals.ai_label`). **The committed v2.jsonl is AI-labeled** (owner decision 2026-09-18), disclosed
+in `docs/results.md` as a model-tier agreement metric, not human ground truth; the tooling for
+both paths is:
 
 - `python -m evals.sample` (`evals/sample.py`) reads the live database, stratifies by the cheap
   verdict's category and by sensor/day, oversamples injection-candidate sessions, and writes a
