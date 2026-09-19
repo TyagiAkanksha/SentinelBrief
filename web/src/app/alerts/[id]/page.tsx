@@ -38,8 +38,11 @@ export default async function AlertDetailPage({
   }
 
   return (
-    <article>
-      <Link href="/alerts" className="text-accent underline">
+    <article className="space-y-6">
+      <Link
+        href="/alerts"
+        className="inline-flex items-center gap-1 text-sm text-accent hover:text-accent-strong"
+      >
         ← Alert queue
       </Link>
       <AlertHeader alert={alert} now={new Date()} />

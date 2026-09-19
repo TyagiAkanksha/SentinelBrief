@@ -87,7 +87,7 @@ export default async function StatsPage(): Promise<JSX.Element> {
         <Stat label="Daily budget" value={budgetValue} hint={budgetHint} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <DistributionTable
           caption="Alerts per day"
           labelHeader="Day"
