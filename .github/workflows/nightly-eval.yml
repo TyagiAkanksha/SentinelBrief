@@ -47,7 +47,7 @@ jobs:
           TRIAGE_PROMPT_VERSION="${PROMPT_VERSION_INPUT:-$TRIAGE_PROMPT_VERSION}"
           uv run python -m evals.run --golden evals/golden/v2.jsonl --prompt "$TRIAGE_PROMPT_VERSION" --strong-model "$STRONG_MODEL" --gate --output-dir evals/results --tool-fixtures evals/golden/fixtures
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: eval-results
