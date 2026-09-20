@@ -11,7 +11,7 @@ dependencies = [
     "psycopg[binary]>=3",
     "alembic",
     "fastapi>=0.121",
-    "uvicorn>=0.30",
+    "uvicorn>=0.53.0",
     "pyyaml>=6",
     "maxminddb>=3",
     "arq>=0.26,<1",
