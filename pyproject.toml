@@ -8,7 +8,7 @@ dependencies = [
     "openai>=2",
     "httpx",
     "sqlalchemy[asyncio]>=2",
-    "psycopg[binary]>=3",
+    "psycopg[binary]>=3.3.5",
     "alembic",
     "fastapi>=0.121",
     "uvicorn>=0.30",
