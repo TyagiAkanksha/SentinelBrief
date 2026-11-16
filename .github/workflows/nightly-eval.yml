@@ -19,10 +19,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      # Mirrors infra/deploy/prod/docker-compose.yml's x-shared-env (tests/test_nightly_workflow_pins.py).
+      # Anthropic provider since 2026-11-16: secrets.LLM_API_KEY holds the Anthropic key.
+      LLM_PROVIDER: anthropic
+      LLM_EFFORT: low
+      LLM_MAX_TOKENS: "4096"
       LLM_BASE_URL: https://api.openai.com/v1
-      CHEAP_MODEL: gpt-4o-mini
-      STRONG_MODEL: gpt-5.4
-      MODEL_PRICES_JSON: '{"gpt-4o-mini":{"input_per_mtok":"0.15","output_per_mtok":"0.60"},"gpt-5.4":{"input_per_mtok":"2.50","output_per_mtok":"15.00"}}'
+      CHEAP_MODEL: claude-haiku-5-5
+      STRONG_MODEL: claude-sonnet-5-5
+      MODEL_PRICES_JSON: '{"claude-haiku-5-5":{"input_per_mtok":"0.10","output_per_mtok":"0.50"},"claude-sonnet-5-5":{"input_per_mtok":"2.00","output_per_mtok":"10.00"},"gpt-4o-mini":{"input_per_mtok":"0.15","output_per_mtok":"0.60"},"gpt-5.4":{"input_per_mtok":"2.50","output_per_mtok":"15.00"}}'
       TRIAGE_PROMPT_VERSION: triage-v4
     steps:
       - uses: actions/checkout@v7
