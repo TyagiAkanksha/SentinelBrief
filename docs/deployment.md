@@ -112,8 +112,8 @@ password on the compose network — even though `Settings` types it `SecretStr`)
 `request_body { max_size 2MB }` (`infra/deploy/prod/Caddyfile`) parses to the same 2,000,000 bytes
 as `INGEST_MAX_BODY_BYTES` and is enforced first, on wire bytes, before the api's own check ever
 runs — "outer bound" means enforced first, not larger; never raise the app cap above it.
-LLM provider switch (optional; production stays on the OpenAI-compatible default until the owner
-flips it): set `LLM_PROVIDER=anthropic`; `LLM_API_KEY` (the SSM `SecureString`) then holds the
+LLM provider switch (production runs `LLM_PROVIDER=anthropic` since 2026-11-16 — deploy `ad00215`,
+previous OpenAI key kept in SSM as `/sentinelbrief/LLM_API_KEY_OPENAI_ROLLBACK`): set `LLM_PROVIDER=anthropic`; `LLM_API_KEY` (the SSM `SecureString`) then holds the
 Anthropic key; pin `CHEAP_MODEL=claude-haiku-5-5` and `STRONG_MODEL=claude-sonnet-5-5` and a
 `MODEL_PRICES_JSON` pricing both (Haiku 5.5 0.10 / 0.50, Sonnet 5.5 2.00 / 10.00 per Mtok; Haiku
 prompts over 100K tokens are $0.50 / $2.50) in the compose file; optional `LLM_EFFORT` and

@@ -102,8 +102,8 @@ Measure the refusal rate on the golden set before any production flip: the Anthr
 classifiers can refuse security-payload content, and a refusal fails the alert closed.
 Optional: `LLM_EFFORT` (`low` default) and `LLM_MAX_TOKENS` (`4096` default). `LLM_BASE_URL` is
 ignored. A model id that disagrees with the provider (e.g. `gpt-*` with `anthropic`) fails at boot.
-Roll back by restoring `LLM_PROVIDER=openai` and the previous key, models and prices. Production is
-unchanged until the owner flips it. **Caution:** eval and judge scores produced with a different
+Roll back by restoring `LLM_PROVIDER=openai` and the previous key, models and prices. Production
+runs the Anthropic provider since 2026-11-16 (owner decision; deploy `ad00215`). **Caution:** eval and judge scores produced with a different
 model are not comparable to the recorded baselines — re-baseline, or keep the judge model fixed.
 
 `Settings` (`core/config.py`) never loads `.env` itself — the compose `api` and `worker` services
