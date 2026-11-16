@@ -2,9 +2,10 @@
 
 This module is the provider-neutral seam between `worker/` and any LLM backend: a `Protocol`,
 plain dataclasses, and two pure helpers (`parse_structured`, `compute_cost_usd`). It carries **no
-SDK import** — `worker/llm_client.py` is the only module that imports `openai` (import-linter
-contract 3). `tests/fakes.py::FakeLLMClient` replays canned replies through `parse_structured` so
-a malformed reply fails identically in tests and production (CONVENTIONS.md §10).
+SDK import** — `worker/llm_client.py` is the only module that imports `openai` and
+`worker/anthropic_llm_client.py` the only one that imports `anthropic` (import-linter).
+`tests/fakes.py::FakeLLMClient` replays canned replies through `parse_structured` so a
+malformed reply fails identically in tests and production (CONVENTIONS.md §10).
 
 m4 task-01 adds the tool-calling seam (PRD §6.3): `LLMClient.complete_with_tools` returns either a
 `ToolCallTurn` (the model asked for tools) or the usual `LLMResult[T]` (the model answered) — one
@@ -136,7 +137,8 @@ def tool_calls_message(calls: Sequence[ToolCallRequest]) -> ChatMessage:
 class LLMClient(Protocol):
     """Provider-neutral seam every LLM backend (real or fake) implements.
 
-    `worker.llm_client.OpenAICompatibleLLMClient` and `tests.fakes.FakeLLMClient` are the two
+    `worker.llm_client.OpenAICompatibleLLMClient`,
+    `worker.anthropic_llm_client.AnthropicLLMClient` and `tests.fakes.FakeLLMClient` are the
     implementations; callers (e.g. `worker.triage.TriagePipeline`) only ever depend on this
     Protocol, never on a concrete SDK type (PRD §10.1).
     """

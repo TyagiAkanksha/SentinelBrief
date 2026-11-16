@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     llm_api_key: SecretStr = SecretStr("")
+    llm_provider: Literal["openai", "anthropic"] = "openai"
+    """Which SDK serves LLM calls: the OpenAI-compatible client or the official Anthropic SDK.
+    `LLM_API_KEY` holds the key for whichever provider is selected."""
+    llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    """Anthropic adaptive-thinking effort (`output_config.effort`); openai ignores it."""
+    llm_max_tokens: Annotated[int, Field(gt=0)] = 4096
+    """Anthropic `max_tokens` per call; thinking tokens count against it."""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_json_mode: Literal["json_object", "json_schema"] = "json_object"
     llm_timeout_s: Annotated[float, Field(gt=0)] = 60.0

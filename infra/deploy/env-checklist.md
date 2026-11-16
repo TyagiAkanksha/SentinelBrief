@@ -27,6 +27,9 @@ unless the production compose file pins something else).
 | `LLM_BASE_URL` | N | compose (pinned) | `https://api.openai.com/v1` |
 | `LLM_JSON_MODE` | N | default | `json_object` (`.env.example` default). |
 | `LLM_TIMEOUT_S` | N | default | `60` seconds — per-request LLM HTTP timeout (`.env.example` default). |
+| `LLM_PROVIDER` | N | default | `openai` (`.env.example` default); `anthropic` selects the official Anthropic SDK (`LLM_API_KEY` then holds the Anthropic key; set `CHEAP_MODEL=claude-haiku-5-5`, `STRONG_MODEL=claude-sonnet-5-5` and a `MODEL_PRICES_JSON` pricing both, all four settings in one deploy). |
+| `LLM_EFFORT` | N | default | `low` — Anthropic adaptive-thinking effort; ignored by the openai provider. |
+| `LLM_MAX_TOKENS` | N | default | `4096` — Anthropic `max_tokens` per call (thinking tokens count against it); ignored by the openai provider. |
 | `CHEAP_MODEL` | N | compose (pinned) | `gpt-4o-mini` |
 | `STRONG_MODEL` | N | compose (pinned) | `gpt-5.4` |
 | `ESCALATE_SEVERITY_GTE` | N | default | `4` (`.env.example` default, PRD §6.4). |

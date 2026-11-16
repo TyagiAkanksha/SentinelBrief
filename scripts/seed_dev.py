@@ -6,7 +6,7 @@ twenty `evals/golden/v1.jsonl` sessions through the **production** write path
 exactly like ingested ones. By default each alert is triaged by a fresh
 `tests.fakes.FakeLLMClient` replaying a canned verdict built (through `Verdict`, so it always
 validates) from the fixture's intended band or the golden case's label; `--live` opts into the
-real `OpenAICompatibleLLMClient` and refuses to run without `LLM_API_KEY`. A second run creates 0
+real configured `LLMClient` and refuses to run without `LLM_API_KEY`. A second run creates 0
 new rows (PRD §6.1 dedup).
 
 m4 task-06: every alert also runs through the five-tool registry (`worker.tools.wiring
@@ -50,7 +50,7 @@ from core.schemas.alert import SessionAlert
 from core.schemas.verdict import Verdict, VerdictCategory
 from core.services.alerts import insert_alert
 from evals.golden import load_golden
-from worker.llm_client import OpenAICompatibleLLMClient
+from worker.llm_factory import build_llm_client
 from worker.tools import LiveToolRecorder, ReplayToolRecorder, ToolRecorder
 from worker.tools.wiring import build_registry
 from worker.triage import TriagePipeline
@@ -396,7 +396,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
         return fail("config_error", "STRONG_MODEL must differ from CHEAP_MODEL")
     if client is None and args.live:
         try:
-            client = OpenAICompatibleLLMClient.from_settings(settings)
+            client = build_llm_client(settings)
         except ConfigError as e:
             return fail(e.code, str(e))
 

@@ -50,6 +50,8 @@ api/
 worker/
   jobs.py          # triage_alert_job: the ARQ job function; retry-vs-fail delegated to retry.py (M5)
   llm_client.py    # OpenAICompatibleLLMClient — the ONLY module that imports the openai SDK
+  anthropic_llm_client.py  # AnthropicLLMClient — the ONLY module that imports the anthropic SDK
+  llm_factory.py   # build_llm_client — the one place that picks the LLMClient implementation
   main.py          # ARQ WorkerSettings (M5); nothing imports main
   outcome.py       # TriageOutcome / ToolCallRecord result types (M4)
   prompts/         # package: __init__.py = load_prompt / build_messages (placeholder +
@@ -95,6 +97,7 @@ Hard rules, declared as import-linter contracts in `pyproject.toml` and enforced
    an `EnqueueFn` callable (`api/deps.py`).
 4. `worker` and `evals` never import `api`.
 5. Nothing imports `api.main` or `worker.main` — they are entrypoints, not modules.
+6. Only `worker.anthropic_llm_client` imports the external `anthropic` package.
 
 **Contract-verification ritual** (run once when adding a contract): inject a deliberately
 violating import, confirm `uv run lint-imports` exits 1, revert, confirm exit 0. A contract that

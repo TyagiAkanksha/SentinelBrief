@@ -5,7 +5,9 @@ paths: worker/**
 # Rules for `worker/` (triage pipeline, prompts, tools)
 
 - **This is the only place LLM calls happen.** `worker/llm_client.py` is the only module that
-  imports the `openai` SDK; everything else programs against `core.llm.LLMClient`.
+  imports the `openai` SDK and `worker/anthropic_llm_client.py` is the only one importing
+  `anthropic` (`worker/llm_factory.py` picks between them); everything else programs against
+  `core.llm.LLMClient`.
 - **Prompt files are immutable once shipped.** `worker/prompts/triage-vN.md` is never edited;
   changes ship as `triage-v(N+1).md` via `/new-prompt-version`. Every prompt keeps the
   `{{VERDICT_SCHEMA}}` placeholder and the `<<<ALERT_DATA>>>` … `<<<END_ALERT_DATA>>>` markers —

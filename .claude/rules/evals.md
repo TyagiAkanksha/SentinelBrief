@@ -36,7 +36,7 @@ paths: evals/**, fixtures/**, docs/results.md
 - Metrics are pure functions in `evals/scoring.py` with unit tests; failed cases count in every
   denominator and as wrong. `critical_recall` is recall over labeled severity ≥ 4 — the number
   that matters most (PRD §7.3).
-- The LLM-as-judge (M7) runs on the strong model at temperature 0 with the rubric from PRD §7.3
+- The LLM-as-judge (M7) runs on the strong model at temperature 0 (OpenAI-compatible provider only; Anthropic runs without it) with the rubric from PRD §7.3
   and is itself versioned like a prompt. `evals/judge.py` scores every judged case's reasoning
   over the summary and replayed tool results only, never another run's raw `reasoning`; judge
   spend accumulates in `RunMetrics.judge_cost_total_usd` and never touches `cost_mean_usd`.

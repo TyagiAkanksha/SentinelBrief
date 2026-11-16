@@ -82,7 +82,7 @@ All boxes on the right run as containers on **one app host** behind Caddy (`cadd
 | Worker | ARQ | Async-native, shares the FastAPI codebase and async LLM client; ~40 lines of setup vs Celery's sprawl |
 | Queue / cache / pubsub | Redis 7 | Job queue (ARQ), verdict pub/sub for SSE, rate-limit counters |
 | Database | PostgreSQL 16 + SQLAlchemy 2 **async** (psycopg 3) + Alembic | Boring, correct. No pgvector (see non-goals) |
-| LLM | OpenAI-compatible endpoint (`LLM_BASE_URL`, OpenAI by default; NVIDIA NIM works unchanged) behind a thin internal client interface; structured output via `json_object` + schema in the prompt, validated by Pydantic | Two-tier routing (§6.4). Provider swap is config-only |
+| LLM | OpenAI-compatible endpoint (`LLM_BASE_URL`, OpenAI by default; NVIDIA NIM works unchanged) behind a thin internal client interface; structured output via `json_object` + schema in the prompt, validated by Pydantic | Two-tier routing (§6.4). Provider swap is config-only. Optional second provider (v1.7): `LLM_PROVIDER=anthropic` uses the official `anthropic` SDK (tiers `CHEAP_MODEL=claude-haiku-5-5`, `STRONG_MODEL=claude-sonnet-5-5`, both priced) behind the same interface; schema-in-prompt + Pydantic validation, no `temperature` |
 | Frontend | Next.js 16 (App Router), TypeScript, Tailwind | Matches author's existing stack; served from the app host behind Caddy (§11) |
 | Honeypot | Cowrie (SSH honeypot) | Lightweight; captures usernames, passwords, and full command sessions — rich triage material |
 | Reverse proxy | Caddy | Automatic TLS; overwrites `X-Forwarded-For` so in-app rate limits key on the real client IP |
@@ -208,10 +208,12 @@ Tool results are truncated to a per-tool token budget before being fed back (e.g
 
 The strong model receives the cheap pass's conversation as it stands (system prompt, delimited summary, every tool call and its delimited result) and answers with no tools — routing never re-runs the tool loop and never shows the cheap verdict to the strong model. A strong-tier failure fails the attempt (§6.2 retries it); there is no fallback to the cheap verdict.
 
+Under `LLM_PROVIDER=anthropic` (v1.7) the tiers are `claude-haiku-5-5` (cheap) and `claude-sonnet-5-5` (strong); the two ids must differ, so the same model in both tiers is rejected at boot.
+
 Expected effect: ~90 % of honeypot noise (scans, failed brute force) never touches the expensive model.
 
 ### 6.5 Structured output contract
-The verdict schema **is** a Pydantic model. Its JSON schema is embedded in the prompt and the model is asked for a JSON object (`response_format: json_object`, which every OpenAI-compatible endpoint supports; `json_schema` strict mode is an opt-in setting); the reply is validated on return. One retry with the validation error appended; second failure → alert `status='failed'`.
+The verdict schema **is** a Pydantic model. Its JSON schema is embedded in the prompt and the model is asked for a JSON object (`response_format: json_object`, which every OpenAI-compatible endpoint supports; `json_schema` strict mode is an opt-in setting; under `LLM_PROVIDER=anthropic` no `response_format` is sent — the schema in the prompt is the only contract and no `temperature` is set); the reply is validated on return. One retry with the validation error appended; second failure → alert `status='failed'`.
 
 ```python
 class Verdict(BaseModel):
@@ -267,7 +269,7 @@ Runs the full pipeline (tools included, against recorded tool-result fixtures fo
 - **Critical recall** — recall on labeled severity ≥ 4. This is the security-relevant number: missing a real intrusion is the failure mode that matters.
 - Escalation precision/recall (against labeled `escalate`).
 - Category accuracy.
-- Reasoning quality: LLM-as-judge (strong model, temperature 0) scoring each reasoning 1–5 against a rubric: cites concrete evidence from the alert/tools; no fabricated facts; conclusion follows from evidence. Report mean + % scoring ≤2.
+- Reasoning quality: LLM-as-judge (strong model; temperature 0 on the OpenAI-compatible provider only — Anthropic models reject non-default temperature and run without it, v1.7) scoring each reasoning 1–5 against a rubric: cites concrete evidence from the alert/tools; no fabricated facts; conclusion follows from evidence. Report mean + % scoring ≤2.
 - Cost: mean & p95 USD/alert. Latency: p50 & p95 ms. Escalation rate to strong model.
 
 ### 7.4 CI gate
@@ -411,6 +413,9 @@ Terraform stack live; migration documented.
 ---
 
 ## 15. Changelog
+
+**v1.7 — 2026-11-15.** Owner decision (cost): optional Anthropic provider; no scope change to behaviour under the default.
+- §4 LLM row / §6.5: an optional second `LLMClient` implementation speaks the Anthropic Messages API through the official `anthropic` SDK (`LLM_PROVIDER=anthropic`, `LLM_API_KEY` = the Anthropic key, `CHEAP_MODEL=claude-haiku-5-5`, `STRONG_MODEL=claude-sonnet-5-5`, `MODEL_PRICES_JSON` pricing both: Haiku 0.10/0.50, Sonnet 2.00/10.00 per Mtok; Haiku prompts over 100K tokens are priced 0.50/2.50). Under Anthropic the two-tier routing of §6.4 is unchanged (cheap Haiku, strong Sonnet). Provider, key, models and prices switch together in one deploy (rollback likewise); thinking tokens count as output so `DAILY_TOKEN_BUDGET` may need retuning; the refusal rate on the golden set must be measured before any production flip (a safety-classifier refusal fails the alert closed). §7.3: the judge's temperature 0 applies to the OpenAI-compatible provider only — Anthropic models reject non-default temperature and run without it. Structured output stays schema-in-prompt + Pydantic validation; no `temperature` is sent; `LLM_EFFORT` and `LLM_MAX_TOKENS` are new settings. `worker/llm_factory.py::build_llm_client` is the single place that picks the implementation and rejects provider/model-id mismatches at boot. The OpenAI-compatible endpoint stays the default; production is unchanged until the owner flips the setting.
 
 **v1.6 — 2026-09-14.** M6 final-review amendment (ruling R19); no scope change.
 - §10.4 / §11: the honeypot's outbound security group allows TCP **443 to `0.0.0.0/0`**, not "443

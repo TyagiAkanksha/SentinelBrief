@@ -112,6 +112,21 @@ password on the compose network — even though `Settings` types it `SecretStr`)
 `request_body { max_size 2MB }` (`infra/deploy/prod/Caddyfile`) parses to the same 2,000,000 bytes
 as `INGEST_MAX_BODY_BYTES` and is enforced first, on wire bytes, before the api's own check ever
 runs — "outer bound" means enforced first, not larger; never raise the app cap above it.
+LLM provider switch (optional; production stays on the OpenAI-compatible default until the owner
+flips it): set `LLM_PROVIDER=anthropic`; `LLM_API_KEY` (the SSM `SecureString`) then holds the
+Anthropic key; pin `CHEAP_MODEL=claude-haiku-5-5` and `STRONG_MODEL=claude-sonnet-5-5` and a
+`MODEL_PRICES_JSON` pricing both (Haiku 5.5 0.10 / 0.50, Sonnet 5.5 2.00 / 10.00 per Mtok; Haiku
+prompts over 100K tokens are $0.50 / $2.50) in the compose file; optional `LLM_EFFORT` and
+`LLM_MAX_TOKENS`. Switch all four settings (`LLM_PROVIDER`, `LLM_API_KEY`, `CHEAP_MODEL`/
+`STRONG_MODEL`, `MODEL_PRICES_JSON`) in ONE deploy — never update the SSM key alone, and never
+overwrite the nightly-eval `LLM_API_KEY` repo secret with an Anthropic key. Rollback: the same
+single deploy back (`LLM_PROVIDER=openai`, OpenAI key parameter, models and prices). Thinking tokens
+count as output, so retune `DAILY_TOKEN_BUDGET`. Measure the refusal rate on the golden set (especially
+severity >= 4) before any production flip: the safety classifiers can refuse security-payload
+content, and a refusal fails the alert closed.
+Eval/judge scores from a different model are not comparable to recorded baselines — re-baseline
+or keep the judge model fixed.
+
 `infra/deploy/env-checklist.md` (M6) is the authority on every variable: which service needs it,
 whether it is a secret, where its value comes from.
 
