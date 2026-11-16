@@ -26,10 +26,18 @@ x-shared-env: &shared-env
   # No password on the compose network (docs/deployment.md "Secrets"); `Settings` keeps
   # `redis_url` a `SecretStr` because a deployed URL MAY embed one elsewhere.
   REDIS_URL: redis://redis:6379/0
+  # Anthropic provider ACTIVE since 2026-11-16 (owner decision, PRD v1.7): LLM_API_KEY (SSM
+  # /sentinelbrief/LLM_API_KEY) now holds the Anthropic key; the previous OpenAI key is kept in
+  # SSM as /sentinelbrief/LLM_API_KEY_OPENAI_ROLLBACK. LLM_BASE_URL is ignored under anthropic.
+  # Rollback (all in ONE deploy): LLM_PROVIDER openai, CHEAP_MODEL gpt-4o-mini, STRONG_MODEL
+  # gpt-5.4, and restore the OpenAI key into /sentinelbrief/LLM_API_KEY, then fetch-secrets.sh.
+  LLM_PROVIDER: anthropic
+  LLM_EFFORT: low
+  LLM_MAX_TOKENS: "4096"
   LLM_BASE_URL: https://api.openai.com/v1
-  CHEAP_MODEL: gpt-4o-mini
-  STRONG_MODEL: gpt-5.4
-  MODEL_PRICES_JSON: '{"gpt-4o-mini":{"input_per_mtok":"0.15","output_per_mtok":"0.60"},"gpt-5.4":{"input_per_mtok":"2.50","output_per_mtok":"15.00"}}'
+  CHEAP_MODEL: claude-haiku-5-5
+  STRONG_MODEL: claude-sonnet-5-5
+  MODEL_PRICES_JSON: '{"claude-haiku-5-5":{"input_per_mtok":"0.10","output_per_mtok":"0.50"},"claude-sonnet-5-5":{"input_per_mtok":"2.00","output_per_mtok":"10.00"},"gpt-4o-mini":{"input_per_mtok":"0.15","output_per_mtok":"0.60"},"gpt-5.4":{"input_per_mtok":"2.50","output_per_mtok":"15.00"}}'
   TRIAGE_PROMPT_VERSION: triage-v4
   GEOIP_DB_PATH: infra/geoip/GeoLite2-Country.mmdb
   GEOIP_ASN_DB_PATH: infra/geoip/GeoLite2-ASN.mmdb
@@ -55,7 +63,7 @@ services:
     # REAL account id (AdvisorDesk's, verified 2026-09-11 via `aws sts get-caller-identity`; not a
     # secret); the SHA stays a placeholder until the first push (task-05 replaces both tags in the
     # same sitting).
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:05fb119
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/web:ad00215
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
@@ -69,7 +77,7 @@ services:
     logging: *default-logging
 
   api:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:05fb119
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:ad00215
     env_file:
       - /opt/sentinelbrief/.env
     environment:
@@ -91,7 +99,7 @@ services:
     logging: *default-logging
 
   worker:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:05fb119  # same image + tag as api
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/sentinelbrief/api:ad00215  # same image + tag as api
     command: ["arq", "worker.main.WorkerSettings"]
     env_file:
       - /opt/sentinelbrief/.env
