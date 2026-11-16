@@ -1445,7 +1445,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "maxminddb", specifier = ">=3" },
     { name = "openai", specifier = ">=2" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.5" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-settings" },
     { name = "pyyaml", specifier = ">=6" },
