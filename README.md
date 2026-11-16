@@ -91,6 +91,21 @@ OpenAI-compatible endpoint works: leave `LLM_BASE_URL` at its default for OpenAI
 NVIDIA NIM's `https://integrate.api.nvidia.com/v1` with a free key. **Never commit `.env`** (it is
 gitignored; only `.env.example` is tracked).
 
+**Switching to Anthropic (optional; the default stays OpenAI-compatible).** In `.env` set
+`LLM_PROVIDER=anthropic`, `LLM_API_KEY` to your Anthropic key, `CHEAP_MODEL=claude-haiku-5-5`,
+`STRONG_MODEL=claude-sonnet-5-5`, and `MODEL_PRICES_JSON` pricing both
+(`'{"claude-haiku-5-5":{"input_per_mtok":"0.10","output_per_mtok":"0.50"},"claude-sonnet-5-5":{"input_per_mtok":"2.00","output_per_mtok":"10.00"}}'`).
+Haiku 5.5 prompts over 100K tokens are priced $0.50/$2.50 per MTok. Switch all four settings
+(`LLM_PROVIDER`, `LLM_API_KEY`, `CHEAP_MODEL`/`STRONG_MODEL`, `MODEL_PRICES_JSON`) in ONE deploy and
+roll back the same way. Thinking tokens count as output, so `DAILY_TOKEN_BUDGET` may need retuning.
+Measure the refusal rate on the golden set before any production flip: the Anthropic safety
+classifiers can refuse security-payload content, and a refusal fails the alert closed.
+Optional: `LLM_EFFORT` (`low` default) and `LLM_MAX_TOKENS` (`4096` default). `LLM_BASE_URL` is
+ignored. A model id that disagrees with the provider (e.g. `gpt-*` with `anthropic`) fails at boot.
+Roll back by restoring `LLM_PROVIDER=openai` and the previous key, models and prices. Production is
+unchanged until the owner flips it. **Caution:** eval and judge scores produced with a different
+model are not comparable to the recorded baselines — re-baseline, or keep the judge model fixed.
+
 `Settings` (`core/config.py`) never loads `.env` itself — the compose `api` and `worker` services
 do, via `env_file`. Every host-side command below (step 2, `scripts/seed_dev.py --live`, `worker.
 triage_one`) reads plain environment variables, so load `.env` into your shell first:

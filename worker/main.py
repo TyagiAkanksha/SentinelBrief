@@ -23,7 +23,7 @@ from core.db import make_engine, make_session_factory
 from core.errors import ConfigError
 from core.queue import TRIAGE_JOB_NAME, TRIAGE_QUEUE_NAME, redis_settings
 from worker.jobs import triage_alert_job
-from worker.llm_client import OpenAICompatibleLLMClient
+from worker.llm_factory import build_llm_client
 from worker.triage import TriagePipeline
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ async def startup(ctx: dict[str, Any]) -> None:
 
     Raises:
         ConfigError: `s.cheap_model` (or a non-empty `s.strong_model`) has no entry in
-            `s.model_prices_json` (`OpenAICompatibleLLMClient.from_settings`).
+            `s.model_prices_json`, or a model id disagrees with `LLM_PROVIDER` (`build_llm_client`).
     """
     s: Settings = ctx["settings"]
     engine: AsyncEngine = make_engine(s.database_url.get_secret_value())
@@ -67,7 +67,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["http"] = httpx.AsyncClient(timeout=s.abuseipdb_timeout_s)
 
     cache = RedisTTLCache(ctx["redis"])
-    llm = OpenAICompatibleLLMClient.from_settings(s)
+    llm = build_llm_client(s)
     ctx["pipeline"] = TriagePipeline.from_settings(
         s, llm=llm, http=ctx["http"], cache=cache, redis=ctx["redis"]
     )

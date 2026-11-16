@@ -83,6 +83,15 @@ class OpenAICompatibleLLMClient:
             ConfigError: `settings.cheap_model` is empty, or `cheap_model`/a non-empty
                 `strong_model` has no entry in `settings.model_prices_json`.
         """
+        if settings.llm_provider == "anthropic":
+            raise ConfigError(
+                "LLM_PROVIDER=anthropic: refusing to build an OpenAI-compatible client "
+                "(its key must never reach LLM_BASE_URL)"
+            )
+        if settings.llm_api_key.get_secret_value().startswith("sk-ant-"):
+            raise ConfigError(
+                "LLM_API_KEY looks like an Anthropic key: refusing to send it to LLM_BASE_URL"
+            )
         if not settings.cheap_model:
             raise ConfigError("CHEAP_MODEL is not set")
         for model in (settings.cheap_model, settings.strong_model):

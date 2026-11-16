@@ -182,7 +182,7 @@ from evals.scoring import (
     render_confusion,
     score,
 )
-from worker.llm_client import OpenAICompatibleLLMClient
+from worker.llm_factory import build_llm_client
 from worker.outcome import ToolCallRecord, TriageOutcome
 from worker.summarize import summarize_session
 from worker.tools import STRICT_TOOL_NAMES, ReplayToolRecorder
@@ -638,9 +638,7 @@ async def _run_all(
             )
 
         try:
-            client: LLMClient = (
-                llm if llm is not None else OpenAICompatibleLLMClient.from_settings(settings)
-            )
+            client: LLMClient = llm if llm is not None else build_llm_client(settings)
         except ConfigError as e:
             return fail(e.code, str(e))
 

@@ -42,7 +42,7 @@ from core.llm import LLMClient
 from core.schemas.alert import SessionAlert
 from evals.candidates import matches_injection_hint
 from evals.golden import GoldenCase, GoldenLabel, load_golden
-from worker.llm_client import OpenAICompatibleLLMClient
+from worker.llm_factory import build_llm_client
 from worker.triage import TriagePipeline
 
 
@@ -165,7 +165,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
         already_labeled = {case.case_id for case in load_golden(args.out)}
 
     try:
-        client = llm if llm is not None else OpenAICompatibleLLMClient.from_settings(settings)
+        client = llm if llm is not None else build_llm_client(settings)
         pipeline = TriagePipeline(
             llm=client, model=model, prompt_version=settings.triage_prompt_version
         )

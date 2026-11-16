@@ -2,7 +2,7 @@
 
 `python -m worker.triage_one <alert.json> [--model MODEL] [--prompt VERSION]
 [--strong-model MODEL]` reads `Settings()` once, for its `--model`/`--prompt`/`--strong-model`
-defaults and (when `llm` isn't injected) to build the real `OpenAICompatibleLLMClient`; runs one
+defaults and (when `llm` isn't injected) to build the real configured `LLMClient`; runs one
 `TriagePipeline.run(alert)`; and maps every typed failure to a clean one-line stderr message and a
 stable exit code — never a Python traceback (CONVENTIONS.md §4). `llm=` lets tests inject
 `FakeLLMClient` (or force the config-error path with `llm=None`) without a network call.
@@ -39,7 +39,7 @@ from core.config import Settings
 from core.errors import ConfigError, LLMCallError, VerdictValidationError
 from core.llm import LLMClient
 from core.schemas.alert import SessionAlert
-from worker.llm_client import OpenAICompatibleLLMClient
+from worker.llm_factory import build_llm_client
 from worker.triage import TriagePipeline
 
 
@@ -88,7 +88,7 @@ def main(argv: Sequence[str] | None = None, *, llm: LLMClient | None = None) -> 
 
     try:
         if llm is None:
-            llm = OpenAICompatibleLLMClient.from_settings(settings)
+            llm = build_llm_client(settings)
         pipeline = TriagePipeline(
             llm=llm,
             model=args.model,

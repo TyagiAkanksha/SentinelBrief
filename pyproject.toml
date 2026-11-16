@@ -16,6 +16,7 @@ dependencies = [
     "maxminddb>=3",
     "arq>=0.26,<1",
     "redis>=5,<6",
+    "anthropic>=2.8.0",
 ]
 
 [dependency-groups]
@@ -74,6 +75,7 @@ concurrency = ["greenlet", "thread"]
 
 [tool.importlinter]
 root_packages = ["api", "worker", "core", "evals"]
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "core.models is a pure leaf"
@@ -116,3 +118,10 @@ name = "nothing imports api.main or worker.main"
 type = "forbidden"
 source_modules = ["api", "worker", "core", "evals"]
 forbidden_modules = ["api.main", "worker.main"]
+
+[[tool.importlinter.contracts]]
+name = "only worker.anthropic_llm_client imports anthropic"
+type = "forbidden"
+source_modules = ["api", "core", "evals", "worker"]
+forbidden_modules = ["anthropic"]
+ignore_imports = ["worker.anthropic_llm_client -> anthropic"]
