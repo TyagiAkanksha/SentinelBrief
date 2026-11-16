@@ -7,7 +7,7 @@ dependencies = [
     "pydantic-settings",
     "openai>=2",
     "httpx",
-    "sqlalchemy[asyncio]>=2",
+    "sqlalchemy[asyncio]>=2.0.54",
     "psycopg[binary]>=3",
     "alembic",
     "fastapi>=0.121",
